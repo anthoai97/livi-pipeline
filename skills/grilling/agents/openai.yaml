@@ -1,0 +1,4 @@
+interface:
+  display_name: "Grilling"
+  short_description: "Resolve decisions through structured interview rounds"
+  default_prompt: "Use $grilling to stress-test this idea and confirm our shared understanding."

@@ -2,8 +2,14 @@
 
 Target: `pipeline.pipeline_assets_v2`.
 
-Start with one clean record for each product variant. The record describes the
-product, provides search filters, and links to its image and 3D model.
+Prepare furniture and decor in this one table. Keep their raw sources separate:
+
+- `catalog.assets`: raw product data.
+- `pipeline.decor_items`: raw decor data.
+
+Create one clean record for each item or product variant. The record describes
+the item, provides search filters, and links to its image and 3D model. Track its
+raw source using `source_table` and `source_id`.
 
 Use an LLM to extract, normalize, and complete this record from raw product text
 and matching images. It can write descriptions and infer visible attributes.
@@ -11,12 +17,16 @@ Missing facts stay unknown when the input does not support them.
 
 ## Objectives and expected outcomes
 
-Improve search relevance and help the model choose suitable furniture on its first
-attempt. The benefit comes from correcting product facts and using them throughout
-retrieval, selection, and validation.
+The prepared data serves two objectives:
 
-The model chooses products and quantities. Validation checks budget, counts,
-requested attributes, and fit constraints. Failures return to the model for correction.
+1. Retrieve furniture and decor that match the user's context and preferences.
+2. Support room design: the model uses the user's prompt, room geometry, budget,
+   preferences, and retrieved product facts to choose catalog furniture and decor,
+   decide quantities, and place each piece.
+
+Validation checks budget, counts, requested attributes, and fit constraints using
+the same product data. Failures return to the model for correction. Better product
+facts should improve search relevance and the model's first selection and placement.
 
 | Area | Expected improvement |
 |---|---|
@@ -48,6 +58,8 @@ This is a fictional example:
 ```json
 {
   "asset_id": "11111111-1111-4111-8111-111111111111",
+  "source_table": "catalog.assets",
+  "source_id": "22222222-2222-4222-8222-222222222222",
   "title": "Cream boucle sofa",
   "category": "sofa",
   "brand": null,
@@ -58,6 +70,8 @@ This is a fictional example:
   "width_m": 2.1,
   "depth_m": 0.9,
   "height_m": 0.8,
+  "placement_type": "floor",
+  "is_purchasable": true,
   "price": 999.00,
   "currency": "USD",
   "image_url": "https://example.com/sofa.jpg",
@@ -69,13 +83,15 @@ This is a fictional example:
 ## Instructions for the extraction LLM
 
 Return one JSON object with exactly the fields in the example. Use JSON numbers
-for dimensions and price, arrays for colors, styles, and materials, and strings
-for other populated fields. Use null for unknown scalar values and empty arrays
-for unknown lists. Do not include commentary in the output.
+for dimensions and price, arrays for colors, styles, and materials, a boolean for
+`is_purchasable`, and strings for other populated fields. Use null for unknown
+scalar values and empty arrays for unknown lists. Do not include commentary in
+the output.
 
 | Field | What the LLM must produce |
 |---|---|
 | `asset_id` | Copy the ID supplied for this record. The importing system supplies it; do not invent or change it. |
+| `source_table`, `source_id` | Copy the raw source table and row ID supplied by the importer. The source table is `catalog.assets` or `pipeline.decor_items`. Do not infer these from the item name. |
 | `title` | A short, readable product name. Clean the source title. If absent, create a factual title from the type and supported attributes, such as "Cream boucle sofa." Do not invent a model or collection name. |
 | `category` | The actual product type in the supplied category vocabulary, such as `sofa` or `dining_table`. Correct a raw label when the product text or image clearly establishes another type. Return null if uncertain. |
 | `brand` | The explicitly named product brand. Do not assume the retailer is the brand. Return null if absent. |
@@ -84,6 +100,8 @@ for unknown lists. Do not include commentary in the output.
 | `styles` | A short list of supported design styles, such as `["modern"]`. Infer from the design when clear. Exclude campaign names and seller tags. Return an empty list when uncertain. |
 | `materials` | A deduplicated list of materials supported by the source. From images, use only clear broad observations, such as "fabric." Do not guess fiber composition, wood species, or hidden construction. |
 | `width_m`, `depth_m`, `height_m` | Extract labeled product measurements and convert them to metres. Width is left to right, depth is front to back, and height is bottom to top. Exclude packaging measurements. Keep an unknown axis null. Do not estimate scale from an image or typical furniture sizes. |
+| `placement_type` | Use `floor`, `surface`, `wall`, or `ceiling` when the intended placement is supported. A shelf ornament uses `surface`; a wall mirror uses `wall`. Do not assume all decor belongs on the floor or decide mirror mounting from thickness alone. Return null if uncertain. |
+| `is_purchasable` | Use true for an item with a supported purchase offer, false for an explicitly designated design-only asset, and null when unknown. Honor source information supplied by the importer. Category alone does not establish purchase status. |
 | `price` | A numeric source price for one item in this variant, without currency symbols. Divide a set price only when the source explicitly states the number of identical items. Return null for an unknown price or unclear bundle. Do not estimate market value. |
 | `currency` | The currency code established by the source, such as `USD`. Do not guess the currency from a dollar symbol alone. |
 | `image_url` | Copy the supplied image reference for the selected variant. Do not invent a URL or substitute an image of a different variant. |
@@ -92,6 +110,10 @@ for unknown lists. Do not include commentary in the output.
 
 Use one supplied vocabulary for categories and attribute labels. Normalize case
 and spelling, remove duplicates, and sort attribute lists consistently.
+
+Reuse the prepared `asset_id` when importing the same `source_table` and
+`source_id` again. These source fields identify where a record came from; they do
+not determine its category or purchase status.
 
 Only make visual inferences from images that were actually provided or read.
 If reliable sources disagree about the selected variant, leave the affected field
@@ -107,9 +129,22 @@ Before embedding, require a useful title, correct category, factual description,
 and working matching image. The importing system checks links, numeric values,
 and required fields after extraction.
 
-A missing model does not prevent product search. Room placement requires a usable
-model and checked dimensions. A product with an unknown price cannot satisfy a
-strict budget filter.
+## Decor uses the same record
+
+A vase can be purchasable or design-only. Give it the same descriptive fields as
+furniture, its actual category, and a supported placement type. For example, a
+design-only shelf sculpture uses `category: sculpture`, `placement_type: surface`,
+and `is_purchasable: false`.
+
+For non-purchasable decor, keep `price`, `currency`, and `product_url` null. It can
+appear in a room design, but not in the shopping list or purchase total. Null
+price does not mean free. Missing price alone also does not prove an item is
+non-purchasable.
+
+A missing model does not prevent search. Room placement requires a usable model,
+checked dimensions, and a known placement type. Surface decor requires supporting
+furniture with enough space. Purchase recommendations require
+`is_purchasable: true`; unknown price cannot satisfy a strict budget filter.
 
 Save the prepared record, then build its
 [embedding text](product-embedding-v2.md).

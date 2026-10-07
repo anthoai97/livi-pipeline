@@ -1,0 +1,4 @@
+interface:
+  display_name: "Issue Investigation"
+  short_description: "Investigate GitHub issues before planning fixes"
+  default_prompt: "Use $issue-investigation to investigate this GitHub issue and report findings and root cause before proposing a fix."

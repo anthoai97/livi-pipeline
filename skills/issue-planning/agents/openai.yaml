@@ -1,0 +1,4 @@
+interface:
+  display_name: "Issue Planning"
+  short_description: "Clarify an issue and produce a detailed implementation plan"
+  default_prompt: "Use $issue-planning for this issue: read it, clarify consequential decisions, then update it and write a detailed plan using session authorization."

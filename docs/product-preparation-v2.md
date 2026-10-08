@@ -93,7 +93,7 @@ the output.
 | `asset_id` | Copy the ID supplied for this record. The importing system supplies it; do not invent or change it. |
 | `source_table`, `source_id` | Copy the raw source table and row ID supplied by the importer. The source table is `catalog.assets` or `pipeline.decor_items`. Do not infer these from the item name. |
 | `title` | A short, readable product name. Clean the source title. If absent, create a factual title from the type and supported attributes, such as "Cream boucle sofa." Do not invent a model or collection name. |
-| `category` | The actual product type in the supplied category vocabulary, such as `sofa` or `dining_table`. Correct a raw label when the product text or image clearly establishes another type. Return null if uncertain. |
+| `category` | The actual product type in the [catalog vocabulary](product-categories.md), such as `sofa` or `dining_table`. Correct a raw label when the product text or image clearly establishes another type. Return null if uncertain. |
 | `brand` | The explicitly named product brand. Do not assume the retailer is the brand. Return null if absent. |
 | `description` | One to three factual sentences describing what the item is, its appearance, and its practical use. Include distinguishing details such as curved arms, drawers, or an extendable top when supported. Write this even if the raw description is missing, using available facts and visible details. Avoid promotional claims, keyword lists, and unsupported capacities or features. |
 | `colors` | A deduplicated list of normalized colors for the selected variant, such as `["cream", "black"]`. Extract from text or infer from a clearly visible matching image. Do not include other color options. |

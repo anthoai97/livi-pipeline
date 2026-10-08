@@ -23,6 +23,7 @@ coverage/
 # Local data
 .data/
 artifacts/
+logs/
 
 # OS
 .DS_Store
@@ -30,3 +31,4 @@ artifacts/
 # Local agent copies. Canonical skills live in skills/.
 .agents/
 .claude/
+work_report.md

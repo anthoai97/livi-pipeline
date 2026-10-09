@@ -1,7 +1,8 @@
 """Structured JSON calls through the local cli-proxy-api container.
 
-Reads AI_PROXY_BASE_URL, AI_PROXY_API_KEY, and LLM_PROXY_MODEL (default
-gpt-6-luna). Calls use the ChatGPT Codex Pro subscription, so there is no
+Reads AI_PROXY_BASE_URL, AI_PROXY_API_KEY, LLM_PROXY_MODEL (default
+gpt-6-luna), and LLM_PROXY_EFFORT (reasoning effort, such as medium; unset sends
+none). Calls use the ChatGPT Codex Pro subscription, so there is no
 per-token charge.
 """
 
@@ -21,10 +22,13 @@ DEFAULT_MODEL = "gpt-6-luna"
 class ProxyClient:
     """OpenAI-compatible client for the local cli-proxy-api container."""
 
-    def __init__(self, base_url: str | None = None, api_key: str | None = None, model: str | None = None):
+    def __init__(
+        self, base_url: str | None = None, api_key: str | None = None, model: str | None = None, effort: str | None = None
+    ):
         self.base_url = (base_url or os.environ.get("AI_PROXY_BASE_URL", "").strip() or DEFAULT_BASE_URL).rstrip("/")
         self.api_key = api_key or os.environ.get("AI_PROXY_API_KEY", "").strip()
         self.model = model or os.environ.get("LLM_PROXY_MODEL", "").strip() or DEFAULT_MODEL
+        self.effort = effort or os.environ.get("LLM_PROXY_EFFORT", "").strip() or None
         if not self.api_key:
             raise RuntimeError("AI_PROXY_API_KEY is required")
 
@@ -37,6 +41,7 @@ class ProxyClient:
                 "type": "json_schema",
                 "json_schema": {"name": name, "strict": True, "schema": schema},
             },
+            **({"reasoning_effort": self.effort} if self.effort else {}),
         }).encode()
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",

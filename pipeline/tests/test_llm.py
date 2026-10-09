@@ -1,13 +1,14 @@
 """Model-call bounds, exercised through a real genai client on a mock transport."""
 
 import asyncio
+import json
 
 import httpx
 import pytest
 from pydantic import BaseModel
 
 from app.contracts import PipelineRequest
-from app.llm import GeminiModel, gemini_client
+from app.llm import GeminiModel, gemini_client, stage_models
 from app.run import ModelCallError, RunContext, StageContext
 
 REQUEST = PipelineRequest(
@@ -78,3 +79,77 @@ def test_output_that_does_not_match_the_schema_fails_the_call(body):
     assert isinstance(exc, ModelCallError)
     assert sent == 1
     assert "does not match Plan" in run.model_calls[0]["error"]
+
+
+def test_stage_models_route_each_listed_stage_to_its_model_and_thinking_level():
+    sent: list[tuple[str, dict]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append((request.url.path, json.loads(request.content)["generationConfig"]["thinkingConfig"]))
+        return httpx.Response(200, json={"candidates": [{"content": {"role": "model", "parts": [{"text": '{"note": "ok"}'}]}}]})
+
+    model = GeminiModel(gemini_client("test-key", httpx.MockTransport(handler)), "gemini-3.8-flash",
+                        stages="place=gemini-3.5-flash-lite:minimal, correct=gemini-3.1-flash-lite, correct_escalate=gemini-3.8-flash:medium")
+    run = RunContext("test", REQUEST, model, 3)
+
+    async def main() -> None:
+        for stage in ("select", "place", "correct"):
+            await StageContext(run, stage, 0).generate(Plan, "go")
+        await StageContext(run, "correct", 0).generate(Plan, "go", model_key="correct_escalate")
+
+    asyncio.run(main())
+    assert [(path.rsplit("/", 1)[-1], config["thinking_level"]) for path, config in sent] == [
+        ("gemini-3.8-flash:generateContent", "LOW"),
+        ("gemini-3.5-flash-lite:generateContent", "MINIMAL"),
+        ("gemini-3.1-flash-lite:generateContent", "LOW"),
+        ("gemini-3.8-flash:generateContent", "MEDIUM"),
+    ]
+    assert [call["model"] for call in run.model_calls] == [
+        "gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash"]
+    assert [call["stage"] for call in run.model_calls][-1] == "correct"
+
+
+@pytest.mark.parametrize("value", ["place", "place=", "place=gemini-3.5-flash-lite:fast"])
+def test_malformed_stage_models_are_rejected(value):
+    with pytest.raises(ValueError, match="LLM_STAGE_MODELS"):
+        stage_models(value)
+
+
+def hedged_call(first_delay_s: float, hedge_after_s: float) -> tuple[RunContext, Plan, float]:
+    """One model call whose first HTTP request answers after `first_delay_s` and later ones at once."""
+    sent: list[int] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(1)
+        if len(sent) == 1:
+            await asyncio.sleep(first_delay_s)
+        note = "first" if len(sent) == 1 else "duplicate"
+        return httpx.Response(200, json={"candidates": [{"content": {"role": "model", "parts": [{"text": json.dumps({"note": note})}]}}]})
+
+    model = GeminiModel(gemini_client("test-key", httpx.MockTransport(handler)), "gemini-3.8-flash", stages="",
+                        hedge_after_s=hedge_after_s)
+    run = RunContext("test", REQUEST, model, 3)
+
+    async def main() -> tuple[Plan, float]:
+        started = asyncio.get_running_loop().time()
+        plan = await StageContext(run, "select", 0).generate(Plan, "pick")
+        return plan, asyncio.get_running_loop().time() - started
+
+    plan, elapsed = asyncio.run(main())
+    return run, plan, elapsed
+
+
+def test_slow_call_gets_a_duplicate_and_the_first_answer_wins():
+    run, plan, elapsed = hedged_call(first_delay_s=2.0, hedge_after_s=0.1)
+
+    assert plan.note == "duplicate" and elapsed < 1.0
+    # Both calls are recorded: the duplicate answered, the slow one was cancelled.
+    assert sorted(call["error"] or "ok" for call in run.model_calls) == ["cancelled", "ok"]
+    assert [note["text"] for note in run.notes] == ["select model call slower than 0.1 s; sent a duplicate"]
+
+
+def test_fast_call_gets_no_duplicate():
+    run, plan, _ = hedged_call(first_delay_s=0.0, hedge_after_s=0.5)
+
+    assert plan.note == "first"
+    assert len(run.model_calls) == 1 and not run.notes

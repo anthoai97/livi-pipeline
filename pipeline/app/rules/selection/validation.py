@@ -261,6 +261,7 @@ def validate_selection(
     fit_step: str | None = None,
     fit_satisfaction: Any = None,
     constraint_audit: Any = None,
+    fit_estimates: bool = True,
 ) -> dict[str, Any]:
     """Validate a fresh-design selection with the ported legacy rules.
 
@@ -270,14 +271,20 @@ def validate_selection(
     output. candidates: the retrieved pool of pipeline_assets_v2 records; an
     item outside it fails as unknown. gaps: requested categories with no
     eligible product, which are then not required. fit_step: None, "compact",
-    or "capped" (see selection.fit). fit_satisfaction and constraint_audit are
-    the selection model's optional self-reports, shaped like the legacy
-    validate_selection tool arguments, with asset_id as the uid.
+    or "capped" (see selection.fit). fit_satisfaction (selected counts per
+    requested category) and constraint_audit (code and Jev checks) are built by
+    the select stage, shaped like the legacy validate_selection tool arguments,
+    with asset_id as the uid. fit_estimates=False skips the over-crowded
+    footprint estimate and the layout preflight size estimates
+    (_layout_preflight_for_assets fit_checks), for a selection the code solver
+    has placed.
 
     Checks budget (110% allowance), footprint and density, category caps and
     counts, required items, fit targets, layout preflight fit, and strict
     attributes. Returns valid, status, errors, warnings, fit_failed (an
-    over-crowded footprint or a layout preflight failure), metrics,
+    over-crowded footprint or a layout preflight failure other than a
+    tabletop item too large for its supports), support_fit_failed (a
+    tabletop item too large for its supports), metrics,
     retry_context (when invalid), feedback (JSON text for the model, with
     asset_id as the uid), and instances (build_instances output).
     """
@@ -342,7 +349,7 @@ def validate_selection(
     max_allowed_footprint = furniture_area
     flex_budget = budget * (1 + BUDGET_FLEX_PCT)
     is_over_budget = total_cost > flex_budget
-    is_over_crowded = total_footprint > max_allowed_footprint
+    is_over_crowded = fit_estimates and total_footprint > max_allowed_footprint
 
     errors = []
     warnings = []
@@ -531,6 +538,7 @@ def validate_selection(
         decision=decision,
         requested_counts=requested_fit_counts,
         recommended_counts=recommended_fit_counts,
+        intent=intent_packet,
         selected_assets=selected_for_fit,
         assets_by_uid=assets_by_uid,
         fit_satisfaction=fit_satisfaction,
@@ -568,6 +576,7 @@ def validate_selection(
         room=room,
         budget=budget,
         total_cost=total_cost,
+        fit_checks=fit_estimates,
     )
     if layout_preflight["errors"]:
         errors.extend(layout_preflight["errors"])
@@ -618,7 +627,8 @@ def validate_selection(
         "status": "PASS" if is_valid else "FAIL - ADJUST SELECTION",
         "errors": errors,
         "warnings": warnings,
-        "fit_failed": is_over_crowded or bool(layout_preflight["errors"]),
+        "fit_failed": is_over_crowded or len(layout_preflight["errors"]) > len(layout_preflight["support_fit_errors"]),
+        "support_fit_failed": bool(layout_preflight["support_fit_errors"]),
         "metrics": {
             "total_cost": round(total_cost, 2),
             "remaining_budget": round(budget - total_cost, 2),
@@ -661,13 +671,15 @@ def _selection_constraint_audit_errors(
     selected_uids: list[str] | None = None,
     attribute_constraints: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Split the model's self-audit into blocking and advisory findings.
+    """Split the selection constraint audit into blocking and advisory findings.
 
-    Blocking findings are substantive: the model reporting that its own
-    selection violates a constraint. Bookkeeping findings — a stale UID left in
-    the audit after the asset was dropped, a missing or malformed entry — are
-    advisory. The design is validated on its own terms elsewhere, so a good
-    selection must not die because the model's scratchpad drifted.
+    The select stage builds the audit from code and Jev checks of the current
+    selection (variant_stages._constraint_audit): coordination violations, and
+    one attribute check per required constraint that Jev checked. Blocking
+    findings are substantive: a coordination violation, or a selected asset
+    that fails a checked constraint. A constraint without a check is left to
+    the code attribute checks, or its check was switched off or failed, so it
+    is not reported. Malformed entries are advisory.
     """
     if not isinstance(audit, dict):
         return [], ["constraint audit is missing"]
@@ -723,9 +735,6 @@ def _selection_constraint_audit_errors(
             None,
         )
         if check is None:
-            warnings.append(
-                f'attribute constraint "{source_label}" was not audited'
-            )
             continue
         targets = {
             str(uid).strip()

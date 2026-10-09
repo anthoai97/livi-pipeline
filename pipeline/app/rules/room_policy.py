@@ -60,7 +60,7 @@ BEDROOM_FURNISHING_GUIDANCE = (
     "group or replace a requested wardrobe with a dresser or generic cabinet. Extra folded-clothes "
     "storage has lower priority than requested functional groups. "
     "If a requested wardrobe cannot fit or is unavailable, explicitly explain that omission in "
-    "selection_strategy.gaps; never silently skip it. Explain other omitted groups as well. Explicit must-have items, "
+    "gaps; never silently skip it. Explain other omitted groups as well. Explicit must-have items, "
     "different user priorities, exclusions and desk-only requests take precedence. "
     "Targeted chat edits preserve unrelated existing furniture; never remove it just to follow "
     "this fresh-design priority."

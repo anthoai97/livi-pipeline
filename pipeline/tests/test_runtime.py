@@ -3,9 +3,11 @@
 import asyncio
 import json
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 import pytest
@@ -13,7 +15,8 @@ from google.genai import types
 from pydantic import BaseModel
 
 from app import contracts
-from app.graph import MAX_CORRECTION_PROPOSALS, MAX_SELECTION_TURNS, Stages
+from app.graph import MAX_CORRECTION_PROPOSALS, MAX_RESELECTIONS, MAX_SELECTION_TURNS, Stages
+from app.jev import Jev
 from app.llm import GeminiModel, gemini_client
 from app.main import create_app
 
@@ -66,6 +69,30 @@ class FakeGenai:
         )
 
 
+class FakeJevClient:
+    """Stands in for typesafe_sdk.AsyncTypeSafeClient. Answers each yes/no question with
+    `answer(question text)`, or raises `fail` instead.
+
+    `requests` holds (state, {name: question text}) per request.
+    """
+
+    def __init__(self, answer: Callable[[str], float] = lambda text: 0.9, fail: Exception | None = None):
+        self.answer = answer
+        self.fail = fail
+        self.requests: list[tuple[Any, dict[str, str]]] = []
+
+    async def system_one(self, *, state, questions, model):
+        texts = {name: question.instructions for name, question in questions.items()}
+        self.requests.append((state, texts))
+        if self.fail:
+            raise self.fail
+        return SimpleNamespace(
+            model=model,
+            usage=SimpleNamespace(input_tokens=1000, output_tokens=10),
+            nouls={name: SimpleNamespace(noul=self.answer(text)) for name, text in texts.items()},
+        )
+
+
 SOFA = {
     "asset_id": "a1",
     "source_table": "catalog.assets",
@@ -111,14 +138,22 @@ async def retrieve(state, ctx):
     return {"slots": [{"id": "sofa"}, {"id": "bookcase", "gap": True}], "pool": {"sofa": [SOFA]}}
 
 
+async def rank(state, ctx):
+    await ctx.ask("rank", "brief", {"product_0": "a good choice?"})
+    return {"pools": [state["pool"]] * 3}
+
+
 async def select(state, ctx):
     await ctx.generate(Plan, "select")
     return {"selection": {"sofa_1": "a1"}, "selection_validation": {"valid": True, "errors": []}}
 
 
 async def place(state, ctx):
-    await ctx.generate(Plan, "place")
     return {"layout": {"sofa_1": {}}, "findings": [{"level": "P0"}], "blocking_findings": [{"level": "P0"}]}
+
+
+async def repair(state, ctx):
+    return {}
 
 
 async def correct(state, ctx):
@@ -140,8 +175,10 @@ STAGES = Stages(
     interpret=interpret,
     room=room,
     retrieve=retrieve,
+    rank=rank,
     select=select,
     place=place,
+    repair=repair,
     correct=correct,
     validate=validate,
     direction=lambda index, room_type: f"direction {index}",
@@ -209,7 +246,8 @@ def parse(body: str) -> list[dict]:
 
 def post(tmp_path: Path, body: dict = REQUEST, *, stages: Stages = STAGES, **options):
     """Send one request and return (status, events, run record)."""
-    app = create_app(stages=stages, model=GeminiModel(FakeGenai()), connect=lambda: None, runs_dir=tmp_path, **options)
+    app = create_app(stages=stages, model=GeminiModel(FakeGenai()), jev=Jev(FakeJevClient()), connect=lambda: None,
+                     runs_dir=tmp_path, **options)
 
     async def main() -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
@@ -243,10 +281,13 @@ def test_streams_the_full_event_sequence(tmp_path):
         ("node_complete", "extract_room"),
         ("node_start", "rag_scope_assets"),
         ("node_complete", "rag_scope_assets"),
+        ("node_start", "select_asset_intent"),  # rank
+        ("node_complete", "select_asset_intent"),
     ]
     for index in range(3):
         nodes = [e["node"] for e in events if e["type"] == "node_complete" and e["variant_index"] == index]
-        assert nodes == ["select_asset_intent", "layout_initial", "layout_fix", "render_scene"]
+        # select, place, repair and correct, validate
+        assert nodes == ["select_asset_intent", "layout_initial", "layout_fix", "layout_fix", "render_scene"]
     assert all(isinstance(e["elapsed"], float) for e in of_type(events, "node_complete"))
 
     ready = of_type(events, "variant_ready")
@@ -299,23 +340,32 @@ def test_unknown_model_metadata_remains_unknown():
         assert entry["features"] == []
 
 
-def test_run_record_lists_stages_model_calls_and_totals(tmp_path):
+def test_run_record_lists_stages_model_calls_and_totals(tmp_path, monkeypatch):
+    for switch in ("JEV_USES", "PRODUCT_REUSE_RATE"):
+        monkeypatch.delenv(switch, raising=False)
     _, _, record = post(tmp_path)
 
     stages = [(s["stage"], s["variant_index"]) for s in record["stages"]]
-    assert stages.count(("interpret", None)) == 1
+    assert stages.count(("interpret", None)) == stages.count(("rank", None)) == 1
     for index in range(3):
-        for stage in ("select", "place", "correct", "validate"):
+        for stage in ("select", "place", "repair", "correct", "validate"):
             assert (stage, index) in stages
     assert all(s["outcome"] == "ok" and s["elapsed"] >= 0 for s in record["stages"])
 
     calls = record["model_calls"]
-    assert len(calls) == 1 + 3 * 3
+    assert len(calls) == 1 + 3 * 2
     assert {c["variant_index"] for c in calls} == {None, 0, 1, 2}
     for call in calls:
         assert call["input_tokens"] == 1000 and call["cached_input_tokens"] == 200
         assert call["thoughts_tokens"] == 50 and call["cost_usd"] > 0
-    assert record["totals"]["cost_usd"] == pytest.approx(sum(c["cost_usd"] for c in calls))
+    jev_calls = record["jev_calls"]
+    assert [(c["stage"], c["use"], c["variant_index"]) for c in jev_calls] == [("rank", "rank", None)]
+    for call in jev_calls:
+        assert call["model"] == "jev-1.13.0" and call["input_tokens"] == 1000 and call["error"] is None
+        assert call["cost_usd"] == pytest.approx(1000 * 0.042 / 1_000_000)
+    assert record["totals"]["jev_calls"] == 1
+    assert record["totals"]["cost_usd"] == pytest.approx(sum(c["cost_usd"] for c in calls + jev_calls))
+    assert record["switches"] == {"JEV_USES": "check,rank", "PRODUCT_REUSE_RATE": 0.5}
     assert record["totals"]["first_ready_s"] <= record["totals"]["all_ready_s"] <= record["totals"]["full_run_s"]
     assert record["slots"] == [
         {"slot": "sofa", "candidates": 10, "gap": False, "note": None},
@@ -374,7 +424,7 @@ def test_failed_variants_do_not_block_the_others(tmp_path):
     ]
 
 
-def test_correction_stops_after_the_proposal_limit(tmp_path):
+def test_failed_layout_reselects_once_and_each_layout_caps_its_corrections(tmp_path):
     async def stuck_correct(state, ctx):
         await ctx.generate(Plan, "correct")
         return {"blocking_findings": [{"level": "P1"}]}
@@ -384,9 +434,29 @@ def test_correction_stops_after_the_proposal_limit(tmp_path):
     failed = of_type(events, "variant_failed")
     assert {e["reason"] for e in failed} == {"layout_validation_failed"}
     assert len(failed) == 3
-    corrections = [s for s in record["stages"] if s["stage"] == "correct" and s["variant_index"] == 0]
-    assert len(corrections) == MAX_CORRECTION_PROPOSALS
+    for index in range(3):
+        runs = [s["stage"] for s in record["stages"] if s["variant_index"] == index]
+        assert runs.count("select") == runs.count("place") == runs.count("validate") == 1 + MAX_RESELECTIONS
+        assert runs.count("correct") == MAX_CORRECTION_PROPOSALS * (1 + MAX_RESELECTIONS)
+        notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
+        assert notes == ["reselection after the layout failed: blocking findings remain"]
     assert events[-1]["data"]["variants"] == []
+
+
+def test_correction_stops_at_the_first_proposal_that_does_not_improve(tmp_path):
+    async def stalling_correct(state, ctx):
+        await ctx.generate(Plan, "correct")
+        if state.get("correction_proposals", 0) == 0:
+            return {"blocking_findings": [{"level": "P1"}]}  # improved, one finding left
+        return {"correction_stalled": True}
+
+    _, events, record = post(tmp_path, stages=replace(STAGES, correct=stalling_correct))
+
+    assert {e["reason"] for e in of_type(events, "variant_failed")} == {"layout_validation_failed"}
+    for index in range(3):
+        runs = [s["stage"] for s in record["stages"] if s["variant_index"] == index]
+        # Two proposals per layout, the second one stalled, for the layout and its one reselection.
+        assert runs.count("correct") == 2 * (1 + MAX_RESELECTIONS)
 
 
 def test_shared_stage_failure_sends_error(tmp_path):
@@ -448,7 +518,7 @@ def test_heartbeat_after_quiet_period(tmp_path):
 
 def test_client_disconnect_cancels_the_run(tmp_path):
     genai = FakeGenai(delays={"select": 30})
-    app = create_app(stages=STAGES, model=GeminiModel(genai), connect=lambda: None, runs_dir=tmp_path)
+    app = create_app(stages=STAGES, model=GeminiModel(genai), jev=Jev(FakeJevClient()), connect=lambda: None, runs_dir=tmp_path)
 
     async def main() -> None:
         body = json.dumps(REQUEST).encode()
@@ -502,7 +572,8 @@ def test_model_call_attempt_limit_fails_the_variant_with_a_reason(tmp_path):
         return {"intent": {}}
 
     model = GeminiModel(gemini_client("test-key", httpx.MockTransport(handler)))
-    app = create_app(stages=replace(STAGES, interpret=no_model_interpret), model=model, connect=lambda: None, runs_dir=tmp_path)
+    app = create_app(stages=replace(STAGES, interpret=no_model_interpret), model=model, jev=Jev(FakeJevClient()),
+                     connect=lambda: None, runs_dir=tmp_path)
 
     async def main() -> str:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:

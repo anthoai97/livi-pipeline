@@ -2,6 +2,7 @@ langgraph>=1.2
 fastapi>=0.139
 uvicorn>=0.51
 google-genai>=2.12
+typesafe-sdk>=0.7.3
 httpx>=0.28
 anyio>=4.14
 psycopg[binary]>=3.3

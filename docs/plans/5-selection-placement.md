@@ -422,6 +422,8 @@ rules do not catch. Fixes in progress:
 | 16 | Requested nightstands and lamps dropped in a 4 x 4.5 m bedroom | The fit estimate warns, and the capped fit step reduces counts | Deliberate rule change: when a selection fails only the fit estimate, the solver checks it. If every item places with no blocking finding, the selection passes, and the run record notes it |
 | 17 | A 1.66 m floor plant on the dining table | The accessory pass puts a floor item on a support | Only items prepared for surfaces go on tables |
 | 18 | Dining chairs bunched on one side | Solver dining template | Chairs split evenly across the long sides, or evenly around round tables, reusing the legacy dining logic |
+| 19 | A bedroom variant drops requested nightstands and lamps | Turn 1 fails on budget plus a lamp-to-support fit check. The capped step's targets (nightstand 0, lamp 0) remove requested items | Deliberate rule change: capped targets never go below an explicitly requested, non-optional count. A lamp-to-support failure asks for a smaller lamp or larger support instead of stepping down. Over-budget feedback keeps requested items |
+| 20 | First selections exceed the 110% allowance | The model picks expensive products | Code repairs an over-budget selection by swapping in cheaper products from the same slots, then validates again; the reviewer is told the 110% allowance |
 
 ### Solver
 

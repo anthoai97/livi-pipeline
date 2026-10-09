@@ -3,11 +3,13 @@
 The pipeline never asks the user to confirm fit. Fit step "compact" applies the
 legacy automatic continue_anyway decision (keep requested counts, pick compact
 products). Fit step "capped" applies the legacy use_recommendation decision
-(cap each requested count at the count the room fit estimate says will fit).
+(cap each requested count at the count the room fit estimate says will fit),
+except that an explicitly requested, non-optional item keeps its requested count.
 """
 
 import re
 from typing import Any
+from app.rules.planner.intent_packet import count_constraints_from_intent_packet
 from app.rules.planner.taxonomy import normalize_category
 
 from app.rules.selection.catalog import (
@@ -33,13 +35,14 @@ def _target_count_for_bucket(
     bucket: str,
     requested_counts: dict[str, int],
     recommended_counts: dict[str, int],
+    kept_counts: dict[str, int],
     *,
     decision: str,
 ) -> int:
     requested = int(requested_counts.get(bucket, 0))
     if decision == "use_recommendation":
         recommended = int(recommended_counts.get(bucket, 0))
-        return max(0, min(requested, recommended))
+        return max(0, min(requested, max(recommended, kept_counts.get(bucket, 0))))
     return requested
 
 def _fit_decision_target_counts(
@@ -47,31 +50,42 @@ def _fit_decision_target_counts(
     decision: str,
     requested_counts: dict[str, int],
     recommended_counts: dict[str, int],
+    intent: dict[str, Any],
 ) -> dict[str, int]:
+    """Target count per requested category. Capped counts never go below an
+    explicitly requested, non-optional item's count."""
+    kept_counts = {
+        category: int(constraint["count"])
+        for category, constraint in count_constraints_from_intent_packet(intent).items()
+        if not constraint["optional"]
+    }
     return {
         category: _target_count_for_bucket(
             category,
             requested_counts,
             recommended_counts,
+            kept_counts,
             decision=decision,
         )
         for category in requested_counts
     }
 
-def capped_counts(room: dict[str, Any]) -> dict[str, int]:
+def capped_counts(room: dict[str, Any], intent: dict[str, Any]) -> dict[str, int]:
     """Selection targets for fit step "capped": each requested count capped at the count that fits.
 
     The room fit estimate drops lower-priority optional furniture first, keeps
-    functional groups whole, and keeps required items such as the bed.
+    functional groups whole, and keeps required items such as the bed. An
+    explicitly requested, non-optional item keeps its requested count.
     """
     requested_counts, recommended_counts = _fit_warning_counts(room)
     return _fit_decision_target_counts(
         decision="use_recommendation",
         requested_counts=requested_counts,
         recommended_counts=recommended_counts,
+        intent=intent,
     )
 
-def fit_step_guidance(fit_step: str | None, room: dict[str, Any]) -> str:
+def fit_step_guidance(fit_step: str | None, room: dict[str, Any], intent: dict[str, Any]) -> str:
     """Selection prompt block for the applied fit step ("" when none or nothing was requested)."""
     decision = FIT_STEP_DECISIONS.get(str(fit_step or ""), "")
     if decision not in {"use_recommendation", "continue_anyway"}:
@@ -86,7 +100,7 @@ The pipeline automatically continued after a coarse category-size estimate; the 
 Original requested counts: {_format_fit_counts(requested_counts)}
 Keep these requests as the goal and try compact catalog items with their actual dimensions.
 The estimate does not establish that any requested item cannot fit and its recommended counts are not caps.
-Only omit optional furniture when concrete selection or layout constraints require it, and explain the constraint in selection_strategy.gaps.
+Only omit optional furniture when concrete selection or layout constraints require it, and explain the constraint in gaps.
 For bedrooms, preserve the bed and access, then prioritize requested wardrobe, requested TV/support, and requested desk/chair, in that order. These groups are opt-in; do not add a wardrobe that was not requested. Omit a lower-priority group before a higher-priority one and keep each functional group complete.
 All actual footprint, support, budget, and layout checks still apply.
 """
@@ -94,6 +108,7 @@ All actual footprint, support, budget, and layout checks still apply.
         decision=decision,
         requested_counts=requested_counts,
         recommended_counts=recommended_counts,
+        intent=intent,
     )
     is_recommendation = decision == "use_recommendation"
     decision_label = (
@@ -139,7 +154,8 @@ All actual footprint, support, budget, and layout checks still apply.
     )
     reduction_rule = (
         (
-            "You must produce the reduced plan yourself. Select at most the target count for "
+            "You must produce the reduced plan yourself. Explicitly requested, non-optional items keep "
+            "their requested counts in the target; only optional items are capped. Select at most the target count for "
             "each requested category; never exceed it, and never add categories outside the "
             f"requested set except fitting rugs when rugs were not explicitly excluded{plant_exception}. "
             "The server does not trim, re-add, or reorder your selection - "
@@ -151,7 +167,7 @@ All actual footprint, support, budget, and layout checks still apply.
             "goal, but choose the most compact catalog item for every slot so the total "
             "footprint stays inside the stated furniture area. If the requested counts cannot "
             "all fit even at the smallest available sizes, drop the lowest-priority requested "
-            "items yourself and say so in selection_strategy.gaps. The server does not trim or "
+            "items yourself and say so in gaps. The server does not trim or "
             "re-add anything - whatever you return is what the room gets."
         )
     )
@@ -168,11 +184,10 @@ Selection target for this run: {_format_fit_counts(target_counts)}
 {reduction_rule}
 A selection that still exceeds the footprint limit fails validation outright; there is no second confirmation step, so bring it inside the limit in this run.
 Use your judgment to choose compact catalog items that satisfy the requested categories and target counts.
-Prefer exact category matches. If a selected item is a clear substitute for a requested category because of its name, description, dimensions, or style, keep it and explain that substitution in the item reason.
+Prefer exact category matches. A product listed under a requested item's slot satisfies that requested category.
 Do not add unrequested furniture categories just to spend budget.
 Include at least one fitting rug unless the user explicitly excluded rugs; rugs do not count toward the density floor.
 For this accepted fit decision, satisfying the target categories and preserving circulation is more important than using the remaining budget.
-Return fit_satisfaction.selected_counts for every requested category you satisfied. Each entry must use the requested category name, the count satisfied, and the selected UIDs that satisfy it. Include substitutions when a selected UID satisfies a different requested category.
 """
 
 def _fit_bucket_for_category(
@@ -288,6 +303,7 @@ def _fit_target_validation_feedback(
     decision: str | None,
     requested_counts: dict[str, int],
     recommended_counts: dict[str, int],
+    intent: dict[str, Any],
     selected_assets: list[dict[str, Any]],
     assets_by_uid: dict[str, dict],
     fit_satisfaction: Any = None,
@@ -299,6 +315,7 @@ def _fit_target_validation_feedback(
         decision=decision,
         requested_counts=requested_counts,
         recommended_counts=recommended_counts,
+        intent=intent,
     )
     satisfaction_payload = _coerce_fit_satisfaction_payload(fit_satisfaction)
     satisfaction_buckets = _fit_satisfaction_uid_buckets(
@@ -337,8 +354,7 @@ def _fit_target_validation_feedback(
             "MISSING FIT TARGET: Accepted fit decision requires "
             f"{target_text}; this validation call is missing {missing_text}. "
             "Select compact catalog items for the missing requested categories. "
-            "If a selected asset is a legitimate compact substitute, include it in "
-            "fit_satisfaction.selected_counts with the requested category and selected_uids."
+            "A product listed under a requested item's slot counts toward that category."
         ],
         "target_counts": target_counts,
         "selected_counts": selected_counts,

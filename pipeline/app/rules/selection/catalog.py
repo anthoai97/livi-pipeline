@@ -4,7 +4,7 @@ import re
 from typing import Any
 from app.rules.placement_mode import placement_mode_for_type
 from app.rules.planner.fit_policy import SECTIONAL_MIN_ROOM
-from app.rules.planner.taxonomy import NON_SELLABLE_CATEGORIES, normalize_category, sibling_categories
+from app.rules.planner.taxonomy import normalize_category, sibling_categories
 from app.rules.selection.constants import SECTIONAL_CATEGORIES
 
 
@@ -38,12 +38,6 @@ def _asset_price_float(asset: dict | None) -> float | None:
         return float(price)
     except (TypeError, ValueError):
         return None
-
-def _asset_score_float(asset: dict) -> float:
-    try:
-        return float(asset.get("score") or 0)
-    except (TypeError, ValueError):
-        return 0.0
 
 def _price_constraint_value(value: Any) -> float | None:
     if value in (None, ""):
@@ -96,38 +90,6 @@ def _asset_brand(asset: dict[str, Any]) -> str:
         or asset.get("source")
         or ""
     ).strip()
-
-def _brand_preferences_for_category(
-    intent_packet: dict[str, Any],
-    target_category: str,
-) -> list[str]:
-    constraints = intent_packet.get("asset_attribute_constraints")
-    if not isinstance(constraints, list):
-        return []
-    target = normalize_category(target_category)
-    preferences: list[str] = []
-    seen: set[str] = set()
-    for constraint in constraints:
-        if (
-            not isinstance(constraint, dict)
-            or str(constraint.get("attribute_type") or "").strip().lower()
-            != "brand"
-        ):
-            continue
-        category = normalize_category(constraint.get("category"))
-        if category:
-            if not target or not _price_constraint_category_matches(
-                category,
-                target,
-            ):
-                continue
-        value = str(constraint.get("value") or "").strip()
-        normalized = _normalize_brand(value)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        preferences.append(value)
-    return preferences
 
 def _asset_matches_brand_preferences(
     asset: dict[str, Any],
@@ -202,42 +164,6 @@ def _asset_satisfies_price_constraints(
             return False
     return applied
 
-def _category_matches(left: Any, right: Any) -> bool:
-    if not str(left or "").strip() or not str(right or "").strip():
-        return False
-    return (
-        _normalize_asset_text(left) == _normalize_asset_text(right)
-        or normalize_category(left) == normalize_category(right)
-    )
-
-def _asset_category_matches(asset: dict, category: str) -> bool:
-    return _category_matches(asset.get("category"), category)
-
-def _compute_total_cost(assets: list[dict]) -> float:
-    """Sum prices excluding non-sellable categories (e.g. TV)."""
-    total = 0.0
-    for asset in assets:
-        if normalize_category(asset.get("category")) in NON_SELLABLE_CATEGORIES:
-            continue
-        price = asset.get("price") if asset.get("price") is not None else asset.get("cost")
-        if isinstance(price, str):
-            price = price.strip().replace("$", "").replace(",", "")
-        try:
-            total += float(price or 0)
-        except (TypeError, ValueError):
-            continue
-    return total
-
-def _compute_physical_footprint(assets: list[dict]) -> float:
-    footprint = 0.0
-    for asset in assets:
-        uid = str(asset.get("uid") or asset.get("instance_key") or "").lower()
-        category = str(asset.get("category") or "").lower()
-        if "rug" in uid or "carpet" in uid or "rug" in category or "carpet" in category:
-            continue
-        footprint += float(asset.get("width") or 0.0) * float(asset.get("depth") or 0.0)
-    return round(footprint, 4)
-
 def _asset_uid(asset: dict[str, Any]) -> str:
     return str(asset.get("uid") or asset.get("instance_key") or asset.get("name") or "")
 
@@ -272,19 +198,6 @@ def _base_uid(uid: str, catalog: dict) -> str:
         return uid
     base = re.sub(r"_\d+$", "", uid)
     return base if base in catalog else uid
-
-def _canonical_selection_uid(uid: Any, catalog: dict) -> str:
-    """Normalize minor LLM UID formatting drift only when it resolves to catalog data."""
-    raw = str(uid or "").strip()
-    if not raw or raw in catalog:
-        return raw
-    stripped = raw.strip(" \t\r\n\"'`[](){}<>.,;:")
-    if stripped in catalog:
-        return stripped
-    base = _base_uid(stripped, catalog)
-    if base in catalog:
-        return base
-    return raw
 
 def _normalize_asset_text(value: Any) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())).strip()

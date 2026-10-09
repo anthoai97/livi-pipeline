@@ -15,14 +15,11 @@ from app.rules.layout_rules import WALL_FLUSH_MAX_GAP_M
 from app.rules.layout.studio import is_freestanding_studio_media_support
 from app.rules.planner.taxonomy import SEATING_ROLE_KEYWORDS, SOFA_ROLE_KEYWORDS
 from app.rules.pipeline_shared import (
-    WALL_MOUNT_Z,
     RoomWall,
     ceiling_mount_z,
     clamp,
-    is_ceiling_mounted_asset,
     is_floor_lamp_asset,
     is_wall_aligned_asset,
-    is_wall_mounted_asset,
     matches_category_keywords,
     nearest_wall,
     room_bounds,
@@ -57,7 +54,6 @@ from app.rules.layout.relations import (
     _is_media_support_asset,
     _is_wall_mounted_layout_asset,
     _parent_uid,
-    _placement_mode,
     _resolve_stack_chain,
     _support_child_world_position,
     _supported_parent_uid,
@@ -66,129 +62,6 @@ from app.rules.layout.relations import (
     _window_wall_line,
     floor_assets,
 )
-
-
-def physical_vertical_support_violations(
-    layout: dict[str, Any],
-    assets: list[dict[str, Any]],
-    *,
-    floor_z_tolerance_m: float = 0.005,
-    support_z_tolerance_m: float = 0.08,
-    mounted_z_tolerance_m: float = 0.05,
-    rotation_tolerance_rad: float = 0.01,
-) -> list[dict[str, Any]]:
-    """Report invalid physical Z/support without mutating ``layout``.
-
-    Supports may be explicit or inferred, so legacy stand-mounted media remains valid.
-    """
-    violations: list[dict[str, Any]] = []
-
-    def add(uid: str, reason: str, **details: Any) -> None:
-        violations.append({"uid": uid, "reason": reason, **details})
-
-    for uid, placement in layout.items():
-        asset = get_asset_by_uid(uid, assets)
-        if not asset:
-            add(uid, "missing_asset_metadata")
-            continue
-        try:
-            pos, rot_z, width, depth, _ = extract_placement(placement, asset)
-        except (TypeError, ValueError, IndexError):
-            add(uid, "invalid_placement")
-            continue
-        if not all(math.isfinite(float(value)) for value in (*pos, rot_z, width, depth)):
-            add(uid, "non_finite_placement")
-            continue
-
-        raw_rotation = placement.get("rotation")
-        if not isinstance(raw_rotation, list) or len(raw_rotation) < 3:
-            add(uid, "invalid_rotation")
-            continue
-        try:
-            roll, pitch = (float(raw_rotation[0]), float(raw_rotation[1]))
-        except (TypeError, ValueError):
-            add(uid, "invalid_rotation")
-            continue
-        if not math.isfinite(roll) or not math.isfinite(pitch):
-            add(uid, "non_finite_placement")
-            continue
-        tilt = [
-            min(abs(value) % math.tau, math.tau - (abs(value) % math.tau))
-            for value in (roll, pitch)
-        ]
-        if any(value > rotation_tolerance_rad for value in tilt):
-            add(uid, "non_planar_rotation", roll=round(roll, 4), pitch=round(pitch, 4))
-
-        z = float(pos[2])
-        ceiling_mounted = _is_ceiling_mounted_layout_asset(asset, uid)
-        floor_only = _is_floor_only_layout_asset(asset, uid)
-        wall_mounted = _is_wall_mounted_layout_asset(asset, uid)
-
-        if ceiling_mounted:
-            expected_z = ceiling_mount_z(asset.get("height", 0.3))
-            if abs(z - expected_z) > mounted_z_tolerance_m:
-                add(
-                    uid, "ceiling_mount_height", z=round(z, 4),
-                    expected_z=round(float(expected_z), 4),
-                )
-            continue
-
-        if floor_only:
-            if abs(z) > floor_z_tolerance_m:
-                add(uid, "floor_height", z=round(z, 4), expected_z=0.0)
-            explicit_parent = _parent_uid(placement)
-            if explicit_parent:
-                add(uid, "floor_asset_has_support_parent", parent_uid=explicit_parent)
-            continue
-
-        parent_uid = _supported_parent_uid(uid, placement, layout, assets)
-        if parent_uid:
-            parent_placement = layout.get(parent_uid)
-            parent_asset = get_asset_by_uid(parent_uid, assets)
-            if not isinstance(parent_placement, dict) or not parent_asset:
-                add(uid, "invalid_support_parent", parent_uid=parent_uid)
-                continue
-            try:
-                p_pos, p_rot_z, p_width, p_depth, _ = extract_placement(
-                    parent_placement,
-                    parent_asset,
-                )
-            except (TypeError, ValueError, IndexError):
-                add(uid, "invalid_support_parent_placement", parent_uid=parent_uid)
-                continue
-            expected_z = support_top_z(parent_asset, p_pos[2])
-            if abs(z - expected_z) > support_z_tolerance_m:
-                add(
-                    uid,
-                    "support_height",
-                    parent_uid=parent_uid,
-                    z=round(z, 4),
-                    expected_z=round(float(expected_z), 4),
-                )
-            parent_poly = asset_polygon(p_pos, p_rot_z, p_width, p_depth)
-            support_poly = _inset_support_polygon(parent_poly, p_width, p_depth)
-            item_poly = asset_polygon(pos, rot_z, width, depth)
-            if not support_poly.covers(item_poly):
-                add(uid, "support_footprint", parent_uid=parent_uid)
-            continue
-
-        if wall_mounted:
-            expected_z = _wall_mount_z(asset)
-            if abs(z - expected_z) > mounted_z_tolerance_m:
-                add(
-                    uid, "wall_mount_height", z=round(z, 4),
-                    expected_z=round(float(expected_z), 4),
-                )
-            continue
-
-        if _placement_mode(asset, uid) == "tabletop":
-            add(
-                uid,
-                "missing_effective_support",
-                parent_uid=_parent_uid(placement),
-            )
-
-    return violations
 
 
 def _wall_gap(wall: RoomWall, pos: list[float], half_across: float) -> float:
@@ -735,70 +608,6 @@ def _correct_z(
         if fixed_height:
             normalized.pop("on_top_of", None)
         result[uid] = normalized
-    return result
-
-def layout_from_placements(
-    placements: list[dict[str, Any]],
-    assets: list[dict[str, Any]],
-    room_area: tuple[float, float],
-) -> dict[str, Any]:
-    """Turn model placements into a layout keyed by instance key (legacy initial-layout step).
-
-    placements: [{"uid", "position": [x, y, z], "rotation": [0, 0, rot_z],
-    optional "on_top_of", "category"}]. Raises ValueError unless every instance
-    appears exactly once with finite vectors. Snaps wall-aligned rotations to
-    quarter turns, puts wall-mounted items on the nearest wall at WALL_MOUNT_Z,
-    sets ceiling-mounted heights, and keeps on_top_of only when it names an
-    instance. Run normalize_layout on the result.
-    """
-    room_width, room_depth = room_area
-    allowed_uids = {str(a.get("instance_key") or a.get("uid") or "") for a in assets} - {""}
-    if not isinstance(placements, list) or any(not isinstance(p, dict) for p in placements):
-        raise ValueError("Initial layout must be a list of placements")
-    keys = [p.get("uid") for p in placements]
-    if len(keys) != len(set(keys)) or set(keys) != allowed_uids:
-        raise ValueError(f"Initial layout must place every selected UID exactly once; missing={sorted(allowed_uids - set(keys))}, unexpected={set(keys) - allowed_uids}")
-    layout = {p["uid"]: p for p in placements}
-    result = {}
-    asset_map = {str(a.get("instance_key") or a.get("uid") or ""): a for a in assets}
-    for uid, p in layout.items():
-        pos, rot = p.get("position"), p.get("rotation")
-        if any(not isinstance(v, list) or len(v) != 3 or
-               any(not isinstance(x, (int, float)) or not math.isfinite(x) for x in v)
-               for v in (pos, rot)):
-            raise ValueError(f"Initial layout {uid} requires finite position and rotation vectors")
-        if is_wall_aligned_asset(asset_map.get(uid, {}).get("category", ""), uid):
-            rot = [0.0, 0.0, snap_rotation(float(rot[2]), math.pi / 2)]
-        cat = asset_map.get(uid, {}).get("category", "")
-        if is_wall_mounted_asset(cat, uid):
-            depth = asset_map.get(uid, {}).get("depth", 0.1)
-            half_d = depth / 2 + 0.02
-            x, y = float(pos[0]), float(pos[1])
-            dists = [x, room_width - x, y, room_depth - y]
-            wall_idx = dists.index(min(dists))
-            if wall_idx == 0:
-                x = half_d
-            elif wall_idx == 1:
-                x = room_width - half_d
-            elif wall_idx == 2:
-                y = half_d
-            else:
-                y = room_depth - half_d
-            pos = [x, y, WALL_MOUNT_Z]
-        elif is_ceiling_mounted_asset(cat, uid):
-            asset_h = asset_map.get(uid, {}).get("height", 0.3)
-            pos = [float(pos[0]), float(pos[1]), ceiling_mount_z(asset_h)]
-        parent_ref = p.get("on_top_of")
-        entry = {
-            "uid": uid,
-            "instance_key": uid,
-            "category": p.get("category", ""),
-            "position": [float(x) for x in pos],
-            "rotation": [float(r) for r in rot],
-        }
-        if isinstance(parent_ref, str) and parent_ref.strip() and parent_ref in allowed_uids:
-            entry["on_top_of"] = parent_ref.strip()
-        result[uid] = entry
     return result
 
 def normalize_layout(

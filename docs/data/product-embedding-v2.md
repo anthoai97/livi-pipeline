@@ -44,7 +44,9 @@ Use these fields in this order:
 | Color | `colors`, joined with commas |
 | Style | `styles`, joined with commas |
 | Materials | `materials`, joined with commas |
+| Features | `features`, joined with commas |
 | Placement | `placement_type` |
+| Mount | `mount_type` |
 | Dimensions | Known values from `width_m`, `depth_m`, and `height_m`, with axis labels and units |
 
 Require a useful title, correct category, factual description, and working matching
@@ -65,6 +67,7 @@ Description: Cream boucle sofa with curved arms and wooden legs, designed for li
 Color: cream
 Style: modern
 Materials: boucle fabric, wood
+Features: curved arms
 Placement: floor
 Dimensions: width 2.100 m; depth 0.900 m; height 0.800 m.
 ```
@@ -74,7 +77,7 @@ to generate the embedding. Include the matching product image as an image input;
 retry if it cannot be read.
 
 Keep `asset_id`, `source_table`, `source_id`, `is_purchasable`, price, currency,
-and URLs outside the embedding text. They support record lookup, exact filters,
+`front_view`, `center`, and URLs outside the embedding text. They support record lookup, exact filters,
 and asset loading. The image itself contributes to the embedding; its URL is not
 descriptive text.
 

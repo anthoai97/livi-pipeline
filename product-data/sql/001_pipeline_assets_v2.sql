@@ -1,7 +1,7 @@
 CREATE SCHEMA IF NOT EXISTS pipeline;
 
 CREATE TABLE IF NOT EXISTS pipeline.pipeline_assets_v2 (
-    asset_id uuid PRIMARY KEY,
+    asset_id uuid CONSTRAINT pipeline_assets_v2_asset_id_pkey PRIMARY KEY,
     source_table text NOT NULL CHECK (source_table IN ('catalog.assets', 'pipeline.decor_items')),
     source_id uuid NOT NULL,
     title text,
@@ -14,6 +14,11 @@ CREATE TABLE IF NOT EXISTS pipeline.pipeline_assets_v2 (
     width_m double precision CHECK (width_m IS NULL OR width_m > 0),
     depth_m double precision CHECK (depth_m IS NULL OR depth_m > 0),
     height_m double precision CHECK (height_m IS NULL OR height_m > 0),
+    front_view smallint,
+    center jsonb,
+    topdown_url text,
+    mount_type text CHECK (mount_type IN ('freestanding', 'wall_secured', 'wall_mounted', 'ceiling_mounted')),
+    features text[] NOT NULL DEFAULT '{}',
     placement_type text CHECK (
         placement_type IS NULL
         OR placement_type IN ('floor', 'surface', 'wall', 'ceiling')
@@ -28,5 +33,5 @@ CREATE TABLE IF NOT EXISTS pipeline.pipeline_assets_v2 (
     UNIQUE (source_table, source_id)
 );
 
-CREATE INDEX IF NOT EXISTS pipeline_assets_v2_category_idx
+CREATE INDEX IF NOT EXISTS pipeline_assets_v2_category_key_idx
     ON pipeline.pipeline_assets_v2 (category);

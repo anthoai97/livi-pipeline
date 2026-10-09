@@ -7,6 +7,7 @@
 
 ## Engineering principles
 
+- Use python env `conda activate livinit`
 - Keep edits minimal. Delete obsolete code instead of layering compatibility paths.
 - Modify existing functions in place. Do not create a new version of, or rename, a function.
 - Do not over-engineering.

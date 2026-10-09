@@ -2,7 +2,7 @@
 
 Runs the pytest suite, then repeats each case in
 docs/data/product-embedding-v2-retrieval-tests.md with the same inputs: basic
-search, the slot searches for one living-room request, and speed.
+search, the slot searches for one living-room request, text queries, and speed.
 Records each case's input, expected result, actual result, and verdict. Data
 edits are rolled back. Needs LOCAL_CONNECTION_STRING and GEMINI_API_KEY.
 
@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import xml.etree.ElementTree as ElementTree
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from decimal import Decimal
@@ -42,6 +43,8 @@ STALE_CHANGES = {
     "S1": ("Text changed", "description = description || ' Edited.'"),
     "S2": ("Image URL changed", "image_url = image_url || '?v=2'"),
     "S3": ("Became ineligible", "category = NULL"),
+    "S5": ("Features changed", "features = features || ARRAY['adjustable shelves']"),
+    "S6": ("Mount changed", "mount_type = CASE WHEN mount_type = 'wall_secured' THEN 'freestanding' ELSE 'wall_secured' END"),
 }
 
 
@@ -331,7 +334,7 @@ def collect(connection: psycopg.Connection, outcomes: dict[str, str]) -> list[di
             "test": test_outcome(outcomes, "test_invalid_arguments_are_rejected"),
         }
 
-    for builder in (r1, r2, r3, r4, r5, r9, stale("S1"), stale("S2"), stale("S3"), s4):
+    for builder in (r1, r2, r3, r4, r5, r9, stale("S1"), stale("S2"), stale("S3"), s4, stale("S5"), stale("S6")):
         add(builder)
     results.extend(a1())
     add(a3)
@@ -390,9 +393,10 @@ def slot_cases(dsn: str, outcomes: dict[str, str]) -> tuple[list[dict], list[dic
                 "input": f"Search text: \"{slot['text']}\". Filters: {filters_text(filters)}.{after}",
                 "expected": f"The {min(cases.FETCH, len(expected))} products nearest to the search text, out of the"
                             f" {len(expected)} that pass the filters. A brute-force similarity check over all"
-                            f" {len(catalog)} products finds them. Then {keep} are kept.",
+                            f" {len(catalog)} products finds them. Target pool: {keep} kept products.",
                 "actual": f"{len(rows)} returned. Same products and order as the brute-force check:"
-                          f" {'yes' if same else 'no'}. {len(kept)} kept.",
+                          f" {'yes' if same else 'no'}. {len(kept)} kept."
+                          + (f" Catalog coverage is {keep - len(kept)} below the target." if same and len(kept) < keep else ""),
                 "passed": bool(rows) and same and len(kept) == keep,
                 "test": "<br>".join(
                     test_outcome(outcomes, f"{name}[{slot['slot']}]")
@@ -464,6 +468,43 @@ def slot_cases(dsn: str, outcomes: dict[str, str]) -> tuple[list[dict], list[dic
     return results, speed
 
 
+def query_cases(dsn: str, outcomes: dict[str, str]) -> list[dict]:
+    """Run the text queries defined in test_search_assets and score their top results."""
+    vectors = cases.embed_all([case["query"] for case in cases.QUERY_CASES])
+    results, repeated = [], {}
+    with psycopg.connect(dsn, row_factory=dict_row) as connection:
+        catalog = cases.load_catalog(connection)
+        for case, vector in zip(cases.QUERY_CASES, vectors):
+            filters = {"limit": cases.TOP, "categories": case["categories"]}
+            rows = search_assets(connection, vector, **filters)
+            score = cases.score_query(case, rows, catalog)
+            repeated[case["query"]] = cases.duplicates(rows)
+            results.append({
+                "id": case["id"],
+                "title": f"\"{case['query']}\"",
+                "input": f"Query text: \"{case['query']}\". Filters: {filters_text(filters)} (current, placeable products).",
+                "expected": f"At least {score['needed']} of the top {cases.TOP} match `{'`, `'.join(case['terms'])}`"
+                            f" in the product text ({score['available']} such products in these categories).",
+                "actual": f"{len(rows)} returned. {score['hits']} match the terms.",
+                "passed": score["hits"] >= score["needed"],
+                "test": test_outcome(outcomes, f"test_text_query_returns_relevant_products[{case['id']}]"),
+                "rows": rows,
+            })
+    groups = [count for count in Counter(map(cases.duplicate_key, catalog)).values() if count > 1]
+    found = {query: titles for query, titles in repeated.items() if titles}
+    results.append({
+        "id": f"Q{len(cases.QUERY_CASES) + 1}",
+        "title": "Top results have no duplicates",
+        "input": f"The top {cases.TOP} results of the queries above.",
+        "expected": "No product page appears twice.",
+        "actual": ("<br>".join(f"\"{query}\": {', '.join(titles)}" for query, titles in found.items()) or "No duplicates.")
+                  + f"<br>Catalog: {len(groups)} such groups, {sum(groups)} products.",
+        "passed": not found,
+        "test": test_outcome(outcomes, "test_text_query_results_have_no_duplicates"),
+    })
+    return results
+
+
 def verdict(passed: bool | None) -> str:
     return "SKIPPED" if passed is None else "PASS" if passed else "FAIL"
 
@@ -503,7 +544,9 @@ def index_lines(cases_: list[dict]) -> list[str]:
     ]
 
 
-def render(basic: list[dict], slots: list[dict], speed: list[dict], catalog: dict, pytest_summary: str) -> str:
+def render(
+    basic: list[dict], slots: list[dict], queries: list[dict], speed: list[dict], catalog: dict, pytest_summary: str
+) -> str:
     lines = [
         f"# Product retrieval test report: {date.today().isoformat()}",
         "",
@@ -518,6 +561,7 @@ def render(basic: list[dict], slots: list[dict], speed: list[dict], catalog: dic
         f"| Model | `{MODEL}`, {DIMENSIONS} dimensions |",
         f"| Pytest | {pytest_summary} |",
         f"| Slot search | {counts_text(slots)} |",
+        f"| Text query | {counts_text(queries)} |",
         f"| Basic search | {counts_text(basic)} |",
         f"| Speed | {counts_text(speed)} |",
         "",
@@ -530,12 +574,15 @@ def render(basic: list[dict], slots: list[dict], speed: list[dict], catalog: dic
         "These cases run one search per product slot, the way the room pipeline searches, for one living-room"
         " request: \"a cozy cream boucle sofa under USD 1,500, no rug\", with a total budget of USD 4,000.",
         "",
-        "The pipeline plans the slots in code. Here they are fixed: the requested sofa, the required design-only plant,"
-        " six optional furniture slots, and decor. There is no rug slot, because the user excluded rugs. Each slot"
-        f" searches its own text with these filters: its categories, a price no higher than the item's limit and the"
+        f"The tests use the runtime planner's {len(cases.LIVING_ROOM_SLOTS)} slots and filters for this request."
+        " There is no rug slot, because the user excluded rugs. Each slot"
+        f" searches its own text with these filters: its categories, requested attributes, a price no higher than the item's limit and the"
         f" USD {cases.BUDGET_ALLOWANCE:,} allowance (110% of the budget), placeable (3D model, placement, and all"
-        f" dimensions), and a known price. Each fetches {cases.FETCH} products. Then requested and required slots keep"
-        f" {cases.KEEP['requested']}, optional slots {cases.KEEP['optional']}, and decor {cases.KEEP['decor']}.",
+        f" dimensions), and a known price. Each fetches up to {cases.FETCH} products. Target pools are"
+        f" {cases.KEEP['requested']} for requested and required slots, {cases.KEEP['optional']} for optional slots, and {cases.KEEP['decor']} for decor.",
+        "",
+        "Pytest verifies that search returns and keeps the available eligible products. This report also checks"
+        " the target pool size. A correct search can therefore pass pytest while this report flags a catalog coverage gap.",
         "",
         "The checks after the search that need room geometry, such as fitting the floor and minimum sizes, belong to"
         " the pipeline and are not part of this test.",
@@ -543,6 +590,17 @@ def render(basic: list[dict], slots: list[dict], speed: list[dict], catalog: dic
         *index_lines(slots),
     ]
     for case in slots:
+        lines += case_lines(case)
+    lines += [
+        "## Text query",
+        "",
+        "These cases embed what a shopper might type and search it within its categories, the way the slot planner"
+        f" searches. Each checks that at least {cases.MIN_HITS} of the top {cases.TOP} results match the named"
+        " attributes (all of them when the catalog has fewer), and that no product page appears twice.",
+        "",
+        *index_lines(queries),
+    ]
+    for case in queries:
         lines += case_lines(case)
     lines += [
         "## Basic search",
@@ -594,10 +652,11 @@ def main() -> None:
         basic = collect(connection, outcomes)
         connection.rollback()
     slots, speed = slot_cases(dsn, outcomes)
+    queries = query_cases(dsn, outcomes)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(render(basic, slots, speed, catalog, pytest_summary), encoding="utf-8")
-    failed = [case["id"] for case in basic + slots + speed if case["passed"] is False]
+    args.output.write_text(render(basic, slots, queries, speed, catalog, pytest_summary), encoding="utf-8")
+    failed = [case["id"] for case in basic + slots + queries + speed if case["passed"] is False]
     print(f"report={args.output} pytest=\"{pytest_summary}\" failed_cases={','.join(failed) or 'none'}")
 
 

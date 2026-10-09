@@ -28,7 +28,9 @@ AS $$
         'Color: ' || nullif(array_to_string(a.colors, ', '), ''),
         'Style: ' || nullif(array_to_string(a.styles, ', '), ''),
         'Materials: ' || nullif(array_to_string(a.materials, ', '), ''),
+        'Features: ' || nullif(array_to_string(a.features, ', '), ''),
         'Placement: ' || a.placement_type,
+        'Mount: ' || a.mount_type,
         'Dimensions: ' || nullif(concat_ws(
             '; ',
             'width ' || to_char(a.width_m, 'FM999990.000') || ' m',

@@ -45,7 +45,7 @@ asyncio, not LangGraph.
 - The web app requires `create_payload` on every uncommitted variant
   (`web-pipeline/lib/pipeline/variantsReady.ts:210`). It reads `render_manifest`,
   `selected_assets`, and `total_cost`.
-- Recorded runs took 160 to 339 seconds ([pipeline overview](../pipeline/pipeline-overview.md#recorded-run-timings)).
+- Recorded runs took 160 to 339 seconds ([pipeline overview](../pipeline/legacy-pipeline-overview.md#recorded-run-timings)).
 - Retrieval is one search for the whole room. The search text is the room type plus
   the raw prompt (`src/nodes/rag_scope_assets.py:639`). The top 1,000 matches are
   capped at 20 per category, extra categories are added from the top results,

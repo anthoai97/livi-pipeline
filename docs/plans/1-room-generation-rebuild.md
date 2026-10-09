@@ -31,7 +31,7 @@ Phase 1 is complete because its targets are agreed. The rebuilt pipeline's speed
 has not been verified. Later phases check speed, validity, visual quality, and cost
 against the current flow using the same inputs.
 
-Use the [pipeline overview](../pipeline/pipeline-overview.md),
+Use the [pipeline overview](../pipeline/legacy-pipeline-overview.md),
 [preparation design](../data/product-preparation-v2.md),
 [embedding format](../data/product-embedding-v2.md), and [stack notes](../Stack.md)
 as source context. Replace contracts directly without adding contract versions.

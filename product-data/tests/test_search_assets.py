@@ -4,10 +4,13 @@ Filter tests search with stored product vectors, so they make no API calls, and
 compare results with an independent Python check of the same rules. Data edits
 run inside the test transaction and are rolled back.
 
-Slot tests run one search per product slot of a living-room request, the way
-the room pipeline searches. They embed each slot's search text with Gemini, so they need
-GEMINI_API_KEY, and compare each result with a brute-force nearest search over
-all stored vectors.
+Slot tests run one search per slot that the pipeline's slot planner
+(pipeline/app/shared_stages.py) plans for a living-room request. They embed each
+slot's search text with Gemini, so they need GEMINI_API_KEY, and compare each
+result with a brute-force nearest search over all stored vectors.
+
+Text query tests embed what a shopper might type, search it within its
+categories, and score the top results for the named attributes and duplicates.
 
 Run: .venv/bin/python -m pytest product-data/tests
 """
@@ -17,6 +20,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
@@ -29,33 +33,78 @@ from psycopg.rows import dict_row
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT.parent / "pipeline"))
 load_dotenv(ROOT.parent / ".env")
 
+from app.rules.planner.intent_packet import coerce_intent_packet
+from app.rules.planner.room_facts import build_room_context
+from app.shared_stages import FETCH, KEEP, plan_slots
+from app.shared_stages import slot_filters as planned_filters
 from search_assets import embed_query, search_assets
 
 # One living-room request: "a cozy cream boucle sofa under $1,500, no rug",
-# with a total budget of USD 4,000. The room pipeline plans slots like these in code.
+# with a total budget of USD 4,000, in a 4.5 x 5.5 m room with one door.
+# INTENT holds the fields the slot planner reads from the interpret stage's
+# output for this prompt (gemini-3.8-flash, 2026-10-09).
+BUDGET = 4000
 BUDGET_ALLOWANCE = Decimal("4400")  # 110% of the budget
-FETCH = 30
-KEEP = {"requested": 10, "required": 10, "optional": 6, "decor": 4}
-LIVING_ROOM_SLOTS = [
-    {"slot": "sofa", "kind": "requested", "text": "cream boucle sofa, cozy, modern",
-     "categories": ["sofa", "loveseat", "sectional", "sectional_sofa", "sleeper_sofa", "sofa_with_chaise", "settee"],
-     "max_price": Decimal("1500")},
-    {"slot": "plant", "kind": "required", "text": "indoor plant, cozy, modern",
-     "categories": ["planter", "plant_stand"], "design_only": True},
-    {"slot": "coffee table", "kind": "optional", "text": "coffee table, cozy, modern", "categories": ["coffee_table"]},
-    {"slot": "side table", "kind": "optional", "text": "side table, cozy, modern", "categories": ["side_table", "end_table"]},
-    {"slot": "lamp", "kind": "optional", "text": "lamp, cozy, modern", "categories": ["table_lamp", "floor_lamp"]},
-    {"slot": "accent chair", "kind": "optional", "text": "accent chair, cozy, modern",
-     "categories": ["accent_chair", "arm_chair", "armchair", "lounge_chair", "swivel_chair"]},
-    {"slot": "storage", "kind": "optional", "text": "storage, cozy, modern",
-     "categories": ["bookcase", "bookshelf", "shelving_unit", "cabinet", "console_table", "sideboard"]},
-    {"slot": "media", "kind": "optional", "text": "TV stand, cozy, modern",
-     "categories": ["tv_stand", "media_console", "media_unit", "entertainment_unit"]},
-    {"slot": "decor", "kind": "decor", "text": "decorative accent, cozy, modern",
-     "categories": ["planter", "sculpture", "floor_mirror", "wall_mirror"]},
+INTENT = {
+    "normalized_prompt": "a cozy cream boucle sofa under $1,500, no rug",
+    "requested_items": [{
+        "label": "cream boucle sofa", "canonical_category": "sofa", "count": 1, "exact": False, "optional": False,
+        "acceptable_substitutes": ["sectional", "loveseat"], "descriptors": ["cozy", "cream", "boucle"],
+        "colors": ["cream"], "materials": ["boucle fabric"],
+    }],
+    "excluded_categories": ["rug"],
+    "style_hints": ["cozy"],
+    "price_constraints": [{"label": "sofa", "category": "sofa", "relation": "under", "max_price": 1500, "currency": "USD"}],
+}
+ROOM_AREA = (4.5, 5.5)
+ROOM_DOORS = [{"center": [2.25, 0.0], "width": 0.9, "depth": 0.05}]
+FILTER_KEYS = ("categories", "known_price", "max_price", "max_width_m", "max_depth_m", "max_height_m", "colors", "styles", "materials")
+
+
+def planned_slots() -> list[dict]:
+    """The pipeline's slots for the request: id, kind, search text, design-only flag, and search filters."""
+    intent = coerce_intent_packet(INTENT, room_type="living_room")
+    room = build_room_context(
+        room_type="living_room", room_area=ROOM_AREA, room_vertices=None, wall_height=2.7,
+        room_doors=ROOM_DOORS, room_windows=[], intent=intent,
+    )
+    return [
+        {"slot": slot["id"], "kind": slot["kind"], "text": slot["text"], "design_only": slot["design_only"],
+         **{key: value for key, value in planned_filters(slot).items() if key in FILTER_KEYS}}
+        for slot in plan_slots(intent, room, BUDGET)
+    ]
+
+
+LIVING_ROOM_SLOTS = planned_slots()
+
+# Text queries searched the way the slot planner searches: the query text with
+# its categories as a filter. Each names terms that must all appear in the
+# product text, so the cases check how attributes rank within a category.
+SOFAS = ["sofa", "sectional", "sectional_sofa", "loveseat", "sleeper_sofa", "sofa_bed", "couch", "couches"]
+ARMCHAIRS = ["accent_chair", "arm_chair", "armchair", "lounge_chair", "swivel_chair", "club_chair"]
+QUERY_CASES = [
+    {"id": "Q1", "query": "cream boucle sofa", "categories": SOFAS, "terms": ["cream", "boucl"]},
+    {"id": "Q2", "query": "black leather sofa", "categories": SOFAS, "terms": ["black", "leather"]},
+    {"id": "Q3", "query": "green velvet accent chair", "categories": ARMCHAIRS, "terms": ["green", "velvet"]},
+    {"id": "Q4", "query": "marble side table", "categories": ["side_table", "end_table"], "terms": ["marble"]},
+    {"id": "Q5", "query": "walnut coffee table", "categories": ["coffee_table"], "terms": ["walnut"]},
+    {"id": "Q6", "query": "round dining table", "categories": ["dining_table"], "terms": ["round"]},
+    {"id": "Q7", "query": "extendable dining table", "categories": ["dining_table"], "terms": ["exten(d|sion)"]},
+    {"id": "Q8", "query": "nightstand with drawers", "categories": ["nightstand"], "terms": ["drawer"]},
+    {"id": "Q9", "query": "rattan pendant light", "categories": ["pendant", "pendant_light"], "terms": ["rattan|wicker"]},
+    {"id": "Q10", "query": "round wall mirror", "categories": ["wall_mirror", "mirror"], "terms": ["round"]},
+    {"id": "Q11", "query": "swivel armchair", "categories": ARMCHAIRS, "terms": ["swivel"]},
+    {"id": "Q12", "query": "sofa with a chaise", "categories": SOFAS, "terms": ["chaise"]},
+    {"id": "Q13", "query": "upholstered dining chairs", "categories": ["dining_chair"], "terms": ["upholster"]},
+    {"id": "Q14", "query": "arched floor lamp", "categories": ["floor_lamp"], "terms": [r"\barc"]},
+    {"id": "Q15", "query": "queen bed frame", "categories": ["bed_frame", "bed"], "terms": ["queen"]},
+    {"id": "Q16", "query": "tv stand with LED lights", "categories": ["tv_stand", "media_console", "media_unit", "tv_unit"], "terms": [r"\bled\b"]},
 ]
+TOP = 10
+MIN_HITS = 8
 
 
 @pytest.fixture
@@ -102,22 +151,26 @@ def ids(rows: list[dict]) -> set:
 
 
 def slot_filters(slot: dict) -> dict:
-    """The search_assets arguments for one slot."""
-    return {
-        "limit": FETCH,
-        "categories": slot["categories"],
-        "max_price": min(slot.get("max_price", BUDGET_ALLOWANCE), BUDGET_ALLOWANCE),
-        "known_price": True,
-    }
+    """The search_assets arguments for one slot. A slot without max_price (TVs) has no price filters."""
+    filters = {"limit": FETCH, **{key: slot[key] for key in FILTER_KEYS if key in slot}}
+    if "max_price" in filters:
+        filters.update(max_price=min(filters["max_price"], BUDGET_ALLOWANCE), known_price=True)
+    return filters
 
 
 def slot_matches(row: dict, slot: dict) -> bool:
     """The slot filters, written independently of search_assets."""
-    limit = slot_filters(slot)["max_price"]
+    limit = slot_filters(slot).get("max_price")
     return (
         row["category"] in slot["categories"]
         and placeable(row)
-        and (row["is_purchasable"] is False or (row["price"] is not None and row["currency"] == "USD" and row["price"] <= limit))
+        and (
+            limit is None
+            or row["is_purchasable"] is False
+            or (row["price"] is not None and row["currency"] == "USD" and row["price"] <= limit)
+        )
+        and all(row[axis] <= slot[f"max_{axis}"] for axis in ("width_m", "depth_m", "height_m") if f"max_{axis}" in slot)
+        and all(value in row[field] for field in ("colors", "styles", "materials") for value in slot.get(field, []))
     )
 
 
@@ -172,6 +225,48 @@ def same_nearest(results: list[dict], expected: list[tuple[float, dict]]) -> boo
     return all(row["asset_id"] in allowed for row in results) and all(
         abs(row["similarity"] - similarity) < 1e-4 for row, (similarity, _) in zip(results, expected)
     )
+
+
+def embed_all(texts: list[str]) -> list[list[float]]:
+    """Embed search texts with Gemini, all at the same time."""
+    if not os.environ.get("GEMINI_API_KEY", "").strip():
+        pytest.skip("GEMINI_API_KEY is not set")
+    from embed_assets import gemini_client
+
+    client = gemini_client()
+    with ThreadPoolExecutor(max_workers=len(texts)) as pool:
+        return list(pool.map(lambda text: embed_query(client, text), texts))
+
+
+def product_text(row: dict) -> str:
+    return " ".join([row["title"] or "", row["description"] or "", *row["colors"], *row["materials"], *row["features"]]).lower()
+
+
+def query_hit(row: dict, case: dict) -> bool:
+    return all(re.search(term, product_text(row)) for term in case["terms"])
+
+
+def score_query(case: dict, rows: list[dict], catalog: list[dict]) -> dict:
+    """Top results with every term, against how many such products the catalog has."""
+    available = sum(row["category"] in case["categories"] and placeable(row) and query_hit(row, case) for row in catalog)
+    hits = sum(query_hit(row, case) for row in rows)
+    return {"hits": hits, "needed": min(MIN_HITS, available), "available": available}
+
+
+def duplicate_key(row: dict):
+    """The product page, or the row itself when it has none."""
+    return row["product_url"] or row["asset_id"]
+
+
+def duplicates(rows: list[dict]) -> list[str]:
+    """Titles of results that repeat an earlier result's product page."""
+    seen, repeated = set(), []
+    for row in rows:
+        key = duplicate_key(row)
+        if key in seen:
+            repeated.append(row["title"])
+        seen.add(key)
+    return repeated
 
 
 def test_purchase_search_returns_exactly_the_matching_products(connection):
@@ -279,6 +374,8 @@ def test_unknown_placement_is_excluded_from_room_design(connection):
         "description = description || ' Edited.'",
         "image_url = image_url || '?v=2'",
         "category = NULL",
+        "features = features || ARRAY['adjustable shelves']",
+        "mount_type = CASE WHEN mount_type = 'wall_secured' THEN 'freestanding' ELSE 'wall_secured' END",
     ],
 )
 def test_stale_or_ineligible_vectors_are_excluded(connection, change):
@@ -312,14 +409,13 @@ def test_invalid_arguments_are_rejected(connection, arguments):
 
 @pytest.fixture(scope="module")
 def slot_vectors():
-    if not os.environ.get("GEMINI_API_KEY", "").strip():
-        pytest.skip("GEMINI_API_KEY is not set")
-    from embed_assets import gemini_client
-
-    client = gemini_client()
-    with ThreadPoolExecutor(max_workers=len(LIVING_ROOM_SLOTS)) as pool:
-        vectors = pool.map(lambda slot: embed_query(client, slot["text"]), LIVING_ROOM_SLOTS)
+    vectors = embed_all([slot["text"] for slot in LIVING_ROOM_SLOTS])
     return dict(zip((slot["slot"] for slot in LIVING_ROOM_SLOTS), vectors))
+
+
+@pytest.fixture(scope="module")
+def query_vectors():
+    return dict(zip((case["id"] for case in QUERY_CASES), embed_all([case["query"] for case in QUERY_CASES])))
 
 
 @pytest.fixture(scope="module")
@@ -341,9 +437,12 @@ def test_slot_search_returns_the_nearest_matching_products(connection, catalog, 
 
 
 @pytest.mark.parametrize("slot", LIVING_ROOM_SLOTS, ids=[slot["slot"] for slot in LIVING_ROOM_SLOTS])
-def test_slot_keeps_enough_after_the_post_search_check(connection, slot_vectors, slot):
-    results = search_assets(connection, slot_vectors[slot["slot"]], **slot_filters(slot))
-    assert len(keep_slot(slot, results)) == KEEP[slot["kind"]]
+def test_slot_keeps_enough_after_the_post_search_check(connection, catalog, slot_vectors, slot):
+    """Every product that passes the slot filters and the check is kept, up to the keep size."""
+    vector = slot_vectors[slot["slot"]]
+    results = search_assets(connection, vector, **slot_filters(slot))
+    eligible = [row for _, row in nearest(catalog, vector, slot)]
+    assert len(keep_slot(slot, results)) == len(keep_slot(slot, eligible))
 
 
 def test_slot_searches_run_in_parallel(connection, slot_vectors):
@@ -359,3 +458,18 @@ def test_slot_with_no_match_is_an_empty_gap(connection):
     _, vector = stored_vector(connection, "a.category = 'dresser'")
     gap = {"slot": "dresser", "kind": "requested", "categories": ["dresser"], "max_price": Decimal("5")}
     assert search_assets(connection, vector, **slot_filters(gap)) == []
+
+
+@pytest.mark.parametrize("case", QUERY_CASES, ids=[case["id"] for case in QUERY_CASES])
+def test_text_query_returns_relevant_products(connection, catalog, query_vectors, case):
+    rows = search_assets(connection, query_vectors[case["id"]], limit=TOP, categories=case["categories"])
+    score = score_query(case, rows, catalog)
+    assert score["hits"] >= score["needed"], score
+
+
+def test_text_query_results_have_no_duplicates(connection, query_vectors):
+    repeated = {
+        case["query"]: duplicates(search_assets(connection, query_vectors[case["id"]], limit=TOP, categories=case["categories"]))
+        for case in QUERY_CASES
+    }
+    assert not any(repeated.values()), repeated

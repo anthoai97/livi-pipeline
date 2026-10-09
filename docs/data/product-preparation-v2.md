@@ -76,15 +76,22 @@ This is a fictional example:
   "currency": "USD",
   "image_url": "https://example.com/sofa.jpg",
   "product_url": "https://example.com/sofa",
-  "model_url": null
+  "model_url": null,
+  "front_view": null,
+  "center": null,
+  "topdown_url": null,
+  "mount_type": null,
+  "features": ["curved arms"]
 }
 ```
 
 ## Instructions for the extraction LLM
 
-Return one JSON object with exactly the fields in the example. Use JSON numbers
-for dimensions and price, arrays for colors, styles, and materials, a boolean for
-`is_purchasable`, and strings for other populated fields. Use null for unknown
+The importer copies source facts and the LLM supplies descriptive fields. The
+stored record includes all fields in the example. Use JSON numbers
+for dimensions, price, and `front_view`. Use a numeric array for `center` and
+string arrays for colors, styles, materials, and features. Use a boolean for
+`is_purchasable` and strings for other populated fields. Use null for unknown
 scalar values and empty arrays for unknown lists. Do not include commentary in
 the output.
 
@@ -107,9 +114,18 @@ the output.
 | `image_url` | Copy the supplied image reference for the selected variant. Do not invent a URL or substitute an image of a different variant. |
 | `product_url` | Copy the supplied product-page URL for the selected product. Return null if absent. |
 | `model_url` | Copy a supplied 3D model reference for this exact variant. Return null if absent. The LLM cannot create a model by filling this field. |
+| `front_view` | Copy the source front-view value. Keep missing values null. |
+| `center` | Copy the model's three finite coordinates `[x, y, z]` without changing axes or units. Catalog records use the legacy row only when its model URL matches the raw source. Decor records use their source center. Invalid or missing values stay null. |
+| `topdown_url` | Copy the matching model's top-down preview URL and normalize S3 URLs to HTTPS. Missing values stay null. |
+| `mount_type` | Normalize explicit source mounting to `freestanding`, `wall_secured`, `wall_mounted`, or `ceiling_mounted`. Keep unsupported or missing values null. This supplements `placement_type`: a floor cabinet can require wall securing. |
+| `features` | A deduplicated, sorted list of short lowercase functional facts supported by the source. Exclude promotional claims and unsupported capacities. Use an empty list when unknown. |
 
 Use one supplied vocabulary for categories and attribute labels. Normalize case
 and spelling, remove duplicates, and sort attribute lists consistently.
+
+Keep one catalog record per product page. When several raw rows share a
+product URL, they are the same product, so keep the row with the lowest
+`asset_id`. A row without a product URL is never merged.
 
 Reuse the prepared `asset_id` when importing the same `source_table` and
 `source_id` again. These source fields identify where a record came from; they do

@@ -1,9 +1,16 @@
 # Product preparation v2: run report
 
-Run on October 8, 2026, with `product-data/src/prepare_assets.py` and model `gpt-6-luna`.
-The local table `pipeline.pipeline_assets_v2` holds **5,240 products**: 4,920
-catalog products and 320 decor items. This is every product that passes the
-current conditions.
+First run on October 8, 2026, with `product-data/src/prepare_assets.py` and
+model `gpt-6-luna`, then refreshed and deduplicated on October 9. The local table
+`pipeline.pipeline_assets_v2` holds **5,095 products**: 4,775 catalog products
+and 320 decor items. This is every product that passes the current conditions.
+Counts below are as of October 9, 2026, unless a section says otherwise.
+
+On October 9, preparation started keeping one row per product URL. That removed
+145 catalog rows that repeated another row's product page.
+
+The remote database has a copy at `pipeline.pipeline_assets_v2`, synced on
+October 9 after deduplication, with the same 5,095 rows. Embeddings stay local.
 
 The records come only from the raw sources `catalog.assets` and
 `pipeline.decor_items`. Nothing is read from the legacy `pipeline.pipeline_assets`.
@@ -20,7 +27,8 @@ A row is selected only when it passes every condition, in this order.
 | `is_deleted` is false | 36,765 | — |
 | `model_url` is not empty | 4,995 | 7,493 |
 | `link_status` is not `dead` | 4,925 | 7,491 |
-| `metadata.assetMetadata.boundingBox` has `x`, `y`, `z` above 0 | **4,920** | 7,394 |
+| `metadata.assetMetadata.boundingBox` has `x`, `y`, `z` above 0 | 4,920 | 7,394 |
+| One row per product URL | **4,775** | — |
 
 - **Metadata stored as a string:** 8,311 live rows store `metadata` as a JSON
   string instead of a JSON object. The query decodes it first. Without this,
@@ -28,7 +36,7 @@ A row is selected only when it passes every condition, in this order.
 - **Dimensions:** the bounding box gives the dimensions in metres. `x` is width,
   `y` is depth, and `z` is height. A comparison with the 3D model size measured
   by the old pipeline matched all three axes for 91% of products.
-- **Image:** an image URL is not required. 12 prepared products have no image.
+- **Image:** an image URL is not required. 10 prepared products have no image.
 
 ### `pipeline.decor_items`
 
@@ -58,28 +66,32 @@ A row is selected only when it passes every condition, in this order.
 
 ## Results
 
-| Field | Catalog (4,920) | Decor (320) |
+| Field | Catalog (4,775) | Decor (320) |
 |---|---:|---:|
-| Category | 4,919 | 319 |
-| Placement | 4,914 | 314 |
-| Colors | 4,916 | 320 |
-| Styles | 4,566 | 155 |
-| Materials | 4,863 | 227 |
-| Brand | 379 | 1 |
-| Price and currency | 4,614 | 0 |
-| Purchasable | 4,919 | 0 |
-| Image | 4,909 | 320 |
-| 3D model | 4,920 | 320 |
-| Product link | 4,532 | 0 |
-| All three dimensions | 4,920 | 320 |
-| Ready to embed (title, category, description, image) | 4,908 | 319 |
+| Category | 4,775 | 319 |
+| Placement | 4,772 | 319 |
+| Colors | 4,772 | 320 |
+| Styles | 4,456 | 159 |
+| Materials | 4,731 | 183 |
+| Brand | 4,734 | 1 |
+| Price and currency | 4,478 | 0 |
+| Purchasable | 4,774 | 0 |
+| Image | 4,765 | 320 |
+| 3D model | 4,775 | 320 |
+| Product link | 4,409 | 0 |
+| All three dimensions | 4,775 | 320 |
+| Ready to embed (title, category, description, image) | 4,765 | 319 |
 
-- **Categories:** 180 in use. The largest are coffee_table (628), accent_chair
-  (426), dining_chair (380), dining_table (224), and sofa (193).
-- **Placement:** floor 4,614, surface 447, wall 124, ceiling 43, unknown 12.
-- **Prices:** all USD, from 1.49 to 40,498.20, with a median of 1,000.
+- **Categories:** 177 in use. The largest are coffee_table (625), accent_chair
+  (428), dining_chair (384), dining_table (218), and sofa (208).
+- **Placement:** floor 4,576, surface 360, wall 116, ceiling 39, unknown 4.
+- **Prices:** all USD, from 1.49 to 40,498.20, with a median of 999.
+- **Embeddings:** 5,084 products are embedded and current. The other 11 have
+  no image or no category.
 
 ### LLM usage
+
+From the first run on October 8, over 5,240 rows.
 
 | Item | Value |
 |---|---:|
@@ -93,7 +105,7 @@ A row is selected only when it passes every condition, in this order.
 
 Calls go through the Codex Pro subscription, so there is no per-token charge.
 
-## Why the total stops at 5,240
+## Why the total stops at 5,095
 
 The 3D-model condition is the limit. Of 36,765 live catalog products, only 4,995
 have a model.
@@ -105,6 +117,7 @@ have a model.
 | Include links marked `dead` | 70 |
 
 Five live products have a model but no dimensions. They stay out either way.
+Deduplication then removes 145 rows that share a product URL with another row.
 
 ## Open questions
 

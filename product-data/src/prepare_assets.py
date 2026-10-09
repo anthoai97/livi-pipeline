@@ -6,10 +6,13 @@ materials, and placement. A second LLM call fills only fields that are
 still empty, and only when the source text or image supports them.
 The importer copies identity, URLs, measured dimensions, price, currency,
 and purchase status from the source. It skips a row without all three
-dimensions, and drops dead image, model, and product links.
+dimensions, keeps one catalog row per product URL, and drops dead image,
+model, and product links.
 
 Writes each row to LOCAL_CONNECTION_STRING as it finishes and skips rows
-already prepared there, so a rerun continues. Does not modify the remote database.
+already prepared there, so a rerun continues. --refresh replaces existing records
+in place. Legacy model metadata supplies center and top-down previews only when
+the source model URL matches. Does not modify the remote database.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import math
 import os
 import re
 import sys
@@ -31,6 +35,7 @@ from typing import Literal, get_args
 import psycopg
 from dotenv import load_dotenv
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -116,11 +121,12 @@ class ProductFacts(BaseModel):
 
     title: str = Field(description="Short factual product name. Do not invent a model or collection name.")
     category: str | None = Field(description="One category from the supplied vocabulary, or null if uncertain.")
-    brand: str | None = Field(description="Named product brand. The retailer is not the brand. Null if absent.")
+    brand: str | None = Field(description="Explicit product brand from brand_hint or product text. A supported brand may also be the retailer. Do not infer brand from retailer alone. Null if absent.")
     description: str = Field(description="One to three factual sentences. No promotional claims.")
     colors: list[Color] = Field(description="Colors of this variant only. Empty if unknown.")
     styles: list[Style] = Field(description="Design styles when the design is clear. Empty if uncertain.")
     materials: list[Material] = Field(description="Broad visible or stated materials. Empty if unknown.")
+    features: list[str] = Field(description="Short lowercase functional facts supported by the source, such as extendable or soft-close drawers. No promotional claims or inferred capacities. Empty if unknown.")
     placement_type: Literal["floor", "surface", "wall", "ceiling"] | None = Field(
         description="floor, surface, wall, or ceiling. Null if uncertain."
     )
@@ -331,37 +337,51 @@ def load_categories(connection: psycopg.Connection) -> set[str]:
 def fetch_assets(connection: psycopg.Connection, limit: int, done: list[uuid.UUID]) -> list[dict]:
     return connection.execute(
         """
-        SELECT
-            asset_id::text AS source_id,
-            name,
-            category,
-            description,
-            tags,
-            model_url,
-            coalesce(product_url, meta->>'product_url') AS product_url,
-            color,
-            style,
-            source AS retailer,
-            image_url,
+        SELECT * FROM (
+        -- One row per product page: raw rows sharing a product URL are the same product.
+        SELECT DISTINCT ON (coalesce(nullif(a.product_url, ''), nullif(meta->>'product_url', ''), a.asset_id::text))
+            a.asset_id::text AS source_id,
+            a.name,
+            a.category,
+            a.description,
+            a.tags,
+            a.model_url,
+            coalesce(a.product_url, meta->>'product_url') AS product_url,
+            a.color,
+            a.style,
+            a.source AS retailer,
+            a.image_url,
+            p.center,
+            p.topdown_url,
+            meta->>'brand' AS brand,
+            meta->'annotations'->'materials' AS detailed_materials,
+            meta->'annotations'->>'materials_explained' AS materials_explained,
+            meta->'annotations'->'features' AS features,
+            meta->'product_information_comprehensive' AS product_details,
             meta->>'currency' AS currency,
             meta->>'price' AS price,
             meta->>'color_primary' AS color_primary,
             meta->>'material_primary' AS material_primary,
             meta->>'mount' AS mount,
             meta->'style_tags' AS style_tags,
+            (meta->'annotations'->>'frontView')::smallint AS front_view,
             meta->'assetMetadata'->'boundingBox'->>'x' AS width_m,
             meta->'assetMetadata'->'boundingBox'->>'y' AS depth_m,
             meta->'assetMetadata'->'boundingBox'->>'z' AS height_m
-        FROM catalog.assets,
+        FROM catalog.assets a
+        LEFT JOIN pipeline.pipeline_assets p
+          ON p.asset_id = a.asset_id AND p.model_url = a.model_url,
             -- Some rows store metadata as a JSON-encoded string.
-            LATERAL (SELECT CASE WHEN jsonb_typeof(metadata) = 'string'
-                THEN (metadata #>> '{}')::jsonb ELSE metadata END AS meta) decoded
-        WHERE NOT is_deleted
-          AND link_status IS DISTINCT FROM 'dead'
-          AND coalesce(model_url, '') <> ''
+            LATERAL (SELECT CASE WHEN jsonb_typeof(a.metadata) = 'string'
+                THEN (a.metadata #>> '{}')::jsonb ELSE a.metadata END AS meta) decoded
+        WHERE NOT a.is_deleted
+          AND a.link_status IS DISTINCT FROM 'dead'
+          AND coalesce(a.model_url, '') <> ''
           AND meta @? '$.assetMetadata.boundingBox ? (@.x.double() > 0 && @.y.double() > 0 && @.z.double() > 0)'
-          AND asset_id <> ALL(%s::uuid[])
-        ORDER BY asset_id
+        ORDER BY coalesce(nullif(a.product_url, ''), nullif(meta->>'product_url', ''), a.asset_id::text), a.asset_id
+        ) products
+        WHERE source_id::uuid <> ALL(%s::uuid[])
+        ORDER BY source_id::uuid
         LIMIT %s
         """,
         (done, limit),
@@ -380,6 +400,8 @@ def fetch_decor(connection: psycopg.Connection, limit: int, done: list[uuid.UUID
             depth::text AS depth_m,
             height::text AS height_m,
             glb_url AS model_url,
+            center,
+            topdown_url,
             product_image_url AS image_url
         FROM pipeline.decor_items
         WHERE NOT is_deleted
@@ -414,6 +436,11 @@ def source_record(row: dict, source_table: str) -> dict:
         purchasable = True if price is not None or product_url else None
     else:
         purchasable = False
+    center = row.get("center")
+    if not (isinstance(center, list) and len(center) == 3
+            and all(type(value) in (int, float) and math.isfinite(value) for value in center)):
+        center = None
+    mount = (clean_text(row.get("mount")) or "").lower().replace("-", "_")
     return {
         "asset_id": asset_id_for(source_table, row["source_id"]),
         "source_table": source_table,
@@ -424,6 +451,11 @@ def source_record(row: dict, source_table: str) -> dict:
         "raw_label": clean_text(row.get("label")),
         "raw_color": clean_text(row.get("color_primary") or row.get("color")),
         "raw_material": clean_text(row.get("material_primary")),
+        "raw_brand": clean_text(row.get("brand")),
+        "detailed_materials": row.get("detailed_materials") or [],
+        "materials_explained": clean_text(row.get("materials_explained")),
+        "raw_features": row.get("features") or [],
+        "product_details": row.get("product_details") or {},
         "raw_tags": row.get("tags") if isinstance(row.get("tags"), list) else [],
         "style_hints": useful_style_hints(row.get("style"), row.get("style_tags")),
         "retailer": clean_text(row.get("retailer")),
@@ -431,6 +463,10 @@ def source_record(row: dict, source_table: str) -> dict:
         "width_m": positive_float(row.get("width_m")),
         "depth_m": positive_float(row.get("depth_m")),
         "height_m": positive_float(row.get("height_m")),
+        "front_view": row.get("front_view"),
+        "center": center,
+        "topdown_url": live_url(public_url(row.get("topdown_url"))),
+        "mount_type": mount if mount in {"freestanding", "wall_secured", "wall_mounted", "ceiling_mounted"} else None,
         "is_purchasable": purchasable,
         "price": price,
         "currency": currency,
@@ -454,6 +490,11 @@ def llm_input(record: dict) -> dict:
         "raw_label": record["raw_label"],
         "color_hint": record["raw_color"],
         "material_hint": record["raw_material"],
+        "brand_hint": record["raw_brand"],
+        "detailed_materials": record["detailed_materials"],
+        "materials_explained": record["materials_explained"],
+        "features": record["raw_features"],
+        "product_details": record["product_details"],
         "tags": record["raw_tags"],
         "style_hints": record["style_hints"],
         "retailer": record["retailer"],
@@ -472,8 +513,7 @@ def apply_llm(record: dict, extracted: dict, vocabulary: set[str]) -> dict:
             vocabulary,
         )
     brand = clean_text(extracted.get("brand"))
-    retailer = (record["retailer"] or "").casefold()
-    if brand is None or brand.casefold() in {retailer, "unknown", "n/a", "none"}:
+    if brand is None or brand.casefold() in {"unknown", "n/a", "none"}:
         brand = None
     title = clean_text(extracted.get("title")) or fallback_title(
         record["raw_name"], record["raw_description"], category
@@ -496,6 +536,10 @@ def apply_llm(record: dict, extracted: dict, vocabulary: set[str]) -> dict:
             "width_m",
             "depth_m",
             "height_m",
+            "front_view",
+            "center",
+            "topdown_url",
+            "mount_type",
             "is_purchasable",
             "price",
             "currency",
@@ -513,6 +557,7 @@ def apply_llm(record: dict, extracted: dict, vocabulary: set[str]) -> dict:
         "materials": norm_list(extracted.get("materials"), ATTRIBUTE_VOCABULARY["materials"])
         or norm_list(record["raw_material"], ATTRIBUTE_VOCABULARY["materials"]),
         "placement_type": placement,
+        "features": norm_list(extracted.get("features")),
         "llm_used": True,
     }
     return prepared
@@ -532,6 +577,10 @@ def fallback_record(record: dict, vocabulary: set[str]) -> dict:
             "width_m",
             "depth_m",
             "height_m",
+            "front_view",
+            "center",
+            "topdown_url",
+            "mount_type",
             "is_purchasable",
             "price",
             "currency",
@@ -542,6 +591,7 @@ def fallback_record(record: dict, vocabulary: set[str]) -> dict:
         "title": title[:180],
         "category": category,
         "brand": None,
+        "features": [],
         "description": description,
         "colors": norm_list(record["raw_color"], ATTRIBUTE_VOCABULARY["colors"]),
         "styles": norm_list(record["style_hints"], ATTRIBUTE_VOCABULARY["styles"]),
@@ -733,13 +783,23 @@ def ensure_local_schema(connection: psycopg.Connection) -> None:
 def upsert_records(connection: psycopg.Connection, records: list[dict]) -> None:
     with connection.cursor() as cursor:
         for record in records:
+            mount = record["mount_type"]
+            placement = record["placement_type"]
+            if mount and placement and placement not in {
+                "freestanding": {"floor", "surface"},
+                "wall_secured": {"floor"},
+                "wall_mounted": {"wall"},
+                "ceiling_mounted": {"ceiling"},
+            }[mount]:
+                mount = None
             cursor.execute(
                 """
                 INSERT INTO pipeline.pipeline_assets_v2 (
                     asset_id, source_table, source_id, title, category, brand,
                     description, colors, styles, materials, width_m, depth_m,
                     height_m, placement_type, is_purchasable, price, currency,
-                    image_url, product_url, model_url
+                    image_url, product_url, model_url, front_view,
+                    center, topdown_url, mount_type, features
                 )
                 VALUES (
                     %(asset_id)s, %(source_table)s, %(source_id)s, %(title)s,
@@ -747,7 +807,8 @@ def upsert_records(connection: psycopg.Connection, records: list[dict]) -> None:
                     %(styles)s, %(materials)s, %(width_m)s, %(depth_m)s,
                     %(height_m)s, %(placement_type)s, %(is_purchasable)s,
                     %(price)s, %(currency)s, %(image_url)s, %(product_url)s,
-                    %(model_url)s
+                    %(model_url)s, %(front_view)s,
+                    %(center)s, %(topdown_url)s, %(mount_type)s, %(features)s
                 )
                 ON CONFLICT (source_table, source_id) DO UPDATE SET
                     asset_id = EXCLUDED.asset_id,
@@ -768,9 +829,14 @@ def upsert_records(connection: psycopg.Connection, records: list[dict]) -> None:
                     image_url = EXCLUDED.image_url,
                     product_url = EXCLUDED.product_url,
                     model_url = EXCLUDED.model_url,
+                    front_view = EXCLUDED.front_view,
+                    center = EXCLUDED.center,
+                    topdown_url = EXCLUDED.topdown_url,
+                    mount_type = EXCLUDED.mount_type,
+                    features = EXCLUDED.features,
                     prepared_at = now()
                 """,
-                record,
+                {**record, "center": Jsonb(record["center"]) if record["center"] is not None else None, "mount_type": mount},
             )
     connection.commit()
 
@@ -824,9 +890,10 @@ def main() -> None:
     parser.add_argument("--assets", type=int, default=70, help="new catalog.assets rows to prepare")
     parser.add_argument("--decor", type=int, default=30, help="new pipeline.decor_items rows to prepare")
     parser.add_argument("--workers", type=int, default=6)
+    parser.add_argument("--refresh", action="store_true", help="reprepare existing rows in place")
     args = parser.parse_args()
-    if args.assets < 0 or args.decor < 0 or args.assets + args.decor == 0:
-        raise SystemExit("choose a positive number of rows")
+    if args.assets < 0 or args.decor < 0 or args.assets + args.decor == 0 or args.workers < 1:
+        raise SystemExit("choose a positive number of rows and workers")
 
     remote_dsn = os.environ.get("REMOTE_CONNECTION_STRING", "").strip()
     local_dsn = os.environ.get("LOCAL_CONNECTION_STRING", "").strip()
@@ -837,8 +904,9 @@ def main() -> None:
     done: dict[str, list[uuid.UUID]] = {"catalog.assets": [], "pipeline.decor_items": []}
     with psycopg.connect(local_dsn, row_factory=dict_row) as local:
         ensure_local_schema(local)
-        for row in local.execute("SELECT source_table, source_id FROM pipeline.pipeline_assets_v2"):
-            done[row["source_table"]].append(row["source_id"])
+        if not args.refresh:
+            for row in local.execute("SELECT source_table, source_id FROM pipeline.pipeline_assets_v2"):
+                done[row["source_table"]].append(row["source_id"])
 
     with psycopg.connect(remote_dsn, row_factory=dict_row) as remote:
         vocabulary = load_categories(remote)
@@ -858,6 +926,7 @@ def main() -> None:
 
     usage = GeminiUsage(ROOT / "logs" / "model-usage.jsonl")
     prepared: list[dict] = []
+    failed = 0
     with (
         psycopg.connect(local_dsn, row_factory=dict_row) as local,
         ThreadPoolExecutor(max_workers=args.workers) as pool,
@@ -869,6 +938,10 @@ def main() -> None:
         for index, future in enumerate(as_completed(futures), start=1):
             item = future.result()
             if item is None:
+                continue
+            if args.refresh and not item["llm_used"]:
+                failed += 1
+                print(f"refresh failed for {item['source_table']} {item['source_id']}: existing record preserved", file=sys.stderr)
                 continue
             upsert_records(local, [item])
             prepared.append(item)
@@ -887,6 +960,7 @@ def main() -> None:
     print(
         f"prepared {len(prepared)} rows with model {client.model};"
         f" skipped={len(rows) - len(prepared)}"
+        f" failed={failed}"
         f" llm={llm_count} fallback={len(prepared) - llm_count}"
         f" gap_calls={gap_calls} gap_filled={gap_filled}"
     )
@@ -901,6 +975,8 @@ def main() -> None:
         f" log={usage.log_path}"
         f" summary={usage.summary_path}"
     )
+    if failed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

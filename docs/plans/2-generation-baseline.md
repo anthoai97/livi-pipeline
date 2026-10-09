@@ -14,6 +14,6 @@ Compare the current and rebuilt pipelines using the same prompt, budget, and roo
 
 Measure browser model loading and display separately from the 60-second target. Check Jev's benefit when integrating it; a separate benchmark project is not required to finish phase 1.
 
-Existing timings and generation rules are documented in [Pipeline overview](../pipeline/pipeline-overview.md). [Stack](../Stack.md) identifies the source repositories.
+Existing timings and generation rules are documented in [Pipeline overview](../pipeline/legacy-pipeline-overview.md). [Stack](../Stack.md) identifies the source repositories.
 
 Unresolved questions: none for phase 1.

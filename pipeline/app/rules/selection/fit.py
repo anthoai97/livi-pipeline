@@ -3,11 +3,13 @@
 The pipeline never asks the user to confirm fit. Fit step "compact" applies the
 legacy automatic continue_anyway decision (keep requested counts, pick compact
 products). Fit step "capped" applies the legacy use_recommendation decision
-(cap each requested count at the count the room fit estimate says will fit).
+(cap each requested count at the count the room fit estimate says will fit),
+except that an explicitly requested, non-optional item keeps its requested count.
 """
 
 import re
 from typing import Any
+from app.rules.planner.intent_packet import count_constraints_from_intent_packet
 from app.rules.planner.taxonomy import normalize_category
 
 from app.rules.selection.catalog import (
@@ -33,13 +35,14 @@ def _target_count_for_bucket(
     bucket: str,
     requested_counts: dict[str, int],
     recommended_counts: dict[str, int],
+    kept_counts: dict[str, int],
     *,
     decision: str,
 ) -> int:
     requested = int(requested_counts.get(bucket, 0))
     if decision == "use_recommendation":
         recommended = int(recommended_counts.get(bucket, 0))
-        return max(0, min(requested, recommended))
+        return max(0, min(requested, max(recommended, kept_counts.get(bucket, 0))))
     return requested
 
 def _fit_decision_target_counts(
@@ -47,31 +50,42 @@ def _fit_decision_target_counts(
     decision: str,
     requested_counts: dict[str, int],
     recommended_counts: dict[str, int],
+    intent: dict[str, Any],
 ) -> dict[str, int]:
+    """Target count per requested category. Capped counts never go below an
+    explicitly requested, non-optional item's count."""
+    kept_counts = {
+        category: int(constraint["count"])
+        for category, constraint in count_constraints_from_intent_packet(intent).items()
+        if not constraint["optional"]
+    }
     return {
         category: _target_count_for_bucket(
             category,
             requested_counts,
             recommended_counts,
+            kept_counts,
             decision=decision,
         )
         for category in requested_counts
     }
 
-def capped_counts(room: dict[str, Any]) -> dict[str, int]:
+def capped_counts(room: dict[str, Any], intent: dict[str, Any]) -> dict[str, int]:
     """Selection targets for fit step "capped": each requested count capped at the count that fits.
 
     The room fit estimate drops lower-priority optional furniture first, keeps
-    functional groups whole, and keeps required items such as the bed.
+    functional groups whole, and keeps required items such as the bed. An
+    explicitly requested, non-optional item keeps its requested count.
     """
     requested_counts, recommended_counts = _fit_warning_counts(room)
     return _fit_decision_target_counts(
         decision="use_recommendation",
         requested_counts=requested_counts,
         recommended_counts=recommended_counts,
+        intent=intent,
     )
 
-def fit_step_guidance(fit_step: str | None, room: dict[str, Any]) -> str:
+def fit_step_guidance(fit_step: str | None, room: dict[str, Any], intent: dict[str, Any]) -> str:
     """Selection prompt block for the applied fit step ("" when none or nothing was requested)."""
     decision = FIT_STEP_DECISIONS.get(str(fit_step or ""), "")
     if decision not in {"use_recommendation", "continue_anyway"}:
@@ -94,6 +108,7 @@ All actual footprint, support, budget, and layout checks still apply.
         decision=decision,
         requested_counts=requested_counts,
         recommended_counts=recommended_counts,
+        intent=intent,
     )
     is_recommendation = decision == "use_recommendation"
     decision_label = (
@@ -139,7 +154,8 @@ All actual footprint, support, budget, and layout checks still apply.
     )
     reduction_rule = (
         (
-            "You must produce the reduced plan yourself. Select at most the target count for "
+            "You must produce the reduced plan yourself. Explicitly requested, non-optional items keep "
+            "their requested counts in the target; only optional items are capped. Select at most the target count for "
             "each requested category; never exceed it, and never add categories outside the "
             f"requested set except fitting rugs when rugs were not explicitly excluded{plant_exception}. "
             "The server does not trim, re-add, or reorder your selection - "
@@ -287,6 +303,7 @@ def _fit_target_validation_feedback(
     decision: str | None,
     requested_counts: dict[str, int],
     recommended_counts: dict[str, int],
+    intent: dict[str, Any],
     selected_assets: list[dict[str, Any]],
     assets_by_uid: dict[str, dict],
     fit_satisfaction: Any = None,
@@ -298,6 +315,7 @@ def _fit_target_validation_feedback(
         decision=decision,
         requested_counts=requested_counts,
         recommended_counts=recommended_counts,
+        intent=intent,
     )
     satisfaction_payload = _coerce_fit_satisfaction_payload(fit_satisfaction)
     satisfaction_buckets = _fit_satisfaction_uid_buckets(

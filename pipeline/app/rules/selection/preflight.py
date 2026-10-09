@@ -288,11 +288,14 @@ def _layout_preflight_for_assets(
     """Physical layout checks for a selection. fit_checks=False skips the size
     estimates the code solver settles by placing the selection: anchor seating,
     bed, and rug against the room clear area, tabletop items against their
-    supports, and desk and dining clusters against the room clear area."""
+    supports, and desk and dining clusters against the room clear area.
+    support_fit_errors holds the errors (also in errors) for a tabletop item
+    too large for every eligible selected support."""
     room_width, room_depth, clear_width, clear_depth = _room_preflight_dimensions(room)
     room_area_sqm = room_polygon((room_width, room_depth), room.get("room_vertices")).area
     protected_path_zones = _protected_path_zones(room)
     errors: list[str] = []
+    support_fit_errors: list[str] = []
     warnings: list[str] = []
     metrics: dict[str, Any] = {
         "room_width": round(room_width, 3),
@@ -515,12 +518,13 @@ def _layout_preflight_for_assets(
                 }
                 for support in support_candidates
             ]
-            errors.append(
+            support_fit_errors.append(
                 f"{LAYOUT_PREFLIGHT_PREFIX}: tabletop asset {child_uid} "
                 f"({child_width:.2f}m x {child_depth:.2f}m) does not fit any "
                 f"selected eligible support after layout inset: {support_summary}. "
-                "Select a smaller tabletop asset or a wider/deeper support."
+                "Keep both items: select a smaller tabletop asset or a wider/deeper support from the same slots."
             )
+            errors.append(support_fit_errors[-1])
 
     coffee_tables = [
         asset
@@ -860,6 +864,7 @@ def _layout_preflight_for_assets(
     metrics["warnings"] = warnings
     return {
         "errors": errors,
+        "support_fit_errors": support_fit_errors,
         "warnings": warnings,
         "metrics": metrics,
     }

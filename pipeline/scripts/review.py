@@ -32,6 +32,7 @@ sys.path.insert(0, str(PIPELINE))
 
 from app.rules.door_geometry import door_opening_rect, door_wall
 from app.rules.geometry.primitives import asset_polygon, is_rug
+from app.rules.selection.constants import BUDGET_FLEX_PCT
 from llm_proxy import ProxyClient  # product-data/src, on the path through app
 
 RUNS_DIR = PIPELINE / ".data" / "runs"
@@ -50,9 +51,12 @@ SELECTION = {
                     "5 = every explicit request is met and the mood matches.",
     "style_coherence": "Do the products read as one design (palette, materials, style) that follows the variant direction? "
                        "1 = clashing mix; 3 = mostly coherent with one or two pieces off; 5 = one clear, consistent look.",
-    "budget_use": "Is the money spent well? 1 = over budget, or so little spent that the room is clearly underfurnished; "
-                  "3 = within budget but poorly allocated (cheap anchor piece, costly accessories); "
-                  "5 = within budget with spending focused on the anchor pieces.",
+    "budget_use": f"Is the money spent well? The pipeline's budget rule lets the total reach {1 + BUDGET_FLEX_PCT:.0%} of the "
+                  "stated budget (the allowance); a total between 100% and the allowance is within budget, not over it. "
+                  "Judge how the money is allocated and whether the total stays within the allowance. "
+                  "1 = over the allowance, or so little spent that the room is clearly underfurnished; "
+                  "3 = within the allowance but poorly allocated (cheap anchor piece, costly accessories); "
+                  "5 = within the allowance with spending focused on the anchor pieces.",
     "completeness": "Are the right items there for the room type and prompt? 1 = core pieces missing (seating in a living "
                     "room, a bed in a bedroom, a table or enough chairs in a dining room); 3 = core pieces present but "
                     "obvious supporting pieces missing (lighting, storage, side tables, nightstands) or items out of place; "
@@ -73,6 +77,10 @@ LAYOUT = {
                  "3 = acceptable with a noticeable empty or crowded area; 5 = balanced, each zone sized to its use.",
     "focal_point": "Is there a clear focal point (TV, bed, dining table, sofa group) that the layout organizes around? "
                    "1 = none; 3 = present but the layout does not organize around it; 5 = clear, and everything relates to it.",
+    "layout_quality": "Your overall judgment of the arrangement as a designer would see it in the plan, apart from the checks "
+                      "above: does it look intentional and finished, with sensible spacing, pieces aligned to the walls and to "
+                      "each other, a balanced composition, and zones that read clearly? 1 = looks random or broken; "
+                      "3 = workable but awkward in places; 5 = looks professionally arranged.",
 }
 OVERALL = "Overall quality as a design to show a client. 1 = unusable; 3 = acceptable but needs clear fixes; 5 = ready to show."
 DISTINCTNESS = ("Do the variants offer the client real choices? 1 = near copies (same products or same look); "
@@ -80,7 +88,7 @@ DISTINCTNESS = ("Do the variants offer the client real choices? 1 = near copies 
                 "5 = clearly different looks and product sets, each a valid answer to the prompt.")
 ABBREVIATIONS = {"prompt_match": "prompt", "style_coherence": "style", "budget_use": "budget", "completeness": "complete",
                  "scale_fit": "scale", "circulation": "circ", "functional_grouping": "group", "space_use": "space",
-                 "focal_point": "focal", "overall": "overall"}
+                 "focal_point": "focal", "layout_quality": "quality", "overall": "overall"}
 CRITERIA = [*SELECTION, *LAYOUT, "overall"]
 
 
@@ -289,11 +297,12 @@ def review_prompt(record: Record, variant: Record) -> str:
     request = record["request"]
     cost, budget = float(variant.get("total_cost") or 0), float(request["budget"])
     share = f" ({cost / budget:.0%} of budget)" if budget else ""
+    allowance = budget * (1 + BUDGET_FLEX_PCT)
     findings = _list(variant.get("non_blocking_findings") or [])
     return f"""You review one furnished room design produced by an automated pipeline. Judge only from the data and the image given here; do not assume anything that is not shown.
 
 USER PROMPT: {request['user_intent']}
-BUDGET: ${budget:,.0f}. Total cost: ${cost:,.0f}{share}. The total counts purchasable prices and leaves TVs out.
+BUDGET: ${budget:,.0f}; the pipeline allows a total up to {1 + BUDGET_FLEX_PCT:.0%} of it (${allowance:,.0f}). Total cost: ${cost:,.0f}{share}. The total counts purchasable prices and leaves TVs out.
 {room_text(record)}
 {variant.get('direction') or 'VARIANT DIRECTION: none (the default proposal).'}
 

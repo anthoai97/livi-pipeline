@@ -282,7 +282,9 @@ def validate_selection(
     Checks budget (110% allowance), footprint and density, category caps and
     counts, required items, fit targets, layout preflight fit, and strict
     attributes. Returns valid, status, errors, warnings, fit_failed (an
-    over-crowded footprint or a layout preflight failure), metrics,
+    over-crowded footprint or a layout preflight failure other than a
+    tabletop item too large for its supports), support_fit_failed (a
+    tabletop item too large for its supports), metrics,
     retry_context (when invalid), feedback (JSON text for the model, with
     asset_id as the uid), and instances (build_instances output).
     """
@@ -536,6 +538,7 @@ def validate_selection(
         decision=decision,
         requested_counts=requested_fit_counts,
         recommended_counts=recommended_fit_counts,
+        intent=intent_packet,
         selected_assets=selected_for_fit,
         assets_by_uid=assets_by_uid,
         fit_satisfaction=fit_satisfaction,
@@ -624,7 +627,8 @@ def validate_selection(
         "status": "PASS" if is_valid else "FAIL - ADJUST SELECTION",
         "errors": errors,
         "warnings": warnings,
-        "fit_failed": is_over_crowded or bool(layout_preflight["errors"]),
+        "fit_failed": is_over_crowded or len(layout_preflight["errors"]) > len(layout_preflight["support_fit_errors"]),
+        "support_fit_failed": bool(layout_preflight["support_fit_errors"]),
         "metrics": {
             "total_cost": round(total_cost, 2),
             "remaining_budget": round(budget - total_cost, 2),

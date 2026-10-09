@@ -109,19 +109,12 @@ def test_analyze_layout_matches_recorded_blocking_findings(run, case):
         assert check["valid"] == case["valid"]
 
 
-@pytest.mark.parametrize(
-    ("room_area", "dropped", "kept"),
-    [
-        ((5.0, 5.5), {"desk", "office_chair"}, {"tv", "tv_stand", "wardrobe"}),
-        ((4.5, 5.0), {"desk", "office_chair", "tv", "tv_stand"}, {"wardrobe"}),
-    ],
-)
-def test_capped_counts_keep_bed_and_drop_whole_lower_priority_groups(room_area, dropped, kept):
-    requested = {"bed": 1, "nightstand": 2, "wardrobe": 1, "tv": 1, "tv_stand": 1, "desk": 1, "office_chair": 1}
+def _bedroom(room_area: tuple[float, float], requested: dict[str, int], required: set[str]) -> tuple[dict, dict]:
+    """Bedroom intent and room context; items outside `required` are optional."""
     intent = coerce_intent_packet(
         {
-            "normalized_prompt": "bedroom with wardrobe, TV, and desk",
-            "requested_items": [{"canonical_category": c, "count": n} for c, n in requested.items()],
+            "normalized_prompt": "a bedroom",
+            "requested_items": [{"canonical_category": c, "count": n, "optional": c not in required} for c, n in requested.items()],
         },
         room_type="bedroom",
     )
@@ -134,11 +127,33 @@ def test_capped_counts_keep_bed_and_drop_whole_lower_priority_groups(room_area, 
         room_windows=[],
         intent=intent,
     )
-    capped = capped_counts(room)
+    return intent, room
+
+
+@pytest.mark.parametrize(
+    ("room_area", "dropped", "kept"),
+    [
+        ((5.0, 5.5), {"desk", "office_chair"}, {"tv", "tv_stand", "wardrobe"}),
+        ((4.5, 5.0), {"desk", "office_chair", "tv", "tv_stand"}, {"wardrobe"}),
+    ],
+)
+def test_capped_counts_keep_bed_and_drop_whole_lower_priority_groups(room_area, dropped, kept):
+    requested = {"bed": 1, "nightstand": 2, "wardrobe": 1, "tv": 1, "tv_stand": 1, "desk": 1, "office_chair": 1}
+    intent, room = _bedroom(room_area, requested, {"bed"})
+    capped = capped_counts(room, intent)
     assert room["fit_warning"]
     assert capped["bed"] == 1
     assert all(capped[category] == 0 for category in dropped)
     assert all(capped[category] == requested[category] for category in kept)
+
+
+def test_capped_counts_keep_explicitly_requested_items_and_cap_optional_ones():
+    # The benchmark bedroom: the fit estimate fits only the bed and dresser.
+    requested = {"bed": 1, "nightstand": 2, "table_lamp": 2, "dresser": 1, "bench": 1}
+    intent, room = _bedroom((4.0, 4.5), requested, {"bed", "nightstand", "table_lamp", "dresser"})
+
+    assert room["fit"]["counts"]["recommended"] == {"bed": 1, "dresser": 1}
+    assert capped_counts(room, intent) == {**requested, "bench": 0}
 
 
 def test_requested_gap_is_not_required():

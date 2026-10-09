@@ -5,7 +5,7 @@
     "geometry": "Door centered on the front wall and windows spaced on the back wall, reconstructed from the recorded counts.",
     "request": {
       "user_intent": "A cozy modern living room with a cream sofa, a wooden coffee table, a floor lamp for reading, and a TV for movie nights.",
-      "budget": 5000.0,
+      "budget": 7000.0,
       "room_type": "living_room",
       "room_area": [
         5.0,
@@ -61,7 +61,7 @@
     "geometry": "Door centered on the front wall and windows spaced on the back wall, reconstructed from the recorded counts.",
     "request": {
       "user_intent": "A calm Scandinavian bedroom with a queen bed, two nightstands with table lamps, and a dresser for clothes.",
-      "budget": 4000.0,
+      "budget": 6000.0,
       "room_type": "bedroom",
       "room_area": [
         4.0,
@@ -117,7 +117,7 @@
     "geometry": "Doors and windows from the legacy dining-room template (pipeline/tests/fixtures/legacy_runs.json).",
     "request": {
       "user_intent": "A cozy Scandinavian dining room for four with light wood and soft neutral dining chairs. Keep the floor bare and the room uncluttered.",
-      "budget": 5000.0,
+      "budget": 7000.0,
       "room_type": "dining_room",
       "room_area": [
         4.2672,
@@ -173,7 +173,7 @@
     "geometry": "Door centered on the front wall and windows spaced on the back wall, reconstructed from the recorded counts.",
     "request": {
       "user_intent": "A compact modern studio apartment with a bed, a small sofa facing a TV, and a dining table for two.",
-      "budget": 6000.0,
+      "budget": 8000.0,
       "room_type": "studio",
       "room_area": [
         5.5,

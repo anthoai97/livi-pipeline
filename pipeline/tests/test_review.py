@@ -120,7 +120,8 @@ def test_review_runs_reviews_ready_variants_and_reports_failures(tmp_path):
         assert RECORD["request"]["user_intent"] in text["text"] and "Judge only from the data" in text["text"]
     prompt = next(content[0]["text"] for name, content, _ in client.calls
                   if name == "variant_review" and "cool palette" not in content[0]["text"])
-    for expected in ("$3,000", "$1,500 (50% of budget)", "Oak sofa", "| (1.00, 2.50) | right (+x) |", "side_table_1",
+    for expected in ("$3,000", "up to 110% of it ($3,300)", "a total between 100% and the allowance is within budget",
+                     "layout_quality", "5 = looks professionally arranged", "$1,500 (50% of budget)", "Oak sofa", "| (1.00, 2.50) | right (+x) |", "side_table_1",
                      "media_group_violations", "Door on the bottom wall", "5 = clear paths", "default proposal"):
         assert expected in prompt
 
@@ -136,4 +137,7 @@ def test_review_runs_reviews_ready_variants_and_reports_failures(tmp_path):
     assert "![Variant 0](images/run0001abcdef-v0.png)" in report
     assert "Variant 2: failed (layout_validation_failed), not reviewed" in report
     assert "Review failed: proxy call failed: 502" in report
-    assert "| run0001a | living_room | 0 | 4 | 4 | 4 | 4 | 4 | 4 | 4 | 4 | 4 | 3 | 2 | 1,500 |" in report
+    assert "| run | room | v | prompt | style | budget | complete | scale | circ | group | space | focal | quality | overall |" in report
+    assert "| run0001a | living_room | 0 | 4 | 4 | 4 | 4 | 4 | 4 | 4 | 4 | 4 | 4 | 3 | 2 | 1,500 |" in report
+    assert "| room | variants | prompt | style | budget | complete | scale | circ | group | space | focal | quality | overall | distinct |" in report
+    assert "| layout_quality | 4 | Fine. |" in report

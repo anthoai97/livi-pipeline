@@ -228,15 +228,35 @@ against their supports. If the solver places every item with no blocking
 findings, the selection passes, and the run record notes
 `fit estimate overruled by the solver: <category counts>; overruled <errors>`.
 All other checks still apply, including TV and media pairing, dining table edge
-length, dining light clearance, and tiny-room counts. Each failed turn adds
+length, dining light clearance, and tiny-room counts.
+
+When a turn is over the budget allowance (`OVER BUDGET`), code tries a budget
+repair before the next turn. It takes the purchasable products from most to
+least expensive, skipping the anchor (sofa, bed, or dining table), and swaps
+each for a cheaper product of the same category from the same slot of this
+variant's pool. It picks the next cheaper product in the variant's ranked
+order, changes every unit of the product, and keeps the reuse limit. It stops
+when the total is within the allowance. The repaired selection goes through the
+same checks, including the Jev check and the solver check above. If it passes,
+it replaces the model's selection without another model turn, and the run
+record notes `budget repair: $<from> -> $<to> (<old> -> <new>, ...)`. If it
+fails, the run record notes `budget repair rejected (<swaps>): <errors>`, and
+the next turn uses the model's selection as usual. Each failed turn adds
 `selection turn <n> failed: <errors>` to the run record.
 
-If validation fails, the next turn repeats with the errors. When products do
+If validation fails, the next turn repeats with the errors. An over-budget turn
+also tells the model to keep every requested item and its count and to replace
+expensive picks with cheaper products from the same slots. When products do
 not fit, the turns step down:
 
 1. First fit failure: switch to smaller products (`compact`).
 2. Next fit failure: reduce counts to what fits, keeping required items
-   (`capped`).
+   (`capped`). An item the user asked for that is not optional keeps its
+   requested count; only optional items are reduced.
+
+A tabletop item too large for its supports, such as a lamp on a small
+nightstand, does not step down. Its error asks for a smaller tabletop item or a
+larger support from the same slots.
 
 After 4 failed turns in all, the variant fails with `asset_selection_failed`.
 

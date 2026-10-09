@@ -124,19 +124,23 @@ def default_switches(monkeypatch):
         monkeypatch.delenv(switch, raising=False)
 
 
-@pytest.fixture
-def searches(monkeypatch):
-    """Fixed search results: the pool records in the slot's categories with its strict attributes."""
+def search_pool(monkeypatch, rows: list[dict]) -> None:
+    """Fixed search results: the `rows` in the slot's categories with its strict attributes."""
 
     def search(connection, vector, **filters):
         return [
-            row for row in POOL
+            row for row in rows
             if row["category"] in filters["categories"]
             and all(value in row[field] for field in ("colors", "styles", "materials") for value in filters.get(field, []))
         ]
 
     monkeypatch.setattr(shared_stages, "search_assets", search)
     monkeypatch.setattr(shared_stages, "embed_query", lambda client, text: [0.0])
+
+
+@pytest.fixture
+def searches(monkeypatch):
+    search_pool(monkeypatch, POOL)
 
 
 def run_pipeline(tmp_path: Path, genai: FakeGenai, jev: FakeJevClient | None = None) -> tuple[list[dict], dict]:
@@ -290,6 +294,81 @@ def test_selection_failing_a_fit_estimate_the_solver_cannot_place_steps_down(tmp
         failures = [note for note in notes if " failed: " in note]
         assert [note.split(":")[0] for note in failures] == [f"selection turn {turn} failed" for turn in range(1, MAX_SELECTION_TURNS + 1)]
         assert all("OVER CROWDED: Footprint is" in note and len(note) <= 640 for note in failures)
+
+
+def test_lamp_too_large_for_its_side_table_keeps_the_fit_step(tmp_path, monkeypatch):
+    sideboard = next(record for record in POOL if record["asset_id"] == "sideboard_1")
+    lamp = {**sideboard, "asset_id": "table_lamp_1", "category": "table_lamp", "width_m": 0.6, "depth_m": 0.6,
+            "placement_type": "tabletop", "price": 100}
+    side_table = {**sideboard, "asset_id": "side_table_1", "category": "side_table", "width_m": 0.5, "depth_m": 0.5, "price": 150}
+    search_pool(monkeypatch, [*POOL, lamp, side_table])
+    # The solver cannot place the lamp either, so every turn fails on the lamp alone.
+    solve = variant_stages.solve_layout
+    monkeypatch.setattr(variant_stages, "solve_layout", lambda instances, room, intent: (
+        solve(instances, room, intent)[0], {"unplaceable": ["table_lamp_1"], "score": [1, 0, 0], "candidates": 0, "scored": 0, "elapsed": 0.0}))
+    packet = intent_packet(item("table lamp", "table_lamp"), item("side table", "side_table"))
+    genai = FakeGenai({"IntentPacket": packet, "Selection": selection([*TURN["items"], ("table_lamp_1", 1), ("side_table_1", 1)])})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    assert {e["reason"] for e in of_type(events, "variant_failed")} == {"asset_selection_failed"}
+    # The room fit estimate starts at compact; the lamp failures never step down to capped counts.
+    for index in range(3):
+        notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
+        assert [note for note in notes if "fit step" in note] == ["selection turn 1: fit step compact"]
+        assert stage_runs(record, "select", index) == MAX_SELECTION_TURNS
+    retries = [prompt for prompt in genai.of("Selection") if "FAILED VALIDATION" in prompt]
+    assert len(retries) == 3 * (MAX_SELECTION_TURNS - 1)
+    for prompt in retries:
+        assert "tabletop asset table_lamp_1 (0.60m x 0.60m) does not fit" in prompt
+        assert "select a smaller tabletop asset or a wider/deeper support from the same slots" in prompt
+        assert "=== ACCEPTED FIT DECISION ===" not in prompt
+
+
+def over_budget_chairs(monkeypatch, **cheaper: object) -> None:
+    """Chairs at $1,200 put TURN at $6,598, over the $5,500 allowance; the chair slot also holds a $300 chair with `cheaper` fields."""
+    chair = next(record for record in POOL if record["asset_id"] == "dining_chair_39")
+    monkeypatch.setitem(chair, "price", 1200)
+    search_pool(monkeypatch, [*POOL, {**chair, "asset_id": "dining_chair_8", "price": 300, **cheaper}])
+
+
+def test_over_budget_selection_is_repaired_with_cheaper_products_from_the_same_slot(tmp_path, monkeypatch):
+    over_budget_chairs(monkeypatch)
+    solve_as(monkeypatch, PLACEMENTS)
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection()})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
+    assert len(ready) == 3
+    for variant in ready:
+        # The requested four chairs stay; the anchor table and the sideboard are unchanged.
+        assert [asset["asset_id"] for asset in variant["selected_assets"] if asset["category"] == "dining_chair"] == ["dining_chair_8"] * 4
+        assert variant["total_cost"] == 899 + 4 * 300 + 899
+    for index in range(3):
+        assert stage_runs(record, "select", index) == 1
+        notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
+        assert "budget repair: $6598.00 -> $2998.00 (dining_chair_39 -> dining_chair_8)" in notes
+        assert not [note for note in notes if " failed: " in note]
+
+
+def test_over_budget_selection_the_repair_cannot_validate_is_retried_keeping_requested_items(tmp_path, monkeypatch):
+    # The cheaper chair is not a usable single chair, so the repaired selection fails validation.
+    over_budget_chairs(monkeypatch, width_m=2.0)
+    solve_as(monkeypatch, PLACEMENTS)
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection()})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    assert {e["reason"] for e in of_type(events, "variant_failed")} == {"asset_selection_failed"}
+    rejected = [note["text"] for note in record["notes"] if note["text"].startswith("budget repair")]
+    assert len(rejected) == 3 * MAX_SELECTION_TURNS
+    assert all(note.startswith("budget repair rejected (dining_chair_39 -> dining_chair_8): ") and "DINING CHAIR DIMENSIONS" in note
+               for note in rejected)
+    retries = [prompt for prompt in genai.of("Selection") if "FAILED VALIDATION" in prompt]
+    assert len(retries) == 3 * (MAX_SELECTION_TURNS - 1)
+    assert all("OVER BUDGET: Selection costs $6598.00" in prompt and "Keep every requested item and its count" in prompt
+               and "Do not drop requested items to save money." in prompt for prompt in retries)
 
 
 def test_required_item_searched_without_its_limits_can_pass_selection(tmp_path, searches, monkeypatch):

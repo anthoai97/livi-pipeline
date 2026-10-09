@@ -505,7 +505,7 @@ def _selection_prompt(
         if reuse_rate < 1 else ""
     )
     selection_guidance = build_selection_guidance_block(room_width=room_width, room_depth=room_depth, room_type=room_type)
-    fit_decision_guidance = fit_step_guidance(fit_step, room)
+    fit_decision_guidance = fit_step_guidance(fit_step, room, intent)
     if fit_step == "compact":
         count_guidance_constraint = (
             "Use room count guidance as context only for continue-anyway: "
@@ -604,8 +604,13 @@ OUTPUT JSON:
             f"\n\nPREVIOUS SELECTION (turn {state.get('selection_turns', 0)}) FAILED VALIDATION:\n"
             f"{json.dumps([asset['uid'] for asset in state['selection']['selected_assets']])}\n"
             f"VALIDATION RESULT:\n{json.dumps(previous, default=str)}\n"
-            "Fix every error and return the complete corrected selection."
         )
+        if any(error.startswith("OVER BUDGET") for error in previous["errors"]):
+            prompt += (
+                "The selection costs more than the budget allowance. Keep every requested item and its count; replace the "
+                "most expensive picks with cheaper products from the same slots. Do not drop requested items to save money.\n"
+            )
+        prompt += "Fix every error and return the complete corrected selection."
     return prompt
 
 
@@ -646,7 +651,8 @@ def _placement_feedback(state: VariantState) -> str:
 
 def _next_fit_step(state: VariantState) -> str | None:
     """Fit step for this turn: compact from the start when the room fit estimate warns,
-    compact after the first fit failure or failed layout, capped counts after the next."""
+    compact after the first fit failure or failed layout, capped counts after the next.
+    A tabletop item too large for its supports is not a fit failure here (`support_fit_failed`)."""
     step = state.get("fit_step")
     previous = state.get("selection_validation")
     if previous is None:
@@ -792,9 +798,11 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     marked `shared`. A selection that fails only fit estimates (the
     over-crowded footprint and the layout preflight size checks) is checked
     with the code solver (`_solver_fit`); when the solver places it, the
-    selection passes without them. Notes the fit step applied, the fit
-    estimates the solver overruled, and a failed turn's errors with
-    `ctx.run.note(...)`.
+    selection passes without them. A selection over the budget allowance is
+    repaired in code (`_budget_repair`) and checked the same way; the repaired
+    selection replaces it only when it passes. Notes the fit step applied, the
+    fit estimates the solver overruled, a budget repair, and a failed turn's
+    errors with `ctx.run.note(...)`.
     """
     shared = state["shared"]
     fit_step = _next_fit_step(state)
@@ -809,13 +817,17 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     response = await ctx.generate(Selection, _selection_prompt(state, intent, fit_step, placement_feedback, reuse_rate))
 
     selected = [asset.model_dump() for asset in response.selected_assets]
-    audit = await _constraint_audit(state, ctx, intent, _products(state["pool"], selected))
-    validation = _validated(state, selected, intent, fit_step, audit, reuse_rate)
-    if validation["fit_failed"] and (overruled := await asyncio.to_thread(_solver_fit, state, selected, intent, fit_step, audit, reuse_rate)):
-        counts = sorted(Counter(normalize_category(asset["category"]) for asset in overruled["instances"]).items())
-        ctx.run.note(f"fit estimate overruled by the solver: {', '.join(f'{category} {n}' for category, n in counts)}; "
-                     f"overruled {_errors_text(validation['errors'])}", ctx.variant_index)
-        validation = overruled
+    validation = await _checked(state, ctx, selected, intent, fit_step, reuse_rate)
+    over_budget = not validation["valid"] and any(error.startswith("OVER BUDGET") for error in validation["errors"])
+    if over_budget and (repaired := _budget_repair(state, selected, reuse_rate)):
+        cheaper, swaps = repaired
+        trial = await _checked(state, ctx, cheaper, intent, fit_step, reuse_rate)
+        if trial["valid"]:
+            ctx.run.note(f"budget repair: ${validation['metrics']['total_cost']:.2f} -> "
+                         f"${trial['metrics']['total_cost']:.2f} ({swaps})", ctx.variant_index)
+            selected, validation = cheaper, trial
+        else:
+            ctx.run.note(f"budget repair rejected ({swaps}): {_errors_text(trial['errors'])}", ctx.variant_index)
     if not validation["valid"]:
         ctx.run.note(f"selection turn {turn} failed: {_errors_text(validation['errors'])}", ctx.variant_index)
     instances = validation.pop("instances")
@@ -834,6 +846,71 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     if placement_feedback is not None:
         update["placement_feedback"] = placement_feedback
     return update
+
+
+async def _checked(state: VariantState, ctx: StageContext, selected: list[Record], intent: Record, fit_step: str | None,
+                   reuse_rate: float) -> Record:
+    """The constraint audit and `_validated` report for `selected`. A selection that fails only fit estimates
+    passes when the code solver places it (`_solver_fit`); notes the estimates the solver overruled."""
+    audit = await _constraint_audit(state, ctx, intent, _products(state["pool"], selected))
+    validation = _validated(state, selected, intent, fit_step, audit, reuse_rate)
+    if (validation["fit_failed"] or validation["support_fit_failed"]) and (
+            overruled := await asyncio.to_thread(_solver_fit, state, selected, intent, fit_step, audit, reuse_rate)):
+        counts = sorted(Counter(normalize_category(asset["category"]) for asset in overruled["instances"]).items())
+        ctx.run.note(f"fit estimate overruled by the solver: {', '.join(f'{category} {n}' for category, n in counts)}; "
+                     f"overruled {_errors_text(validation['errors'])}", ctx.variant_index)
+        validation = overruled
+    return validation
+
+
+def _budget_repair(state: VariantState, selected: list[Record], reuse_rate: float) -> tuple[list[Record], str] | None:
+    """Swap products for cheaper ones from the same slot until `selected` costs at most the budget allowance.
+
+    Most expensive purchasable non-anchor products first. Every unit of a product changes, so counts and
+    matched sets stay. The replacement is the first product of the same category in the variant's ranked
+    slot order after the current one, then before it, that is cheaper, purchasable, not already selected,
+    and keeps the reuse limit. Returns the new selection and the swaps as text, or None when the swaps
+    cannot reach the allowance. The caller validates the result again.
+    """
+    shared = state["shared"]
+    allowance = shared["request"].budget * (1 + BUDGET_FLEX_PCT)
+    anchors = set().union(*_ANCHOR_CATEGORIES.get(shared["room"]["room_type"], (FIT_ANCHOR_SEATING,)))
+    products = _products(state["pool"], selected)
+
+    def price(product: Record) -> float:
+        """What the product counts toward the budget: 0 for TVs and products that are not purchasable."""
+        return 0.0 if normalize_category(product.get("category")) in BUDGET_EXCLUDED_CATEGORIES else product["price"]
+
+    units = Counter(uid for asset in selected if (uid := asset["uid"].strip()) in products)
+    total = sum(price(products[uid]) * count for uid, count in units.items())
+    limit = math.floor(round(reuse_rate * len(products), 9))
+    shared_count = sum(bool(product.get("shared")) for product in products.values())
+    chosen = set(units)
+    swaps: dict[str, str] = {}
+    for uid in sorted(units, key=lambda uid: -price(products[uid])):
+        if total <= allowance:
+            break
+        product = products[uid]
+        category = normalize_category(product.get("category"))
+        if category in anchors or price(product) <= 0:
+            continue
+        rows = next(rows for rows in state["pool"].values() if any(str(row["asset_id"]) == uid for row in rows))
+        at = next(n for n, row in enumerate(rows) if str(row["asset_id"]) == uid)
+        for record in rows[at + 1:] + rows[:at]:
+            replacement, candidate = str(record["asset_id"]), catalog_asset(record)
+            added_shared = bool(candidate.get("shared")) - bool(product.get("shared"))
+            if (replacement in chosen or normalize_category(candidate.get("category")) != category
+                    or not 0 < price(candidate) < price(product) or (reuse_rate < 1 and added_shared > 0 and shared_count >= limit)):
+                continue
+            swaps[uid] = replacement
+            chosen = (chosen - {uid}) | {replacement}
+            shared_count += added_shared
+            total -= (price(product) - price(candidate)) * units[uid]
+            break
+    if total > allowance or not swaps:
+        return None
+    text = ", ".join(f"{old} -> {new}" for old, new in swaps.items())
+    return [{**asset, "uid": swaps.get(asset["uid"].strip(), asset["uid"])} for asset in selected], text
 
 
 def _products(pool: dict[str, list[Record]], selected: list[Record]) -> dict[str, Record]:

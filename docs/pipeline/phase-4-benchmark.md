@@ -178,6 +178,42 @@ Problems still open after the fixes:
 - Smaller: an accent chair 0.30 m from the coffee table, a tall bookcase in
   front of a window, and no dining lighting selected.
 
+### After keeping requested items and repairing budgets
+
+Budgets in `benchmark_requests.json` rose by $2,000 per request from this run
+on, so these results are not directly comparable with earlier runs. The review
+added `layout_quality` and was told the 110% allowance.
+
+| Run | Median | Max | Valid layouts | Under 60 s |
+| --- | ---: | ---: | ---: | ---: |
+| Previous review fixes | 22.6 | 45.1 | 36 of 36 | 12 |
+| Keep requested items, budget repair, budgets +$2,000 | 29.1 | 48.7 | 35 of 36 | 12 |
+
+| Criterion | Previous | Now |
+| --- | ---: | ---: |
+| prompt_match | 4.28 | 4.54 |
+| style_coherence | 4.44 | 4.51 |
+| budget_use | 3.00 | 3.83 |
+| completeness | 3.53 | 3.74 |
+| scale_fit | 4.19 | 4.23 |
+| circulation | 4.25 | 4.29 |
+| functional_grouping | 3.81 | 4.06 |
+| space_use | 3.44 | 3.57 |
+| focal_point | 4.11 | 4.31 |
+| layout_quality | - | 3.57 |
+| overall | 3.36 | 3.49 |
+| distinctness | 3.50 | 3.33 |
+
+- All 9 bedroom variants keep both nightstands and both lamps (bedroom overall
+  3.22 to 3.67, completeness 4.6). Variant 2 picks a sideboard instead of the
+  dresser in all three runs.
+- Budget repair ran once. 10 selection turns failed and were retried.
+- The failed studio variant picked a media support without a TV in all 4
+  turns ("missing 1 TV").
+- Still open: studio zoning (overall 3.0, TV 4.4 to 4.9 m from the loveseat),
+  the living-room accent chair 0.30 m from the coffee table, a tall bookcase in
+  front of the window, and no dining lighting.
+
 ## Outcome
 
 The 60-second target is not met. The best valid setup so far (escalation) has

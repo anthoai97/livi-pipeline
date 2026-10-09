@@ -24,7 +24,6 @@ from app.rules.planner.taxonomy import (
 from app.rules.pipeline_shared import (
     CEILING_HEIGHT_M,
     WALL_MOUNT_Z,
-    WALL_NAMES,
     door_clearance_rect,
     is_ceiling_mounted_asset,
     is_floor_lamp_asset,

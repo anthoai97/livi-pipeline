@@ -75,13 +75,6 @@ def layout_issue_magnitudes(issues: dict[str, Any]) -> tuple[float, float, float
     return round(shortfall, 5), round(max(viewing, default=0.0), 5), round(sum(viewing), 5)
 
 
-def studio_comfort_score(issues: dict[str, Any]) -> tuple[float, float, int, int]:
-    """Worst intended viewer first, then total distance, exposed media and polish."""
-    _, worst_view, total_view = layout_issue_magnitudes(issues)
-    floating = sum(row.get("kind") == "media_support_floating" for row in issues.get("media_group_violations") or [])
-    return worst_view, total_view, floating, layout_issue_score(issues)[2]
-
-
 def layout_change_summary(
     before: dict[str, Any] | None,
     after: dict[str, Any] | None,
@@ -101,40 +94,6 @@ def layout_change_summary(
         "added_count": len(added),
         "removed_count": len(removed),
     }
-
-def layout_changes(
-    before: dict[str, Any],
-    after: dict[str, Any],
-) -> list[dict[str, Any]]:
-    changes: list[dict[str, Any]] = []
-    for uid, after_placement in after.items():
-        before_placement = before.get(uid)
-        if not before_placement:
-            continue
-        before_pos = list(before_placement.get("position", [0.0, 0.0, 0.0]))
-        after_pos = list(after_placement.get("position", [0.0, 0.0, 0.0]))
-        before_rot = list(before_placement.get("rotation", [0.0, 0.0, 0.0]))
-        after_rot = list(after_placement.get("rotation", [0.0, 0.0, 0.0]))
-        before_pos = (before_pos + [0.0, 0.0, 0.0])[:3]
-        after_pos = (after_pos + [0.0, 0.0, 0.0])[:3]
-        before_rot = (before_rot + [0.0, 0.0, 0.0])[:3]
-        after_rot = (after_rot + [0.0, 0.0, 0.0])[:3]
-        if any(
-            abs(float(after_pos[i]) - float(before_pos[i])) > 1e-6 for i in range(3)
-        ) or any(
-            abs(float(after_rot[i]) - float(before_rot[i])) > 1e-6
-            for i in range(3)
-        ):
-            changes.append(
-                {
-                    "uid": uid,
-                    "from_position": [float(value) for value in before_pos],
-                    "to_position": [float(value) for value in after_pos],
-                    "from_rotation": [float(value) for value in before_rot],
-                    "to_rotation": [float(value) for value in after_rot],
-                }
-            )
-    return changes
 
 def serialize_layout_issues(issues: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -190,35 +149,6 @@ def serialize_layout_issues(issues: dict[str, Any]) -> dict[str, Any]:
             issues.get("service_corridor_violations", [])
         ),
     }
-
-def issue_summary(counts: dict[str, int]) -> str:
-    return (
-        f"overlaps={counts['overlaps']}, "
-        f"boundary={counts['boundary']}, "
-        f"door={counts['door']}, "
-        f"obstacle={counts['obstacle']}, "
-        f"wall_mount={counts['wall_mount']}, "
-        f"ceiling_mount={counts['ceiling_mount']}, "
-        f"wall_align={counts['wall_aligned']}, "
-        f"protected_path={counts['protected_path']}, "
-        f"sofa_table={counts['sofa_table']}, "
-        f"sofa_wall={counts['sofa_wall']}, "
-        f"media_align={counts['media_alignment']}, "
-        f"media_group={counts['media_group']}, "
-        f"rug_composition={counts['rug_composition']}, "
-        f"table_axis={counts['table_axis']}, "
-        f"living_group={counts['living_group']}, "
-        f"dining_group={counts['dining_group']}, "
-        f"living_dining={counts['living_dining_clearance']}, "
-        f"task_chair={counts['task_chair_orientation']}, "
-        f"side_table={counts['side_table_reach']}, "
-        f"floor_lamp={counts['floor_lamp_reach']}, "
-        f"table_lamp={counts['table_lamp_support']}, "
-        f"service_corridor={counts['service_corridor']}"
-    )
-
-def total_issue_count(counts: dict[str, int]) -> int:
-    return sum(int(value) for value in counts.values())
 
 def get_asset_by_uid(uid: str, assets: list[dict[str, Any]]) -> dict[str, Any]:
     lookup_uids = {uid, base_asset_uid(uid)}

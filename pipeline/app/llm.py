@@ -65,7 +65,7 @@ def _counts(response: types.GenerateContentResponse | None) -> dict[str, int]:
 
 
 def stage_models(value: str) -> dict[str, tuple[str, types.ThinkingLevel]]:
-    """Parse LLM_STAGE_MODELS, such as "place=gemini-3.5-flash-lite:minimal,correct=gemini-3.5-flash-lite:minimal",
+    """Parse LLM_STAGE_MODELS, such as "select=gemini-3.8-flash:low,correct=gemini-3.5-flash-lite:minimal",
     into the model and thinking level per stage. The level defaults to low."""
     models = {}
     for entry in filter(None, (part.strip() for part in value.split(","))):

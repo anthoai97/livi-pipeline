@@ -5,9 +5,12 @@ An LLM normalizes title, category, brand, description, colors, styles,
 materials, and placement. A second LLM call fills only fields that are
 still empty, and only when the source text or image supports them.
 The importer copies identity, URLs, measured dimensions, price, currency,
-and purchase status from the source. It skips a row without all three
-dimensions, keeps one catalog row per product URL, and drops dead image,
-model, and product links.
+and purchase status from the source. The price falls back to the cost column
+when metadata has none; a "$" price without a currency code is USD. TVs are
+always surface, since they stand on furniture; any other surface item taller
+than 1 m becomes floor.
+It skips a row without all three dimensions, keeps one catalog row per product
+URL, and drops dead image, model, and product links.
 
 Writes each row to LOCAL_CONNECTION_STRING as it finishes and skips rows
 already prepared there, so a rerun continues. --refresh replaces existing records
@@ -72,6 +75,10 @@ SURFACE_CATEGORIES = {
     "tray",
     "pitcher",
 }
+# A surface item taller than this cannot stand on a table or shelf.
+MAX_SURFACE_HEIGHT_M = 1.0
+# Displays that always stand on furniture, at any height.
+TALL_SURFACE_CATEGORIES = {"tv"}
 CAMPAIGN_PREFIXES = ("brand-", "price-", "not-", "type-")
 BUNDLE_RE = re.compile(r"\b(\d+\s*[- ]?\s*piece|set)\b", re.IGNORECASE)
 SET_WORDS = {
@@ -290,6 +297,15 @@ def fallback_placement(category: str | None, label: str | None) -> str | None:
     return None
 
 
+def checked_placement(placement: str | None, category: str | None, height_m: float | None) -> str | None:
+    """Put a display on a surface, and move any other tall surface item to the floor."""
+    if category in TALL_SURFACE_CATEGORIES:
+        return "surface"
+    if placement == "surface" and height_m and height_m > MAX_SURFACE_HEIGHT_M:
+        return "floor"
+    return placement
+
+
 def fallback_category(raw_category: str | None, label: str | None, vocabulary: set[str]) -> str | None:
     candidate = (raw_category or "").strip().lower().replace(" ", "_").replace("-", "_")
     if candidate in vocabulary:
@@ -360,6 +376,7 @@ def fetch_assets(connection: psycopg.Connection, limit: int, done: list[uuid.UUI
             meta->'product_information_comprehensive' AS product_details,
             meta->>'currency' AS currency,
             meta->>'price' AS price,
+            a.cost,
             meta->>'color_primary' AS color_primary,
             meta->>'material_primary' AS material_primary,
             meta->>'mount' AS mount,
@@ -423,12 +440,15 @@ def source_record(row: dict, source_table: str) -> dict:
         if source_table == "catalog.assets"
         else None
     )
-    price = positive_decimal(row.get("price")) if source_table == "catalog.assets" else None
-    currency = None
+    price = currency = None
     if source_table == "catalog.assets":
+        raw_price = row.get("price") if positive_decimal(row.get("price")) else row.get("cost")
+        price = positive_decimal(raw_price)
         raw_currency = clean_text(row.get("currency"))
         if raw_currency and re.fullmatch(r"[A-Za-z]{3}", raw_currency):
             currency = raw_currency.upper()
+        elif "$" in str(raw_price or ""):
+            currency = "USD"
         price = unit_price(price, row.get("name"), row.get("description"))
         if price is None or currency is None:
             price = currency = None
@@ -765,7 +785,11 @@ def extract_record(
     except Exception as exc:
         print(f"llm failed for {record['source_table']} {record['source_id']}: {exc}", file=sys.stderr)
         prepared = fallback_record(record, vocabulary)
-    return fill_missing(client, record, prepared, vocabulary, usage)
+    prepared = fill_missing(client, record, prepared, vocabulary, usage)
+    prepared["placement_type"] = checked_placement(
+        prepared["placement_type"], prepared["category"], prepared["height_m"]
+    )
+    return prepared
 
 
 def ensure_local_schema(connection: psycopg.Connection) -> None:

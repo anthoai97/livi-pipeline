@@ -1,6 +1,7 @@
 """Offline checks for source metadata preservation during preparation."""
 
 import json
+from decimal import Decimal
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -177,3 +178,26 @@ def test_upsert_drops_contradictory_mount_and_keeps_wall_secured_floor_items(
     assert parameters["mount_type"] == stored_mount
     assert parameters["placement_type"] == placement
     connection.commit.assert_called_once()
+
+
+def test_price_falls_back_to_cost_when_metadata_price_is_missing(source_row):
+    source_row.update({"name": "24-inch HD 720p LED Smart TV", "price": None, "currency": None, "cost": "$278.00"})
+    record = prepare_assets.source_record(source_row, "catalog.assets")
+    assert record["price"] == Decimal("278.00")
+    assert record["currency"] == "USD"
+    assert record["is_purchasable"] is True
+
+
+@pytest.mark.parametrize(
+    ("category", "height", "expected"),
+    [("planter", "1.66", "floor"), ("tv", "1.16", "surface"), ("vase", "0.4", "surface")],
+)
+def test_tall_surface_item_moves_to_floor_except_tv(source_row, monkeypatch, category, height, expected):
+    source_row.update({"category": category, "height_m": height, "mount": None})
+    monkeypatch.setattr(prepare_assets, "call_json", lambda *args, **kwargs: {
+        "title": "Item", "category": category, "brand": None, "description": "An item.",
+        "colors": ["green"], "styles": ["modern"], "materials": ["ceramic"],
+        "features": [], "placement_type": "surface",
+    })
+    prepared = prepare_assets.extract_record(None, source_row, "catalog.assets", {category}, None)
+    assert prepared["placement_type"] == expected

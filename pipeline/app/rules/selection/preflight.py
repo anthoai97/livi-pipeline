@@ -283,7 +283,12 @@ def _layout_preflight_for_assets(
     room: dict[str, Any],
     budget: float,
     total_cost: float,
+    fit_checks: bool = True,
 ) -> dict[str, Any]:
+    """Physical layout checks for a selection. fit_checks=False skips the size
+    estimates the code solver settles by placing the selection: anchor seating,
+    bed, and rug against the room clear area, tabletop items against their
+    supports, and desk and dining clusters against the room clear area."""
     room_width, room_depth, clear_width, clear_depth = _room_preflight_dimensions(room)
     room_area_sqm = room_polygon((room_width, room_depth), room.get("room_vertices")).area
     protected_path_zones = _protected_path_zones(room)
@@ -333,7 +338,7 @@ def _layout_preflight_for_assets(
             )
             for path in protected_path_zones
         )
-        if not fits:
+        if not fits and fit_checks:
             errors.append(
                 f"{LAYOUT_PREFLIGHT_PREFIX}: anchor seating {_asset_uid(anchor)} "
                 f"is {width:.2f}m x {depth:.2f}m and cannot fit within the "
@@ -381,7 +386,7 @@ def _layout_preflight_for_assets(
             "uid": _asset_uid(bed), "width": width, "depth": depth,
             "fits_room_clear": fits,
         })
-        if not fits:
+        if not fits and fit_checks:
             errors.append(
                 f"{LAYOUT_PREFLIGHT_PREFIX}: complete bed {_asset_uid(bed)} is "
                 f"{width:.2f}m x {depth:.2f}m and cannot fit within the "
@@ -404,7 +409,7 @@ def _layout_preflight_for_assets(
             "fill_ratio": round(fill_ratio, 3),
         }
         metrics["rugs"].append(rug_metric)
-        if not fits:
+        if not fits and fit_checks:
             errors.append(
                 f"{LAYOUT_PREFLIGHT_PREFIX}: rug {_asset_uid(rug)} is "
                 f"{width:.2f}m x {depth:.2f}m and cannot fit within the "
@@ -501,7 +506,7 @@ def _layout_preflight_for_assets(
                 "eligible support surface. Add a valid support or replace/remove "
                 "the tabletop asset."
             )
-        elif not fitting_supports:
+        elif not fitting_supports and fit_checks:
             support_summary = [
                 {
                     "uid": _asset_uid(support),
@@ -747,7 +752,7 @@ def _layout_preflight_for_assets(
                 "fits_room_clear": fits,
             }
         )
-        if not fits:
+        if not fits and fit_checks:
             errors.append(
                 f"{LAYOUT_PREFLIGHT_PREFIX}: desk/task-chair cluster needs about "
                 f"{cluster_width:.2f}m x {cluster_depth:.2f}m and cannot fit "
@@ -792,7 +797,7 @@ def _layout_preflight_for_assets(
                 f"edge length for {chair_count} selected chairs at usable seat spacing; choose a larger "
                 "table or narrower chairs while preserving mandatory seating counts."
             )
-        elif not fits:
+        elif not fits and fit_checks:
             errors.append(
                 f"{LAYOUT_PREFLIGHT_PREFIX}: dining table/chair cluster needs about "
                 f"{cluster_width:.2f}m x {cluster_depth:.2f}m and cannot fit "

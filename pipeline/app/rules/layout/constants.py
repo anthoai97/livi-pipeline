@@ -156,17 +156,6 @@ CRITICAL_P2_ISSUE_KEYS = (
     "task_chair_orientation_violations",
 )
 
-CRITICAL_P2_COUNT_KEYS = (
-    *(key.removesuffix("_violations") for key in STUDIO_ISSUE_KEYS),
-    *(key.removesuffix("_violations") for key in BEDROOM_ISSUE_KEYS),
-    *(key.removesuffix("_violations") for key in DINING_CRITICAL_ISSUE_KEYS),
-    "sofa_table",
-    "living_group_critical",
-    "dining_group",
-    "living_dining_clearance",
-    "task_chair_orientation",
-)
-
 CRITICAL_LIVING_GROUP_KINDS = {
     "sofa_console_access",
     "seat_detached_from_table",

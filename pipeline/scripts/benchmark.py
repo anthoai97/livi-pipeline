@@ -21,7 +21,7 @@ import httpx
 SCRIPTS = Path(__file__).resolve().parent
 REQUESTS = SCRIPTS / "benchmark_requests.json"
 RUNS_DIR = SCRIPTS.parent / ".data" / "runs"
-SWITCHES = ("JEV_USES", "REFINEMENT", "PRODUCT_REUSE_RATE")
+SWITCHES = ("JEV_USES", "PRODUCT_REUSE_RATE")
 
 
 def stream_run(client: httpx.Client, url: str, request: dict) -> str:

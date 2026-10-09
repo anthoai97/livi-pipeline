@@ -7,8 +7,7 @@
     variant subgraph, one per Send:
       select (repeats until the selection passes, at most 4 turns in all)
       -- place -- repair -- correct (repeats while blocking findings remain and each
-         proposal improves, at most 3 proposals per layout)
-      -- refine (when no blocking finding remains) -- validate
+         proposal improves, at most 3 proposals per layout) -- validate
       validate fails -- reselect (once, while turns remain) -- select
 
 `variant` runs the compiled subgraph and always returns a result: it catches
@@ -30,6 +29,8 @@ from langgraph.types import Send
 
 from app import contracts, shared_stages, variant_stages
 from app.contracts import PipelineRequest
+from app.rules.placement_mode import placement_mode_for_asset
+from app.rules.planner.taxonomy import normalize_category
 from app.run import ModelCallError, RunContext, StageContext, describe
 
 MODEL_CALL_TIMEOUT_S = 60
@@ -104,11 +105,11 @@ class VariantState(TypedDict, total=False):
     selection_turns: int  # graph: select calls so far, across reselection
     fit_step: str | None  # select: None, "compact" (smaller products), or "capped" (capped counts)
     instances: list[Record]  # select: instance records of `selection`, keyed by uid = instance_key
-    layout: Record  # place, repair, correct, refine: best layout so far
-    issues: Record  # place, repair, correct, refine: analyze_layout issues for `layout`
-    findings: list[Record]  # place, repair, correct, refine: findings for `layout`
-    blocking_findings: list[Record]  # place, repair, correct, refine: P0, P1, and critical P2 findings; empty ends correction
-    non_blocking_findings: list[Record]  # place, repair, correct, refine: the other P2 findings
+    layout: Record  # place, repair, correct: best layout so far
+    issues: Record  # place, repair, correct: analyze_layout issues for `layout`
+    findings: list[Record]  # place, repair, correct: findings for `layout`
+    blocking_findings: list[Record]  # place, repair, correct: P0, P1, and critical P2 findings; empty ends correction
+    non_blocking_findings: list[Record]  # place, repair, correct: the other P2 findings
     correction_proposals: int  # graph: correct calls so far for this layout
     correction_stalled: bool  # correct: the last proposal did not improve the score; ends correction
     correction_escalated: bool  # correct: later proposals for this layout use the correct_escalate model
@@ -137,7 +138,6 @@ class Stages:
     place: VariantStage = variant_stages.place
     repair: VariantStage = variant_stages.repair
     correct: VariantStage = variant_stages.correct
-    refine: VariantStage = variant_stages.refine
     validate: VariantStage = variant_stages.validate
     direction: Callable[[int, str], str] = variant_stages.direction
 
@@ -162,9 +162,11 @@ def _after_select(state: VariantState) -> str:
 
 
 def _after_layout(state: VariantState) -> str:
-    if not state.get("blocking_findings"):
-        return "refine"
-    if state.get("correction_proposals", 0) < MAX_CORRECTION_PROPOSALS and not state.get("correction_stalled"):
+    if (
+        state.get("blocking_findings")
+        and state.get("correction_proposals", 0) < MAX_CORRECTION_PROPOSALS
+        and not state.get("correction_stalled")
+    ):
         return "correct"
     return "validate"
 
@@ -209,6 +211,40 @@ def _variant_result(state: VariantState, run_id: str) -> VariantResult:
     return {"outcome": "ready", "reason": None, "event": contracts.variant_ready(variant)}
 
 
+def _variant_summary(state: VariantState) -> Record:
+    """A ready variant's compact result for the run record: products and poses, no URLs."""
+    layout = state["layout"]
+    products = [
+        {
+            "instance_key": key,
+            "uid": str(asset.get("asset_id") or ""),
+            "title": asset.get("title"),
+            "category": normalize_category(asset.get("category")),
+            "price": asset.get("price"),
+            "width_m": asset.get("width_m"),
+            "depth_m": asset.get("depth_m"),
+            "height_m": asset.get("height_m"),
+            "colors": asset.get("colors") or [],
+            "styles": asset.get("styles") or [],
+            "materials": asset.get("materials") or [],
+            "is_decor_item": asset.get("is_decor_item"),
+            "mount_type": asset.get("mount_type"),
+            "placement_mode": placement_mode_for_asset(asset),
+        }
+        for asset in state.get("instances", [])
+        if (key := str(asset.get("instance_key") or asset.get("uid") or "")) in layout
+    ]
+    return {
+        "direction": state.get("direction", "").strip(),
+        "total_cost": state.get("total_cost", 0.0),
+        "products": products,
+        "layout": {
+            key: {"position": pose.get("position"), "rotation": pose.get("rotation"), "on_top_of": pose.get("on_top_of")}
+            for key, pose in layout.items()
+        },
+    }
+
+
 def _failed(index: int, reason: str, message: str, errors: list[str]) -> VariantResult:
     return {"outcome": "failed", "reason": reason, "event": contracts.variant_failed(index, reason, message, errors)}
 
@@ -219,15 +255,13 @@ def build_graph(stages: Stages = Stages()) -> PipelineGraph:
     variant_builder.add_node("place", _stage_node("place", stages.place))
     variant_builder.add_node("repair", _stage_node("repair", stages.repair))
     variant_builder.add_node("correct", _stage_node("correct", stages.correct, "correction_proposals"))
-    variant_builder.add_node("refine", _stage_node("refine", stages.refine))
     variant_builder.add_node("validate", _stage_node("validate", stages.validate))
     variant_builder.add_node("reselect", _reselect)
     variant_builder.add_edge(START, "select")
     variant_builder.add_conditional_edges("select", _after_select, ["select", "place", END])
     variant_builder.add_edge("place", "repair")
-    variant_builder.add_conditional_edges("repair", _after_layout, ["correct", "refine", "validate"])
-    variant_builder.add_conditional_edges("correct", _after_layout, ["correct", "refine", "validate"])
-    variant_builder.add_edge("refine", "validate")
+    variant_builder.add_conditional_edges("repair", _after_layout, ["correct", "validate"])
+    variant_builder.add_conditional_edges("correct", _after_layout, ["correct", "validate"])
     variant_builder.add_conditional_edges("validate", _after_validate, ["reselect", END])
     variant_builder.add_edge("reselect", "select")
     variant_graph: CompiledStateGraph[VariantState, RunContext, Any, Any] = variant_builder.compile(name="variant")
@@ -250,16 +284,18 @@ def build_graph(stages: Stages = Stages()) -> PipelineGraph:
         index = state["variant_index"]
         run = runtime.context
         findings: list[str] = []
+        summary = None
         try:
             start: VariantState = {"variant_index": index, "direction": state["direction"], "pool": state["pool"],
                                    "shared": state["shared"]}
             final = cast(VariantState, await variant_graph.ainvoke(start))
             result = _variant_result(final, run.run_id)
             findings = [finding["issue"] for finding in final.get("non_blocking_findings", [])]
+            summary = _variant_summary(final) if result["outcome"] == "ready" else None
         except Exception as exc:  # CancelledError is not an Exception, so cancellation still propagates.
             reason = "model_call_failed" if isinstance(exc, ModelCallError) else "variant_error"
             result = _failed(index, reason, describe(exc), [describe(exc)])
-        run.record_variant(index, result["outcome"], result["reason"], findings)
+        run.record_variant(index, result["outcome"], result["reason"], findings, summary)
         runtime.stream_writer(result["event"])
         return {"variants": {index: result}}
 

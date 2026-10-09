@@ -102,4 +102,3 @@ PROTECTED_MIN_ROLES = {
     "lighting",
 }
 
-FIT_ROOM_SCALES = tuple(ROOM_THRESHOLDS)

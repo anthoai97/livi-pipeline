@@ -261,6 +261,7 @@ def validate_selection(
     fit_step: str | None = None,
     fit_satisfaction: Any = None,
     constraint_audit: Any = None,
+    fit_estimates: bool = True,
 ) -> dict[str, Any]:
     """Validate a fresh-design selection with the ported legacy rules.
 
@@ -273,7 +274,10 @@ def validate_selection(
     or "capped" (see selection.fit). fit_satisfaction (selected counts per
     requested category) and constraint_audit (code and Jev checks) are built by
     the select stage, shaped like the legacy validate_selection tool arguments,
-    with asset_id as the uid.
+    with asset_id as the uid. fit_estimates=False skips the over-crowded
+    footprint estimate and the layout preflight size estimates
+    (_layout_preflight_for_assets fit_checks), for a selection the code solver
+    has placed.
 
     Checks budget (110% allowance), footprint and density, category caps and
     counts, required items, fit targets, layout preflight fit, and strict
@@ -343,7 +347,7 @@ def validate_selection(
     max_allowed_footprint = furniture_area
     flex_budget = budget * (1 + BUDGET_FLEX_PCT)
     is_over_budget = total_cost > flex_budget
-    is_over_crowded = total_footprint > max_allowed_footprint
+    is_over_crowded = fit_estimates and total_footprint > max_allowed_footprint
 
     errors = []
     warnings = []
@@ -569,6 +573,7 @@ def validate_selection(
         room=room,
         budget=budget,
         total_cost=total_cost,
+        fit_checks=fit_estimates,
     )
     if layout_preflight["errors"]:
         errors.extend(layout_preflight["errors"])

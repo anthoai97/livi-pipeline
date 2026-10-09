@@ -20,12 +20,11 @@ POST /pipeline
                     direction, then deals them so variants get different products
      then in parallel, each:
        b. select    model picks products, code and Jev check them (up to 4 turns)
-       c. place     code solver places every item (no model call); with
-                    PLACEMENT=model, rule seed layout plus one model edit
+       c. place     code solver places every item (no model call)
        d. repair    code fixes layout problems (no model call)
-       e. correct   model fixes what is left (up to 3 proposals)
-       f. refine    model improves composition (when Jev says it is needed)
-       g. validate  rules check the final layout, build the render manifest
+       e. correct   fallback: model fixes blocking findings that remain
+                    (up to 3 proposals)
+       f. validate  rules check the final layout, build the render manifest
        a failed layout goes back to select once with the items to replace
   -> complete event with every ready variant
 ```
@@ -55,8 +54,8 @@ The service then:
    deadline, it sends every finished variant and marks the rest as failed with
    `timeout`.
 6. Writes a run record to `pipeline/.data/runs/<run_id>.json`. The record has
-   stage timings, model and Jev calls, tokens, cost, the `JEV_USES`,
-   `REFINEMENT`, and `PRODUCT_REUSE_RATE` switches, slot results, notes, and variant outcomes with their
+   stage timings, model and Jev calls, tokens, cost, the `JEV_USES`
+   and `PRODUCT_REUSE_RATE` switches, slot results, notes, and variant outcomes with their
    non-blocking findings.
 
 Every stage sends `node_start` and `node_complete` events with its elapsed time.
@@ -118,7 +117,9 @@ Each slot carries:
   110% of the budget, whichever is lower), the item's size limits, and its exact
   colors, styles, and materials.
 
-TV slots have no price filter, because TV prices never count toward the budget.
+TV categories skip the price filters, because TV prices never count toward the
+budget. In a slot that mixes TVs with other categories, such as a requested TV
+that a TV stand may substitute, the other categories keep the price filters.
 
 ### Search each slot
 
@@ -219,6 +220,17 @@ toward the reuse limit. Each variant's selection prompt lists its own pool.
    - at most `PRODUCT_REUSE_RATE` of the distinct selected products are marked
      shared (`REUSE LIMIT` error)
 
+When a turn fails only on fit estimates, the code solver (4c) checks the
+selection before the next turn. Fit estimates are the footprint estimate
+(`OVER CROWDED`) and these layout preflight size checks: sofa, bed, rug, desk
+cluster, and dining cluster against the room clear area, and tabletop items
+against their supports. If the solver places every item with no blocking
+findings, the selection passes, and the run record notes
+`fit estimate overruled by the solver: <category counts>; overruled <errors>`.
+All other checks still apply, including TV and media pairing, dining table edge
+length, dining light clearance, and tiny-room counts. Each failed turn adds
+`selection turn <n> failed: <errors>` to the run record.
+
 If validation fails, the next turn repeats with the errors. When products do
 not fit, the turns step down:
 
@@ -230,10 +242,8 @@ After 4 failed turns in all, the variant fails with `asset_selection_failed`.
 
 ### 4c. Place products
 
-`PLACEMENT` decides how `variant_stages.place` lays out the selection.
-
-**`solver` (default): code places every item, with no model call.** The solver
-(`app.rules.layout.solver`) splits the selection into groups:
+`variant_stages.place` lays out the selection with code, with no model call.
+The solver (`app.rules.layout.solver`) splits the selection into groups:
 
 - the bed with its nightstands
 - the sofa with its coffee table, accent chairs, side tables, and rug
@@ -267,17 +277,6 @@ seats, or the room's minimum, keeps its chairs. Each swap or removal is kept
 only if the layout gets better, and the run record notes it. Findings that
 remain go to repair and correction.
 
-**`model`: a rule seed layout and one model edit.** The seed places anchors
-first: the bed against a wall, nightstands at the bed head, the coffee table in
-front of the sofa, the TV opposite the sofa, chairs around the table, and lamps
-beside seats. It reports the items it could not place.
-
-The model receives the seed poses, the findings measured on the seed, the
-skipped items, and the placement rules. It returns poses only for the items it
-moves and for every skipped item. If a skipped item is left unplaced, the stage
-retries once with the error; a second miss fails the variant with
-`variant_error`.
-
 The layout is then normalized: wall items snap to walls, rugs fit the room, and
 displays sit on their supports. It is then analyzed into findings by severity:
 
@@ -302,7 +301,8 @@ A fix is kept only if it lowers the layout's issue score.
 
 ### 4e. Correct the layout
 
-While blocking findings (P0, P1, or critical P2) remain, `variant_stages.correct`
+Correction is the fallback when solving and repair leave a problem. While
+blocking findings (P0, P1, or critical P2) remain, `variant_stages.correct`
 sends the findings left after repair and asks the model for new poses for the
 items involved. It applies them, moving supported items with their supports,
 and analyzes the result again.
@@ -317,22 +317,7 @@ remaining proposals for that layout use the escalation model. For example,
 correction can start on a lite model and switch to `gemini-3.8-flash` only for
 hard layouts. The run record notes each escalation.
 
-### 4f. Refine the layout
-
-When no blocking finding remains, `variant_stages.refine` may make one
-composition pass. `REFINEMENT` decides when:
-
-- `off` (default): never. The [phase 4 benchmark](phase-4-benchmark.md) did not meet the time target with refinement on.
-- `always`: every time.
-- `jev`: when Jev, given the brief and the non-blocking findings, says
-  the layout needs composition fixes.
-
-The model gets the legacy refinement rules as text (chairs facing their surface,
-lamps beside seats, the TV focal axis, viewing distance) and returns poses for
-the items it changes. The change is rolled back if the score gets worse or a
-blocking finding appears. If the model call fails, the layout stays as it was.
-
-### 4g. Validate and send
+### 4f. Validate and send
 
 `variant_stages.validate` runs the final layout check: every selected unit is
 placed exactly once and no blocking finding remains.
@@ -381,5 +366,5 @@ ready variant and writes the run record.
 ## Not in this phase
 
 - Saving designs, design-create payloads, and the chat reply (phase 5).
-- Preview images, so refinement is text only (phase 5).
+- Preview images (phase 5).
 - Supabase upload and billing fields.

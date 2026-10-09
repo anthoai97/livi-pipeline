@@ -25,7 +25,6 @@ NODE_NAMES = {
     "place": "layout_initial",
     "repair": "layout_fix",
     "correct": "layout_fix",
-    "refine": "layout_refine",
     "validate": "render_scene",
 }
 NODES = list(dict.fromkeys(NODE_NAMES.values()))

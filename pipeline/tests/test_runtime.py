@@ -149,7 +149,6 @@ async def select(state, ctx):
 
 
 async def place(state, ctx):
-    await ctx.generate(Plan, "place")
     return {"layout": {"sofa_1": {}}, "findings": [{"level": "P0"}], "blocking_findings": [{"level": "P0"}]}
 
 
@@ -160,10 +159,6 @@ async def repair(state, ctx):
 async def correct(state, ctx):
     await ctx.generate(Plan, "correct")
     return {"findings": [], "blocking_findings": []}
-
-
-async def refine(state, ctx):
-    return {}
 
 
 async def validate(state, ctx):
@@ -185,7 +180,6 @@ STAGES = Stages(
     place=place,
     repair=repair,
     correct=correct,
-    refine=refine,
     validate=validate,
     direction=lambda index, room_type: f"direction {index}",
 )
@@ -292,9 +286,8 @@ def test_streams_the_full_event_sequence(tmp_path):
     ]
     for index in range(3):
         nodes = [e["node"] for e in events if e["type"] == "node_complete" and e["variant_index"] == index]
-        # select, place, repair and correct, refine, validate
-        assert nodes == ["select_asset_intent", "layout_initial", "layout_fix", "layout_fix",
-                         "layout_refine", "render_scene"]
+        # select, place, repair and correct, validate
+        assert nodes == ["select_asset_intent", "layout_initial", "layout_fix", "layout_fix", "render_scene"]
     assert all(isinstance(e["elapsed"], float) for e in of_type(events, "node_complete"))
 
     ready = of_type(events, "variant_ready")
@@ -348,19 +341,19 @@ def test_unknown_model_metadata_remains_unknown():
 
 
 def test_run_record_lists_stages_model_calls_and_totals(tmp_path, monkeypatch):
-    for switch in ("JEV_USES", "REFINEMENT", "PRODUCT_REUSE_RATE", "PLACEMENT"):
+    for switch in ("JEV_USES", "PRODUCT_REUSE_RATE"):
         monkeypatch.delenv(switch, raising=False)
     _, _, record = post(tmp_path)
 
     stages = [(s["stage"], s["variant_index"]) for s in record["stages"]]
     assert stages.count(("interpret", None)) == stages.count(("rank", None)) == 1
     for index in range(3):
-        for stage in ("select", "place", "repair", "correct", "refine", "validate"):
+        for stage in ("select", "place", "repair", "correct", "validate"):
             assert (stage, index) in stages
     assert all(s["outcome"] == "ok" and s["elapsed"] >= 0 for s in record["stages"])
 
     calls = record["model_calls"]
-    assert len(calls) == 1 + 3 * 3
+    assert len(calls) == 1 + 3 * 2
     assert {c["variant_index"] for c in calls} == {None, 0, 1, 2}
     for call in calls:
         assert call["input_tokens"] == 1000 and call["cached_input_tokens"] == 200
@@ -372,8 +365,7 @@ def test_run_record_lists_stages_model_calls_and_totals(tmp_path, monkeypatch):
         assert call["cost_usd"] == pytest.approx(1000 * 0.042 / 1_000_000)
     assert record["totals"]["jev_calls"] == 1
     assert record["totals"]["cost_usd"] == pytest.approx(sum(c["cost_usd"] for c in calls + jev_calls))
-    assert record["switches"] == {"JEV_USES": "check,rank", "REFINEMENT": "off", "PRODUCT_REUSE_RATE": 0.5,
-                                  "PLACEMENT": "solver"}
+    assert record["switches"] == {"JEV_USES": "check,rank", "PRODUCT_REUSE_RATE": 0.5}
     assert record["totals"]["first_ready_s"] <= record["totals"]["all_ready_s"] <= record["totals"]["full_run_s"]
     assert record["slots"] == [
         {"slot": "sofa", "candidates": 10, "gap": False, "note": None},

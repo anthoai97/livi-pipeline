@@ -370,7 +370,7 @@ def plan_slots(intent: Record, room: Record, budget: float) -> list[Record]:
     for role, categories in requirements["optional_roles"].items():
         categories = set(categories) - requested_categories
         add("optional", role, categories - BUDGET_EXCLUDED_CATEGORIES)
-        # TVs never count toward the budget and have no prepared price, so they search apart from their supports.
+        # TVs search apart from their supports, so each keeps its own candidates.
         add("optional", "tv", categories & BUDGET_EXCLUDED_CATEGORIES)
     for category in DECOR_CATEGORIES:
         if category not in excluded | requested_categories and int(caps.get(category, 1)) > 0:
@@ -383,12 +383,15 @@ def slot_filters(slot: Record) -> Record:
 
     Each category fetches up to FETCH products, so one category cannot crowd out
     the others. A design-only slot searches only design-only products. Rug sizes
-    follow the model axes, so they are checked after the search. TV-only slots have
-    no price filters, because TV prices never count toward the budget.
+    follow the model axes, so they are checked after the search. TV categories are
+    exempt from the price filters, because TV prices never count toward the budget;
+    the slot's other categories keep them.
     """
-    filters: Record = {"limit": FETCH, "categories": slot["categories"], "per_category": True, "design_only": slot["design_only"]}
-    if not all(normalize_category(category) in BUDGET_EXCLUDED_CATEGORIES for category in slot["categories"]):
-        filters.update(known_price=True, max_price=slot["max_price"])
+    filters: Record = {
+        "limit": FETCH, "categories": slot["categories"], "per_category": True, "design_only": slot["design_only"],
+        "known_price": True, "max_price": slot["max_price"],
+        "price_exempt": [category for category in slot["categories"] if normalize_category(category) in BUDGET_EXCLUDED_CATEGORIES],
+    }
     limits = slot["limits"]
     if not _orientation_free(slot):
         filters.update({key: limits[key] for key in ("max_width_m", "max_depth_m", "max_height_m") if key in limits})

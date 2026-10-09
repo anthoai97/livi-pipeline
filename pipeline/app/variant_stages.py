@@ -11,21 +11,20 @@ The graph owns the loops and their bounds (app.graph): it counts
 `selection_turns`, `correction_proposals`, and `reselections`. It repeats select
 until `selection_validation["valid"]` or 4 turns in all; repeats correct while
 `blocking_findings` is non-empty and the last proposal improved (no
-`correction_stalled`), up to 3 proposals per layout; runs refine only when no
-blocking finding remains; and after a failed validate goes back to select once.
-A stage that raises fails only its own variant (reason `model_call_failed` for
-ModelCallError, otherwise `variant_error`). Correct and refine catch their own
-ModelCallError instead: a layout already exists, so they keep it and go on.
+`correction_stalled`), up to 3 proposals per layout; and after a failed validate
+goes back to select once. A stage that raises fails only its own variant (reason
+`model_call_failed` for ModelCallError, otherwise `variant_error`). Correct
+catches its own ModelCallError instead: a layout already exists, so it keeps it
+and goes on.
 
 `ctx` is the same as for shared stages (see app.shared_stages); model calls made
 through `ctx.generate` and Jev calls made through `ctx.ask` are recorded under
 this stage and variant.
 
 Prompts port the legacy fresh-design text (livinit_pipeline
-src/nodes/asset_selection/agent.py, src/nodes/layout_generation/initial_flow.py,
-src/nodes/layout_fix.py, src/nodes/layout_generation/refine_flow.py). Tool-call
-wording becomes one JSON response, and the revision, seed-image, preview-image,
-asset-feedback, and owned-asset branches are dropped.
+src/nodes/asset_selection/agent.py, src/nodes/layout_fix.py). Tool-call wording
+becomes one JSON response, and the revision, preview-image, asset-feedback, and
+owned-asset branches are dropped. Placement is the code solver, not a prompt.
 """
 
 from __future__ import annotations
@@ -34,36 +33,27 @@ import asyncio
 import itertools
 import json
 import math
+from collections import Counter
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
 from app import contracts
-from app.rules.categories import (
-    is_ceiling_mounted_asset,
-    is_floor_lamp_asset,
-    is_table_lamp_asset,
-    is_wall_aligned_asset,
-    is_wall_mounted_asset,
-)
 from app.rules.door_geometry import format_door_for_prompt
-from app.rules.geometry.generation import generate_deterministic_layout_with_report
 from app.rules.layout.analysis import analyze_layout, final_layout_check, findings_by_level
-from app.rules.layout.bedroom import bedroom_layout_measurements
 from app.rules.layout.cleanup import (
     clear_protected_paths,
     run_deterministic_living_dining_cleanup,
     run_deterministic_p0_cleanup,
     satisfy_sofa_table_gaps,
 )
-from app.rules.layout.comfort import comfort_layout_measurements, comfort_placement_facts
+from app.rules.layout.comfort import comfort_placement_facts
 from app.rules.layout.constants import ISSUE_KEYS_BY_TIER
-from app.rules.layout.dining import dining_chair_table_facts, dining_layout_measurements, dining_placement_facts
+from app.rules.layout.dining import dining_chair_table_facts, dining_placement_facts
 from app.rules.layout.formatting import format_issues, format_layout
 from app.rules.layout.metrics import layout_issue_score
-from app.rules.layout.normalization import layout_from_placements, move_asset_with_supports, normalize_layout
+from app.rules.layout.normalization import move_asset_with_supports, normalize_layout
 from app.rules.layout.solver import solve_layout
-from app.rules.layout.studio import is_freestanding_studio_media_support
 from app.rules.layout.validation_geometry import overlap_separation_facts, wall_mount_placement_facts
 from app.rules.layout_rules import (
     LAYOUT_SYSTEM_INSTRUCTION,
@@ -75,7 +65,6 @@ from app.rules.placement_mode import placement_mode_for_asset
 from app.rules.planner.feasibility_digest import format_feasibility_digest_for_prompt
 from app.rules.planner.intent_packet import format_intent_packet_for_prompt, intent_prompt_text
 from app.rules.planner.room_facts import format_room_facts_for_prompt
-from app.rules.planner.seed_guidance import build_seed_guidance
 from app.rules.planner.taxonomy import normalize_category
 from app.rules.selection.catalog import _asset_matches_brand_preferences, _price_constraint_category_matches, catalog_asset
 from app.rules.selection.constants import BUDGET_EXCLUDED_CATEGORIES, BUDGET_FLEX_PCT, FIT_ANCHOR_SEATING
@@ -800,7 +789,12 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     layout `placement_feedback`. `fit_satisfaction` comes from slot membership
     and the constraint audit from `_constraint_audit`. The selection also fails
     when more than `ctx.run.product_reuse_rate` of its distinct products are
-    marked `shared`. Notes the fit step applied with `ctx.run.note(...)`.
+    marked `shared`. A selection that fails only fit estimates (the
+    over-crowded footprint and the layout preflight size checks) is checked
+    with the code solver (`_solver_fit`); when the solver places it, the
+    selection passes without them. Notes the fit step applied, the fit
+    estimates the solver overruled, and a failed turn's errors with
+    `ctx.run.note(...)`.
     """
     shared = state["shared"]
     fit_step = _next_fit_step(state)
@@ -817,6 +811,13 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     selected = [asset.model_dump() for asset in response.selected_assets]
     audit = await _constraint_audit(state, ctx, intent, _products(state["pool"], selected))
     validation = _validated(state, selected, intent, fit_step, audit, reuse_rate)
+    if validation["fit_failed"] and (overruled := await asyncio.to_thread(_solver_fit, state, selected, intent, fit_step, audit, reuse_rate)):
+        counts = sorted(Counter(normalize_category(asset["category"]) for asset in overruled["instances"]).items())
+        ctx.run.note(f"fit estimate overruled by the solver: {', '.join(f'{category} {n}' for category, n in counts)}; "
+                     f"overruled {_errors_text(validation['errors'])}", ctx.variant_index)
+        validation = overruled
+    if not validation["valid"]:
+        ctx.run.note(f"selection turn {turn} failed: {_errors_text(validation['errors'])}", ctx.variant_index)
     instances = validation.pop("instances")
     gap_text = "; ".join(f"{slot['label']}: no eligible catalog product" for slot in _gap_slots(shared["slots"]))
     selection = {
@@ -841,13 +842,34 @@ def _products(pool: dict[str, list[Record]], selected: list[Record]) -> dict[str
     return {uid: {**catalog_asset(by_id[uid]), "uid": uid} for asset in selected if (uid := asset["uid"].strip()) in by_id}
 
 
+def _errors_text(errors: list[str], limit: int = 600) -> str:
+    """Validation errors as one run-record line, cut to `limit` characters."""
+    text = "; ".join(errors)
+    return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
+def _solver_fit(state: VariantState, selected: list[Record], intent: Record, fit_step: str | None, audit: Record,
+                reuse_rate: float) -> Record | None:
+    """The validation of `selected` without fit estimates, when it then passes and the code
+    solver places every instance with no blocking findings; otherwise None."""
+    validation = _validated(state, selected, intent, fit_step, audit, reuse_rate, fit_estimates=False)
+    if not validation["valid"]:
+        return None
+    shared = state["shared"]
+    layout, report = solve_layout(validation["instances"], shared["room"], shared["intent"])
+    if report["unplaceable"] or _measure({**state, "instances": validation["instances"]}, layout)["blocking_findings"]:
+        return None
+    return validation
+
+
 def _validated(state: VariantState, selected: list[Record], intent: Record, fit_step: str | None, audit: Record,
-               reuse_rate: float) -> Record:
+               reuse_rate: float, *, fit_estimates: bool = True) -> Record:
     """validate_selection for `selected` ({uid, functional_group} per unit) from this variant's pool, plus the reuse limit.
 
     Returns the validator report with `instances`, without `feedback`. The
     selection also fails when more than `reuse_rate` of its distinct products
-    are marked `shared`.
+    are marked `shared`. fit_estimates=False skips the over-crowded footprint
+    estimate and the layout preflight size checks.
     """
     shared = state["shared"]
     candidates = _candidates(state["pool"])
@@ -868,6 +890,7 @@ def _validated(state: VariantState, selected: list[Record], intent: Record, fit_
         fit_step=fit_step,
         fit_satisfaction=_fit_satisfaction(uids, shared["slots"], state["pool"]),
         constraint_audit=audit,
+        fit_estimates=fit_estimates,
     )
     validation.pop("feedback")
     products = _products(state["pool"], selected)
@@ -882,7 +905,7 @@ def _validated(state: VariantState, selected: list[Record], intent: Record, fit_
     return validation
 
 
-# --- place, repair, correct, and refine ----------------------------------------
+# --- place, repair, and correct ---------------------------------------------
 
 
 class Pose(BaseModel):
@@ -952,151 +975,6 @@ def _path_fit_facts(state: VariantState) -> str:
     })
 
 
-def _placement_prompt(state: VariantState, seeded: Record, skipped: list[Record]) -> str:
-    """Legacy initial-layout prompt for a fresh design, without the seed image and asset-feedback
-    decision, answered with poses for moved and skipped items on the measured rule seed."""
-    shared = state["shared"]
-    request, intent, room = shared["request"], shared["intent"], shared["room"]
-    room_width, room_depth = request.room_area
-    room_type = room["room_type"]
-    assets = state["instances"]
-    studio = room_type == "studio"
-    protected_path_lines = [
-        f"- {path.get('id')}: {path.get('axis')}-axis route between "
-        f"{' and '.join(path.get('wall_pair') or [])}, "
-        f"center={path.get('center')}, width={float(path.get('width') or 0):.2f}m, "
-        f"depth={float(path.get('depth') or 0):.2f}m"
-        for path in room["protected_paths"]
-    ]
-    asset_lines = [
-        f"- {_key(a)} ({a.get('category', 'unknown')}), W×D×H={a.get('width', 0):.2f}×{a.get('depth', 0):.2f}×{a.get('height', 0):.2f}m"
-        f", mount_type={a.get('mount_type') or 'unknown'}, features={json.dumps(a.get('features') or [])}"
-        for a in assets
-    ]
-    wall_aligned_lines = [
-        f"- {_key(a)} ({a.get('category', 'unknown')})"
-        for a in assets
-        if is_wall_aligned_asset(a.get("category", ""), _key(a)) and not (studio and is_freestanding_studio_media_support(a))
-    ]
-    wall_mounted_lines = [
-        f"- {_key(a)} ({a.get('category', 'unknown')})"
-        for a in assets
-        if placement_mode_for_asset(a) == "wall_mounted" or is_wall_mounted_asset(a.get("category", ""), _key(a))
-    ]
-    ceiling_mounted_lines = [
-        f"- {_key(a)} ({a.get('category', 'unknown')})"
-        for a in assets
-        if placement_mode_for_asset(a) == "ceiling_mounted" or is_ceiling_mounted_asset(a.get("category", ""), _key(a))
-    ]
-    floor_lamp_lines = [
-        f"- {_key(a)} ({a.get('category', 'unknown')}): place beside a reading or primary seat"
-        for a in assets
-        if is_floor_lamp_asset(a.get("category", ""), _key(a))
-    ]
-    table_lamp_lines = [
-        f"- {_key(a)} ({a.get('category', 'unknown')}): set on_top_of a side table, nightstand, desk, or console"
-        for a in assets
-        if is_table_lamp_asset(a.get("category", ""), _key(a))
-    ]
-    tabletop_display_lines = [
-        f"- {_key(a)} ({a.get('category', 'unknown')}): set on_top_of a table, shelf, console, or other valid support"
-        for a in assets
-        if placement_mode_for_asset(a) == "tabletop" and not is_table_lamp_asset(a.get("category", ""), _key(a))
-    ]
-    opening_lines = _opening_lines(room)
-    skipped_lines = [f"- {entry['uid']} ({entry.get('category', 'unknown')}): {entry.get('reason') or entry.get('status')}"
-                     for entry in skipped]
-    example_uid = skipped[0]["uid"] if skipped else _key(assets[0])
-    none = "None"
-    return f"""Edit the rule-based seed layout for this room.
-
-INTENT: {intent_prompt_text(intent, request.user_intent)}
-{format_intent_packet_for_prompt(intent)}
-{format_room_facts_for_prompt(room["facts"])}
-{format_feasibility_digest_for_prompt(room["digest"])}
-
-{coordinate_system_block(room_width, room_depth)}
-
-USABLE FLOOR BOUNDARY (all furniture footprints must stay inside this polygon):
-{json.dumps(room["room_vertices"])}
-
-{build_rules_block(room_type=room_type)}
-
-DINING PLACEMENT FACTS (table-local axes; chair fronts face the occupied edge):
-{json.dumps(dining_placement_facts(assets))}
-Center offsets include half the chair depth, not just half the table. Reserve the full
-table/chairs/pull-out envelope before choosing the table center. Front/back edges run
-along table width; left/right edges run along table depth. Rotate these local axes with
-the table. These are coarse seating options, not proof of clearance from other groups.
-For a compact Studio, establish dining pull-out and bed access together before placing
-the sofa and media. Try adjacent dining edges when opposing seats would consume a bed
-or sofa service band. Do not use required pull-out space as the media-console zone.
-
-MEDIA COMFORT FACTS (product heuristics; plan each requested viewer independently):
-{json.dumps(comfort_placement_facts(assets, room_type))}
-
-OPENINGS (doors / windows — respect doorway clear zone):
-{chr(10).join(opening_lines) if opening_lines else none}
-
-WALL-MOUNT SPANS AT MOUNTING HEIGHT (actual segments, after openings; empty center intervals cannot fit this item):
-{json.dumps(wall_mount_placement_facts({}, assets, room["room_vertices"], room["room_doors"], room["room_windows"], (room_width, room_depth)))}
-Place wall artwork only within a fitting center interval. These spans do not certify collisions with other assets.
-
-PROTECTED PATHS (keep clear except rugs/runners):
-{chr(10).join(protected_path_lines) if protected_path_lines else none}
-
-SELECTION-STAGE PHYSICAL FIT FACTS:
-{_path_fit_facts(state)}
-These describe feasible footprints, not chosen poses. For a living-seating cluster, `as_dimensioned` places its listed width across the zone and depth along it; `quarter_turn` swaps those axes. Plan the complete group in a fitting orientation before calculating coordinates, while also preserving its media axis and all openings.
-
-ASSETS ({len(assets)} items, ALL must end up placed):
-{chr(10).join(asset_lines)}
-
-WALL-ALIGNED in this set (flush to a wall, never diagonal):
-{chr(10).join(wall_aligned_lines) if wall_aligned_lines else none}
-
-WALL-MOUNTED in this set:
-{chr(10).join(wall_mounted_lines) if wall_mounted_lines else none}
-
-CEILING-MOUNTED in this set:
-{chr(10).join(ceiling_mounted_lines) if ceiling_mounted_lines else none}
-
-FLOOR LAMPS in this set:
-{chr(10).join(floor_lamp_lines) if floor_lamp_lines else none}
-
-TABLE LAMPS in this set:
-{chr(10).join(table_lamp_lines) if table_lamp_lines else none}
-
-TABLETOP DISPLAY OBJECTS in this set:
-{chr(10).join(tabletop_display_lines) if tabletop_display_lines else none}
-
-SEED LAYOUT (rule-based starting poses, normalized; anchors placed first):
-{json.dumps(_pose_rows(seeded["layout"]))}
-
-SEED ASSET BOUNDS:
-{format_layout(seeded["layout"], assets) or none}
-
-SEED FINDINGS (measured on the seed, which lacks the skipped items):
-{format_issues(seeded["issues"]) or none}
-
-SKIPPED BY THE SEED (not placed; return a pose for each):
-{chr(10).join(skipped_lines) if skipped_lines else none}
-
-NODE-LOCAL:
-- Respect mount_type: wall_secured items stand on the floor against a wall; wall_mounted and ceiling_mounted items need the stated mounting surface. Unknown mount_type provides no additional constraint.
-- Use each uid EXACTLY as provided.
-- Plan circulation before placing the seating group: connect each usable doorway to the room's functional zones with the required clear walking width. Clearing only the door swing is insufficient; do not park a chair or cabinet just beyond it across the entry route, even when PROTECTED PATHS is empty.
-- If a TV and sofa are selected, plan their shared viewing axis together, facing each other across usable space. Do not assign them independently to convenient perpendicular walls, and do not place the TV across a window to solve another clearance problem.
-- If a sofa and coffee table are selected, place them as one reachable group. Calculate their facing edge-to-edge gap from the rotated footprints, not center distance; target the middle of the specified usable range, then place secondary seating outside both that gap and the entry route.
-- Before returning, check the complete group for overlaps and walking access. If a seat blocks entry, reposition that seat within the group instead of separating the sofa and coffee table to create a passage between them.
-- Move a seed item only to fix a seed finding, to make room for a skipped item, or to satisfy a rule above. The server applies your poses to the seed: every unmentioned item keeps its seed pose and support, and moving a support moves the items on it.
-
-OUTPUT JSON:
-{{"poses": [{{"uid": "{example_uid}", "x": number, "y": number, "rotation_z": radians, "on_top_of": ""}}]}}
-
-Return a pose for every skipped item and for each seed item you move. Omit unchanged items."""
-
-
 def _measure(state: VariantState, layout: Record) -> VariantState:
     """Normalize and analyze a layout the way legacy fresh designs do."""
     room = state["shared"]["room"]
@@ -1133,7 +1011,7 @@ MAX_DROPS = 2
 
 
 async def place(state: VariantState, ctx: StageContext) -> VariantState:
-    """Place every selected instance: the code solver with PLACEMENT=solver, else the rule seed plus one model edit.
+    """Place every selected instance with the code solver (app.rules.layout.solver). No model call.
 
     Reads: `shared`, `instances`, `selection_validation`; for a swap also
     `selection`, `pool`, and `fit_step`.
@@ -1141,60 +1019,20 @@ async def place(state: VariantState, ctx: StageContext) -> VariantState:
     critical P2), and `non_blocking_findings`; after a kept swap also
     `selection`, `selection_validation`, and `instances`.
 
-    Solver (app.rules.layout.solver), no model call, in a worker thread: while
-    the layout has unplaceable items or blocking findings, up to MAX_SWAPS
-    times, `_swap` replaces the largest named floor item with the next smaller
-    product of its slot that keeps the selection valid, and the solver runs
-    again. Then, while those items include a dining table or chair, up to
-    MAX_DROPS times, `_drop_chair` removes the last dining chair if the
-    selection stays valid, and the solver runs again. A swap or drop is kept
-    only when the layout scores better. Notes each solve, swap, and drop.
-
-    Model: the seed (app.rules.geometry.generation) places anchors first and
-    reports the items it skipped; the stage notes them. The model returns poses
-    only for the items it moves and for every skipped item. A response that
-    leaves a skipped item unplaced or has non-finite values gets one retry with
-    the error; a second one fails the variant.
+    Runs in a worker thread: while the layout has unplaceable items or blocking
+    findings, up to MAX_SWAPS times, `_swap` replaces the largest named floor
+    item with the next smaller product of its slot that keeps the selection
+    valid, and the solver runs again. Then, while those items include a dining
+    table or chair, up to MAX_DROPS times, `_drop_chair` removes the last dining
+    chair if the selection stays valid, and the solver runs again. A swap or
+    drop is kept only when the layout scores better. Notes each solve, swap, and
+    drop.
     """
-    if ctx.run.placement == "solver":
-        return await asyncio.to_thread(_solve, state, ctx)
-    room, instances = state["shared"]["room"], state["instances"]
-    room_area = tuple(room["room_area"])
-    guidance = build_seed_guidance(
-        room_facts=room["facts"], intent_packet=state["shared"]["intent"],
-        feasibility_digest=room["digest"], selected_assets=instances,
-    )
-    seed, report = generate_deterministic_layout_with_report(
-        instances, room_area, room_vertices=room["room_vertices"], room_doors=room["room_doors"],
-        room_windows=room["room_windows"], planner_guidance=guidance, protected_paths=room["protected_paths"],
-    )
-    skipped = report["skipped"]
-    if skipped:
-        ctx.run.note("seed skipped " + ", ".join(f"{entry['uid']} ({entry['status']})" for entry in skipped), ctx.variant_index)
-    seeded = _measure(state, seed)
-    skipped_uids = {entry["uid"] for entry in skipped}
-    prompt = _placement_prompt(state, seeded, skipped)
-
-    async def propose(prompt: str) -> Record:
-        response = await ctx.generate(Correction, prompt, system=LAYOUT_SYSTEM_INSTRUCTION)
-        moved = _apply_poses(seeded["layout"], [pose for pose in response.poses if pose.uid not in skipped_uids], instances)
-        placements = [{**placement, "uid": uid} for uid, placement in moved.items()]
-        placements += [
-            {"uid": pose.uid, "position": [pose.x, pose.y, 0.0], "rotation": [0.0, 0.0, pose.rotation_z],
-             "on_top_of": pose.on_top_of or ""}
-            for pose in response.poses if pose.uid in skipped_uids
-        ]
-        return layout_from_placements(placements, instances, room_area)
-
-    try:
-        layout = await propose(prompt)
-    except ValueError as exc:
-        layout = await propose(f"{prompt}\n\nYOUR PREVIOUS RESPONSE WAS REJECTED: {exc}. Return the poses again, with one pose for every skipped item.")
-    return _measure(state, layout)
+    return await asyncio.to_thread(_solve, state, ctx)
 
 
 def _solve(state: VariantState, ctx: StageContext) -> VariantState:
-    """The solver branch of `place`: solve, then swap products, then drop dining chairs, solving again while that helps."""
+    """`place` in a worker thread: solve, then swap products, then drop dining chairs, solving again while that helps."""
     room, intent = state["shared"]["room"], state["shared"]["intent"]
 
     def note(report: Record) -> str:
@@ -1468,163 +1306,6 @@ async def correct(state: VariantState, ctx: StageContext) -> VariantState:
         ctx.run.note(f"correction escalated to {ctx.run.model.stages['correct_escalate'][0]}", ctx.variant_index)
         return {"correction_escalated": True}
     return {"correction_stalled": True}
-
-
-def _refine_prompt(state: VariantState) -> str:
-    """Legacy refine prompt (src/nodes/layout_generation/refine_flow.py) as text only:
-    no preview image or quality feedback, answered with poses."""
-    shared = state["shared"]
-    request, room = shared["request"], shared["room"]
-    room_width, room_depth = request.room_area
-    room_area = (room_width, room_depth)
-    room_type = room["room_type"]
-    boundary = room["room_vertices"]
-    layout, assets, issues = state["layout"], state["instances"], state["issues"]
-    tiers = tuple(tier for tier, keys in ISSUE_KEYS_BY_TIER.items() if any(issues.get(key) for key in keys)) or ("P2",)
-    comfort = comfort_layout_measurements(layout, assets, room_type, boundary=boundary)
-    studio = room_type == "studio"
-    studio_access = {
-        "bed_access": bedroom_layout_measurements(layout, assets, boundary, room_area, mixed_groups=True)["beds"],
-        "dining_chair_pullout": dining_layout_measurements(layout, assets, boundary, room_area, mixed_groups=True)["chairs"],
-    } if studio else {}
-    viewing_goal = ""
-    outside_viewers = [row for row in comfort["tv_viewing"] if not row["within_preferred_range"]]
-    if studio and outside_viewers:
-        viewing_goal = "REQUESTED VIEWING COMFORT NEEDS REFINEMENT:\n" + "\n".join(
-            f"- {row['media']} viewed by {row['viewer']} ({row['viewer_group']}): "
-            f"{row['estimated_view_distance_m']:.2f}m, preferred {row['preferred_distance_range_m']}m. "
-            f"{'Increase' if row['estimated_view_distance_m'] < row['preferred_distance_range_m'][0] else 'Reduce'} "
-            f"viewing distance by at least {row['distance_outside_preferred_range_m']:.2f}m."
-            for row in outside_viewers
-        ) + "\nThe layout is not already good for the requested TV use. Propose a feasible material improvement " \
-            "to the worst viewer and then the combined excess. Translate the TV/support or viewers' complete " \
-            "groups closer for an excessive distance, farther apart for a below-minimum distance. For shared viewing adjust " \
-            "the lateral media center between the viewers as well as its distance from the wall; moving only " \
-            "along the existing axis may still leave one viewer distant. Aim inside the preferred ranges " \
-            "where feasible, not merely at a smaller violation. Wall backing is a lower " \
-            "priority than comfortable viewing; an intentional divider may be appropriate. Preserve all access " \
-            "bands and check every viewer. Do not return no changes merely because physical validation passes.\n"
-    floating_supports = [row for row in comfort["media_placement"] if not row["wall_backed"]]
-    if studio and floating_supports:
-        viewing_goal += (
-            "\nFLOATING MEDIA REVIEW: " + json.dumps(floating_supports) + "\n"
-            "Evaluate a wall-backed arrangement of the whole viewing group before accepting a floating console. "
-            "An empty strip behind the console is not a functional zone divider. Preserve comfortable viewing, "
-            "bed headboard support and every service region; if another group obstructs the better arrangement, "
-            "reposition that group's table AND chairs together. A deliberate divider remains acceptable when "
-            "no wall-backed arrangement satisfies these relationships.\n"
-        )
-    return f"""Review this layout after collision fixing.
-
-ORIGINAL DESIGN REQUEST:
-{request.user_intent}
-
-{viewing_goal}
-
-{coordinate_system_block(room_width, room_depth)}
-
-USABLE FLOOR BOUNDARY (all furniture footprints must stay inside this polygon):
-{json.dumps(boundary)}
-
-{build_rules_block(tiers=tiers, include_definitions=True, room_type=room_type)}
-
-DOORS:
-{chr(10).join(format_door_for_prompt(i, door, boundary=boundary, room_area=room_area) for i, door in enumerate(room["room_doors"])) or "None"}
-
-WINDOW GEOMETRY:
-{json.dumps(room["room_windows"]) if room["room_windows"] else "None"}
-
-PROTECTED CIRCULATION PATHS:
-{json.dumps(room["protected_paths"]) if room["protected_paths"] else "None"}
-
-CURRENT LAYOUT:
-{format_layout(layout, assets)}
-
-CURRENT POSES:
-{json.dumps(_pose_rows(layout))}
-
-DINING PLACEMENT FACTS (table-local axes; chair fronts face the occupied edge):
-{json.dumps(dining_placement_facts(assets))}
-Reserve the full table/chairs/pull-out envelope together. Separating intersecting chairs
-is not a repair if it blocks their pull-out; move the editable group when necessary.
-
-CURRENT STUDIO SERVICE REGIONS (keep clear even when there are no existing violations):
-{json.dumps(studio_access) if studio_access else "Not applicable"}
-The regions and allowed center bounds are measured at current poses. Recalculate them
-for any moved group; do not put the TV/support or another group into a clear service region.
-
-VIOLATIONS:
-{format_issues(issues)}
-
-EXACT OVERLAP SEPARATIONS AND USABLE ARTWORK WALL SPANS:
-{json.dumps(overlap_separation_facts(layout, assets, issues.get("overlaps") or []))}
-{json.dumps(wall_mount_placement_facts(layout, assets, boundary, room["room_doors"], room["room_windows"], room_area))}
-
-MEDIA AND RUG COMFORT MEASUREMENTS (advisories yield to access and frozen scope):
-{json.dumps(comfort)}
-
-RULES:
-- Resolve any listed measurable violations first, then make only clear composition wins.
-- Prefer NO changes if the layout is already good. Return {{"poses": []}} when no changes are needed.
-- Output ONLY assets you want to change. Omit everything else.
-- Preserve anchor relationships. Move dependents before anchors whenever possible.
-- Prefer rotation tweaks or very small nudges when no functional relationship is broken and viewing distances are comfortable.
-- In a Studio, reduce the worst intended viewer's distance outside its preferred range, then the combined distance excess. A small move that keeps the same warning can still improve comfort. Evaluate a closer wall-backed group first; use an intentional divider if no usable wall arrangement gives comfortable viewing. A sofa-wall or exposed-console advisory may trade against a clear viewing improvement, but access, support and physical geometry must not worsen. Shared viewing must improve both viewers, not just the sofa.
-- When a listed violation breaks real use, move the needed functional group far enough to repair it; do not leave coffee tables, chairs, desks, media units, or lamps unusable just to keep a tiny move.
-- Do not create new overlaps, doorway violations, or boundary violations.
-- Keep a continuous usable entry route beyond the door swing, not just an empty swing rectangle. A chair or cabinet immediately beyond that rectangle can still block entry; repair its position without breaking the seating group's usable gaps.
-- For sofa ↔ coffee table violations: first reason about a collision-free coffee-table position inside the measured gap range that preserves protected paths. Move only the coffee table when that is sufficient. Move other seating-group assets only when no safe table-only repair exists, and re-check the whole group for overlaps and door, window, and path clearance.
-- Check the proposed sofa/table gap edge-to-edge using rotated footprints, and aim inside the measured range rather than at its rounding boundary. Do not accept a repair that clears circulation by moving the table out of reach.
-- Chairs should face their intended surface or group: task chairs face desks, dining chairs face dining tables, and lounge chairs face the conversation or focal point.
-- Floor lamps should sit beside the seat or surface they serve, not behind seating, in dead corners, or in circulation paths.
-- Choose TV/media support and the requested sofa/bed viewers together on readable focal axes. Prefer a solid wall segment that clears windows and doors without leaving viewers too distant. A Studio divider needs a deliberate zone edge, a considered exposed back and clear routes around it. Keep the console front accessible and dining chair pull-out outside the complete media group. Do not require a bed-only TV to face the sofa.
-- Wall and ceiling mounted heights are normalized automatically; focus on X/Y placement and yaw.
-- If you move a parent asset, stacked children follow automatically.
-
-OUTPUT (JSON):
-{{"poses": [{{"uid": "...", "x": number, "y": number, "rotation_z": number}}]}}"""
-
-
-_REFINE_QUESTION = (
-    "Does this layout need composition fixes, such as chairs not facing their surface, lamps away from "
-    "the seats they serve, a weak TV focal axis, or an uncomfortable viewing distance?"
-)
-REFINE_TRIGGER_AT = 0.5
-
-
-async def refine(state: VariantState, ctx: StageContext) -> VariantState:
-    """One text-only composition pass on a layout without blocking findings.
-
-    Reads: `shared`, `instances`, `layout`, `issues`, `non_blocking_findings`.
-    Runs when REFINEMENT is `always`, or `jev` and one Jev yes/no question (the
-    brief and the non-blocking findings as text) says the layout needs
-    composition fixes; a failed Jev call skips it. One model call returns poses
-    for the items it changes. Returns the refined `layout` and findings, or {}
-    when skipped, rolled back (the score got worse or a blocking finding
-    appeared), or the model call failed. Notes the outcome.
-    """
-    if ctx.run.refinement == "off":
-        return {}
-    if ctx.run.refinement == "jev":
-        findings = [f"{f['issue']}: {json.dumps(f['finding'], sort_keys=True)}" for f in state["non_blocking_findings"]]
-        answers = await ctx.ask("refine", {**_brief(state["shared"], state["direction"]), "non_blocking_findings": findings or ["none"]}, {"refine": _REFINE_QUESTION})
-        if answers is None:
-            return {}
-        if answers["refine"] < REFINE_TRIGGER_AT:
-            ctx.run.note(f"refinement skipped: Jev yes {answers['refine']:.2f}", ctx.variant_index)
-            return {}
-    try:
-        response = await ctx.generate(Correction, _refine_prompt(state), system=LAYOUT_SYSTEM_INSTRUCTION)
-    except ModelCallError as exc:
-        ctx.run.note(f"refinement call failed, kept the layout: {describe(exc)}", ctx.variant_index)
-        return {}
-    candidate = _measure(state, _apply_poses(state["layout"], response.poses, state["instances"]))
-    before, after = layout_issue_score(state["issues"]), layout_issue_score(candidate["issues"])
-    if candidate["blocking_findings"] or after > before:
-        ctx.run.note(f"refinement rolled back: score {list(before)} -> {list(after)}", ctx.variant_index)
-        return {}
-    ctx.run.note(f"refinement applied: {len(response.poses)} poses, score {list(before)} -> {list(after)}", ctx.variant_index)
-    return candidate
 
 
 # --- validate ----------------------------------------------------------------

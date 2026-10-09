@@ -109,6 +109,7 @@ Slow calls get a duplicate after 8 s. Reuse rate 0.5. 12 runs.
 | Stage 1 defaults | 68.7 | 213.3 | 10 | 34 of 36 | 3 | 0.124 |
 | Stage 1, lite escalating | 68.7 | 220.3 | 10 | 34 of 36 | 5 | 0.122 |
 | **Stage 2 solver** | **31.1** | **47.9** | **11** | **35 of 36** | **12** | **0.062** |
+| Stage 2 solver after polish and cleanup | 31.9 | 45.4 | 11 | 35 of 36 | 12 | 0.062 |
 
 | Step | Median | p90 | Max | Share of critical path |
 | --- | ---: | ---: | ---: | ---: |
@@ -127,6 +128,13 @@ Slow calls get a duplicate after 8 s. Reuse rate 0.5. 12 runs.
   - `rug_composition`, `media_group`, and `floor_lamp_reach`
 - Duplicate calls fired 16 times on select and 7 times on interpret. A normal
   interpretation takes 8 to 9 s, so the 8 s threshold triggers too often there.
+- After the layout polish (lamps on nightstands, no sofa floated into a flagged
+  gap, floor lamps by the reach rule, rug checks), non-blocking findings fell
+  from 2.5 to 1.25 per run. The remaining ones are TV viewing distance
+  (`media_group`: living x4, studio x8) and a few studio `sofa_wall_gap` (x3).
+  In a 5.5 x 7 m studio, the selected 1.0 to 1.2 m TVs are too far from the sofa
+  even across the short side. Lamp, floor-lamp, and rug findings are gone. The
+  one failure was again a living-room selection that failed its fit check.
 
 ## Outcome
 

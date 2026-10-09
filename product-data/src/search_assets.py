@@ -61,6 +61,7 @@ def search_assets(
     known_price: bool = False,
     per_category: bool = False,
     design_only: bool = False,
+    price_exempt: list[str] | None = None,
 ) -> list[dict]:
     """Return the nearest prepared records that pass every exact filter.
 
@@ -68,7 +69,9 @@ def search_assets(
     known_price keeps only design-only items and items priced in currency, so
     every result can be counted against a budget. per_category returns up to limit
     nearest records from each category, still ordered by distance overall.
-    design_only keeps only non-purchasable records.
+    design_only keeps only non-purchasable records. price_exempt lists categories
+    that skip max_price and known_price, such as products never counted against a
+    budget, while the other categories in the same query keep them.
     """
     if not 1 <= limit <= 1000:
         raise ValueError("limit must be between 1 and 1000")
@@ -97,6 +100,7 @@ def search_assets(
         "colors": colors,
         "styles": styles,
         "materials": materials,
+        "price_exempt": price_exempt,
     }
     conditions = [
         "e.model = %(model)s",
@@ -109,11 +113,16 @@ def search_assets(
         conditions.append("a.is_purchasable")
     if design_only:
         conditions.append("a.is_purchasable = false")
+    priced = []
     if max_price is not None:
         price = "(a.price <= %(max_price)s AND a.currency = %(currency)s)"
-        conditions.append(price if purchase else f"({price} OR a.is_purchasable = false)")
+        priced.append(price if purchase else f"({price} OR a.is_purchasable = false)")
     if known_price:
-        conditions.append("((a.price IS NOT NULL AND a.currency = %(currency)s) OR a.is_purchasable = false)")
+        priced.append("((a.price IS NOT NULL AND a.currency = %(currency)s) OR a.is_purchasable = false)")
+    if priced and price_exempt:
+        conditions.append(f"({' AND '.join(priced)} OR a.category = ANY(%(price_exempt)s))")
+    else:
+        conditions.extend(priced)
     for axis in ("width_m", "depth_m", "height_m"):
         if params[axis] is not None:
             conditions.append(f"a.{axis} <= %({axis})s")

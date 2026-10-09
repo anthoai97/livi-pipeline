@@ -411,6 +411,18 @@ can score about 150 candidate layouts in under a second.
 | 13 | Slow model calls | (a) Send a duplicate call when one is slow and keep the first answer. (b) Wait. | (a), after 8 s | 70 to 80% of calls answer in about 5 s, so the duplicate usually wins. |
 | 14 | Switching over | (a) `PLACEMENT=solver` or `model`, compared on the benchmark, then the losing path is deleted. (b) Replace at once. | (a) | Keeps a comparison point, as the user asked. |
 
+### Fixes from the benchmark review
+
+The `gpt-6.1-sol` review of 33 variants (overall 3.27 of 5) found failures the
+rules do not catch. Fixes in progress:
+
+| # | Problem | Cause | Fix |
+| --- | --- | --- | --- |
+| 15 | A requested TV is never selected | A requested TV slot also holds non-TV substitutes, so it gets the known-price filter, and no prepared TV has a price | Search budget-excluded categories without price filters inside any slot |
+| 16 | Requested nightstands and lamps dropped in a 4 x 4.5 m bedroom | The fit estimate warns, and the capped fit step reduces counts | Deliberate rule change: when a selection fails only the fit estimate, the solver checks it. If every item places with no blocking finding, the selection passes, and the run record notes it |
+| 17 | A 1.66 m floor plant on the dining table | The accessory pass puts a floor item on a support | Only items prepared for surfaces go on tables |
+| 18 | Dining chairs bunched on one side | Solver dining template | Chairs split evenly across the long sides, or evenly around round tables, reusing the legacy dining logic |
+
 ### Solver
 
 - **Groups.** Seed guidance already assigns each item a role, an anchor, and a

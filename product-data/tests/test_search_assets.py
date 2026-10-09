@@ -62,7 +62,7 @@ INTENT = {
 }
 ROOM_AREA = (4.5, 5.5)
 ROOM_DOORS = [{"center": [2.25, 0.0], "width": 0.9, "depth": 0.05}]
-FILTER_KEYS = ("categories", "per_category", "design_only", "known_price", "max_price", "max_width_m", "max_depth_m", "max_height_m", "colors", "styles", "materials")
+FILTER_KEYS = ("categories", "per_category", "design_only", "known_price", "max_price", "max_width_m", "max_depth_m", "max_height_m", "colors", "styles", "materials", "price_exempt")
 
 
 def planned_slots() -> list[dict]:
@@ -152,7 +152,7 @@ def ids(rows: list[dict]) -> set:
 
 
 def slot_filters(slot: dict) -> dict:
-    """The search_assets arguments for one slot. A slot without max_price (TVs) has no price filters."""
+    """The search_assets arguments for one slot. Its price_exempt categories (TVs) skip the price filters."""
     filters = {"limit": FETCH, **{key: slot[key] for key in FILTER_KEYS if key in slot}}
     if "max_price" in filters:
         filters.update(max_price=min(filters["max_price"], BUDGET_ALLOWANCE), known_price=True)
@@ -168,6 +168,7 @@ def slot_matches(row: dict, slot: dict) -> bool:
         and (not slot.get("design_only") or row["is_purchasable"] is False)
         and (
             limit is None
+            or row["category"] in slot.get("price_exempt", [])
             or row["is_purchasable"] is False
             or (row["price"] is not None and row["currency"] == "USD" and row["price"] <= limit)
         )
@@ -371,6 +372,27 @@ def test_known_price_keeps_only_budgetable_products(connection):
     unpriced, unpriced_vector = stored_vector(connection, "a.is_purchasable AND a.price IS NULL AND a.placement_type IS NOT NULL")
     assert unpriced in ids(search_assets(connection, unpriced_vector, limit=5))
     assert unpriced not in ids(search_assets(connection, unpriced_vector, limit=1000, known_price=True))
+
+
+def test_price_exempt_categories_skip_the_price_filters(connection):
+    unpriced_tv, vector = stored_vector(connection, "a.category = 'tv' AND a.placement_type IS NOT NULL")
+    connection.execute("UPDATE pipeline.pipeline_assets_v2 SET price = NULL WHERE asset_id = %s", (unpriced_tv,))
+    categories = ["tv", "tv_stand"]
+    expected = ids([
+        row for row in embedded_records(connection)
+        if row["category"] in categories
+        and (
+            row["category"] == "tv"
+            or row["is_purchasable"] is False
+            or (row["price"] is not None and row["price"] <= 500 and row["currency"] == "USD")
+        )
+        and placeable(row)
+    ])
+    filters = {"limit": 1000, "categories": categories, "known_price": True, "max_price": 500}
+    results = search_assets(connection, vector, price_exempt=["tv"], **filters)
+    assert unpriced_tv in expected and ids(results) == expected
+    assert any(row["category"] == "tv_stand" for row in results)
+    assert unpriced_tv not in ids(search_assets(connection, vector, **filters))
 
 
 def test_unknown_purchase_status_fails_purchase_search(connection):

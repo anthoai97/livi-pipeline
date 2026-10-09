@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from google import genai
 
     from app.contracts import PipelineRequest
-    from app.jev import Jev, Placement, Refinement
+    from app.jev import Jev
 
 RUNS_DIR = Path(__file__).resolve().parents[1] / ".data" / "runs"
 
@@ -65,10 +65,9 @@ class StageContext:
     - `ask(use, state, questions)`: one Jev request of yes/no questions, recorded
       under this stage and variant. Returns each question's yes probability by
       name, or None when the call fails; the failure is noted, and the caller
-      falls back to its Jev-off behavior. `run.jev_uses` and `run.refinement`
-      hold the switches that decide which uses run; `run.product_reuse_rate`
-      caps how much of a selection other variants may share; `run.placement`
-      picks the code solver or the model for placement.
+      falls back to its Jev-off behavior. `run.jev_uses` decides which uses
+      run; `run.product_reuse_rate` caps how much of a selection other
+      variants may share.
     - `run.record_slot(...)` and `run.note(...)`: run-record entries.
     """
 
@@ -96,9 +95,7 @@ class RunContext:
     variant_count: int
     jev: Jev | None = None
     jev_uses: frozenset[str] = frozenset()  # JEV_USES: "rank", "check"
-    refinement: Refinement = "off"  # REFINEMENT
     product_reuse_rate: float = 0.5  # PRODUCT_REUSE_RATE
-    placement: Placement = "solver"  # PLACEMENT
     connection: psycopg.Connection[dict[str, Any]] | None = None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     _started: float = field(default_factory=time.monotonic)
@@ -197,8 +194,13 @@ class RunContext:
         outcome: Literal["ready", "failed"],
         reason: str | None = None,
         non_blocking_findings: list[str] | None = None,
+        result: dict | None = None,
     ) -> None:
-        """`non_blocking_findings` are the issue keys of the noncritical P2 findings at the final layout."""
+        """`non_blocking_findings` are the issue keys of the noncritical P2 findings at the final layout.
+
+        `result` is a ready variant's compact result for benchmark review: `direction`,
+        `total_cost`, `products`, and `layout` (app.graph `_variant_summary`).
+        """
         now = self.elapsed()
         self.variants[variant_index] = {
             "variant_index": variant_index,
@@ -207,6 +209,7 @@ class RunContext:
             "ready_at": now if outcome == "ready" else None,
             "finished_at": now,
             "non_blocking_findings": non_blocking_findings or [],
+            **(result or {}),
         }
 
     def note(self, text: str, variant_index: int | None = None) -> None:
@@ -233,15 +236,13 @@ class RunContext:
                 "room_type": request.room_type,
                 "room_area": request.room_area,
                 "wall_height": request.wall_height,
-                "room_vertices": len(request.room_vertices),
-                "room_doors": len(request.room_doors),
-                "room_windows": len(request.room_windows),
+                "room_vertices": [list(vertex) for vertex in request.room_vertices],
+                "room_doors": request.room_doors,
+                "room_windows": request.room_windows,
             },
             "switches": {
                 "JEV_USES": ",".join(sorted(self.jev_uses)),
-                "REFINEMENT": self.refinement,
                 "PRODUCT_REUSE_RATE": self.product_reuse_rate,
-                "PLACEMENT": self.placement,
             },
             "stages": self.stages,
             "model_calls": self.model_calls,

@@ -1,7 +1,8 @@
 # Rebuild initial room generation
 
 Issue: [#1](https://github.com/anthoai97/livi-pipeline/issues/1).
-Status: phase 1 complete; phases 2 and 3 ready for implementation; later phases planned.
+Status: phase 1 complete; phase 2 implemented locally; phase 3 ready for implementation;
+later phases planned.
 
 Turn a prompt, budget, and room metadata into three validated furnished layouts.
 Cover living room, bedroom, dining room, and studio. Return all three layouts in
@@ -30,9 +31,9 @@ Phase 1 is complete because its targets are agreed. The rebuilt pipeline's speed
 has not been verified. Later phases check speed, validity, visual quality, and cost
 against the current flow using the same inputs.
 
-Use the [pipeline overview](../pipeline-overview.md),
-[preparation design](../product-preparation-v2.md),
-[embedding format](../product-embedding-v2.md), and [stack notes](../Stack.md)
+Use the [pipeline overview](../pipeline/pipeline-overview.md),
+[preparation design](../data/product-preparation-v2.md),
+[embedding format](../data/product-embedding-v2.md), and [stack notes](../Stack.md)
 as source context. Replace contracts directly without adding contract versions.
 
 ## Unresolved questions

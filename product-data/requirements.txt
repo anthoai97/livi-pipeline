@@ -1,4 +1,6 @@
 psycopg[binary]>=3.2
 google-genai>=1.30
+pillow>=11.3
 pydantic>=2
+pytest>=8
 python-dotenv>=1.0

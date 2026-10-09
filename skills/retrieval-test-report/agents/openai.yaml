@@ -1,0 +1,4 @@
+interface:
+  display_name: "Retrieval Test Report"
+  short_description: "Run basic and slot search tests, then write a reviewed report"
+  default_prompt: "Use $retrieval-test-report to run the product retrieval tests and write a report to reports/."

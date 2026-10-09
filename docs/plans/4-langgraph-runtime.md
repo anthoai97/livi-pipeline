@@ -1,8 +1,9 @@
 # Phase 3: build the LangGraph generation runtime
 
 Issue: [#4](https://github.com/anthoai97/livi-pipeline/issues/4). Parent: [#1](https://github.com/anthoai97/livi-pipeline/issues/1).
-Status: ready for implementation. Depends on phase 2 ([#3](https://github.com/anthoai97/livi-pipeline/issues/3)):
-embeddings and retrieval must exist first. Nothing in this plan has been built or run.
+Status: ready for implementation. Phase 2 ([#3](https://github.com/anthoai97/livi-pipeline/issues/3))
+is implemented locally, so embeddings and `search_assets` are available. Nothing
+in this plan has been built or run.
 
 ## Objective
 
@@ -44,7 +45,18 @@ asyncio, not LangGraph.
 - The web app requires `create_payload` on every uncommitted variant
   (`web-pipeline/lib/pipeline/variantsReady.ts:210`). It reads `render_manifest`,
   `selected_assets`, and `total_cost`.
-- Recorded runs took 160 to 339 seconds ([pipeline overview](../pipeline-overview.md#recorded-run-timings)).
+- Recorded runs took 160 to 339 seconds ([pipeline overview](../pipeline/pipeline-overview.md#recorded-run-timings)).
+- Retrieval is one search for the whole room. The search text is the room type plus
+  the raw prompt (`src/nodes/rag_scope_assets.py:639`). The top 1,000 matches are
+  capped at 20 per category, extra categories are added from the top results,
+  and each category is topped up to 20 with unmatched products. The model then
+  chooses from about 500 to 700 rows. One recorded dining room run passed 686
+  candidates in 42 categories, including outdoor furniture.
+- The phase 2 [retrieval report](../../reports/2026-10-09-product-retrieval-tests.md)
+  ran this single-search pool on 20 realistic prompts. 9 prompts and 12 of 24
+  needs passed, with a median pool of 471 products. The per-category cap fills
+  before price and size are checked. For a cream boucle sofa under $1,500 and at
+  most 2.2 m wide, 19 catalog sofas qualify but only 6 reach the pool.
 
 Most deterministic rule code can be ported directly. Layout analysis and
 normalization are pure functions: about 4,200 lines in `src/core/layout/` plus
@@ -58,8 +70,8 @@ takes explicit inputs.
 In scope:
 
 - A Python service in `pipeline/` using FastAPI and LangGraph (`langgraph>=1.2`).
-- Shared stages: interpretation, room context, and retrieval. Variant stages:
-  selection, placement, correction, and final validation.
+- Shared stages: interpretation, room context, and retrieval by slot. Variant
+  stages: selection, placement, correction, and final validation.
 - Ported rules and today's limits. Selection, placement, and correction are plain
   model calls checked by those rules.
 - Today's request fields for geometry rooms. Today's event names, carrying the
@@ -69,8 +81,8 @@ In scope:
 Non-goals:
 
 - Meeting the 60-second target or a valid-completion target. Phases 4 to 6 own these.
-- Jev, stricter candidate filtering, placement seeding, targeted repair, and
-  reselection after a layout fails. These belong to phase 4.
+- Jev, placement seeding, targeted repair, reselection after a layout fails, and
+  tuning the slot lists. These belong to phase 4.
 - The refinement pass. Phase 4 can bring it back if quality requires it.
 - More distinct variants than today's directives, previews, and the web app
   connection. These belong to phase 5.
@@ -85,8 +97,9 @@ Non-goals:
 
 | Decision | Rationale |
 | --- | --- |
-| Use Python for the whole pipeline. | Jev's SDK is Python only. LangGraph's per-node timeouts and error handlers are Python only. The legacy rule code is Python. |
+| Use Python for the whole pipeline. | LangGraph's per-node timeouts and error handlers are Python only. The legacy rule code is Python. Jev has a Python SDK. |
 | Port the rules. Selection, placement, and correction are plain model calls checked by those rules. | Rules carry over to phase 4 unchanged. Phase 4 replaces only the stage internals, so no legacy agent loop is ported only to be rewritten. |
+| Find candidates with one filtered search per slot instead of one search for the whole room. | The retrieve stage is new code either way, and the phase 2 report shows the single search losing eligible products to the per-category cap. Filtering inside each slot keeps only eligible products and should shrink the pool to about 100, which also shortens the selection prompt. The phase 2 `search_assets` already takes the main filters a slot needs. |
 | Keep today's limits: 8 selection turns, 8 correction proposals, 110% budget allowance, category caps, density, and required items. | Preserves the current rules. Phase 4 tunes the limits with measurements. |
 | Use `gemini-3.8-flash` through `google-genai` with low thinking, set by `LLM_DESIGN_MODEL`. | Today's production model, so comparisons isolate runtime changes. |
 | Produce viewer fields now. Saving fields and the chat reply wait for phase 5. | `create_payload` needs a saved room ID and the web connection, which phase 5 owns. Until then the web app rejects these variants, so phase 3 is checked through the API directly. |
@@ -96,8 +109,12 @@ Non-goals:
 
 Deliberate rule changes, recorded as #1 requires:
 
-- The candidate pool has no reserve for popular products, because prepared records
-  have no popularity data. The brand-preference reserve stays.
+- The candidate pool is built per slot. It has no extra categories taken from the
+  top results, no unmatched top-up products, and no reserve for popular products,
+  because prepared records have no popularity data. Preferred brands move to the
+  front of their slot instead of having a reserve.
+- A requested item that no catalog product can satisfy is a gap instead of a
+  selection failure. See [Retrieval by slot](#retrieval-by-slot).
 - The separate model audit of style coherence during selection moves to phase 4,
   where Jev is a candidate for it. Deterministic attribute checks against prepared
   fields stay.
@@ -127,8 +144,7 @@ Deliberate rule changes, recorded as #1 requires:
 ### Graph
 
 ```text
-START ─┬─ interpret ─┬─ retrieve ── Send x3 ── variant ── END
-       └─ room ──────┘
+START ── interpret ── room ── retrieve ── Send x3 ── variant ── END
 
 variant subgraph, one per Send:
   select ── place ── correct (repeats up to 8 times) ── validate
@@ -155,10 +171,10 @@ as soon as each variant finishes. They do not wait for the other variants.
 
 | Stage | Work | Model calls |
 | --- | --- | --- |
-| interpret | Port only the new-design prompt and schema from `intent_understanding.py`, plus the deterministic cleanup in `intent_packet.py`. Drop the edit branch (`route`, `current_assets`). Also drop the fields that only edit, fit-confirmation, or chat-reply code reads: `ambiguity_level`, `lifestyle_requirements`, `material_preferences`, `fabric_preferences`, `budget_strategy`, `rationale`, and `support_pairs`. Output: requested, excluded, and avoided categories, item counts, price and attribute constraints, style and function hints, fit flexibility, and the circulation-path flag. The ported rules check selections against these. | 1 |
-| room | Port `room_facts.py`, `feasibility_digest.py`, `room_policy.py`, `fit_policy.py`, and `fit_check.py`, and run them on the request geometry and the interpreted counts. Output: walls, openings, blocked zones, protected paths, density budget, category caps, room scale, and a fit estimate with the counts that fit. | 0 |
-| retrieve | Build one semantic query from the intent and call the phase 2 retrieval function. Exact filters: category allowed for the room and not excluded, model URL, all three dimensions, known placement, and a known price for purchasable items. Keep up to 1,000 matches, then at most 20 per category and 4 decor items per category. Run a category-filtered query for each required category with no match and for each brand preference. | Query embedding only |
-| select | The model picks items and quantities from the pool, given the intent, room context, budget, and variant direction. The ported validator checks budget, counts, density, required items (including the non-shoppable plant), fit, and attributes. Failures go back to the model for up to 8 turns. When the fit estimate shows the request overcrowds the room, the model is told to pick compact products from the start. A fit failure then leads to smaller products first, and to capped counts on the next fit failure. | 1 per turn |
+| interpret | Port only the new-design prompt and schema from `intent_understanding.py`, plus the deterministic cleanup in `intent_packet.py`. Drop the edit branch (`route`, `current_assets`). Also drop the fields that only edit, fit-confirmation, or chat-reply code reads: `ambiguity_level`, `lifestyle_requirements`, `material_preferences`, `fabric_preferences`, `budget_strategy`, `rationale`, and `support_pairs`. Add numeric size limits to each requested item (minimum and maximum width, depth, and height in metres), because today's size constraint is free text. Strict colors, styles, and materials use the prepared vocabularies (`Color`, `Style`, and `Material` in `product-data/src/prepare_assets.py`), so they work as exact filters. Output: requested, excluded, and avoided categories, item counts, descriptors, price, size, and attribute constraints, style and function hints, fit flexibility, and the circulation-path flag. The ported rules check selections against these. | 1 |
+| room | Port `room_facts.py`, `feasibility_digest.py`, `room_policy.py`, `fit_policy.py`, and `fit_check.py`, and run them on the request geometry and the interpreted counts. This needs the intent, so it runs after interpretation; it takes milliseconds. Output: walls, openings, blocked zones, protected paths, density budget, category caps, room scale, and a fit estimate with the counts that fit. | 0 |
+| retrieve | Plan the room's slots, then run one filtered search per slot. See [Retrieval by slot](#retrieval-by-slot). | 1 query embedding per slot |
+| select | The model picks items and quantities from the pool, grouped by slot, given the intent, room context, budget, and variant direction. The ported validator checks budget, counts, density, required items (including the non-shoppable plant), fit, and attributes. Failures go back to the model for up to 8 turns. When the fit estimate shows the request overcrowds the room, the model is told to pick compact products from the start. A fit failure then leads to smaller products first, and to capped counts on the next fit failure. | 1 per turn |
 | place | The model returns position, rotation, and `on_top_of` for every instance, guided by the ported prompt rules in `layout_rules.py`. Ported `normalize_layout` and `analyze_layout` then run. | 1 |
 | correct | While P0, P1, or critical P2 findings remain, send the measured findings and current poses to the model. Apply the returned poses, then normalize and analyze again. Keep the best candidate: fewest physical findings first, then critical function, then the rest. Stop after 8 proposals. | 1 per proposal |
 | validate | Port the final check from `render_scene.py`: each selected instance appears exactly once, and no P0, P1, or critical P2 finding remains. Build the render manifest, then emit `variant_ready`, or emit `variant_failed` with `layout_validation_failed`. | 0 |
@@ -175,6 +191,51 @@ Record fields map to the ported code as follows:
   direction for variant 0, soft and warm for variant 1, compact and cool for
   variant 2, plus the room-specific versions.
 - No stage downloads images or calls Supabase during a request.
+
+### Retrieval by slot
+
+Code plans the slots from the intent, room rules, and fit estimate:
+
+- Each requested item, with its count and descriptors.
+- Each item the room requires: the bed in a bedroom, the dining table and chairs
+  in a dining room, and the design-only plant outside studios.
+- Today's optional furniture roles for the room type (`src/core/planner/taxonomy.py:180`),
+  with today's room exclusions (no bed outside bedrooms and studios) and without
+  excluded or zero-capped categories. As today, the model decides whether to use them.
+- The decor categories: planter, sculpture, floor mirror, and wall mirror.
+
+Each slot gets its own search:
+
+- **Search text:** the item label with its descriptors and the room's style hints,
+  such as "cream boucle sofa, cozy, modern". Counts, budgets, and fit wording
+  become filters, not search text.
+- **Exact filters** through `search_assets`:
+  - the slot's categories and related ones
+  - placeable, with a known price
+  - the item's price and maximum sizes, except for rugs, runners, and door
+    mats. Their stored width and depth follow the 3D model's axes, not a front,
+    so a width filter would drop a 2 x 3 m rug that fits when turned.
+  - strict colors, styles, and materials
+  - a price no higher than the total allowance (110% of the budget)
+- **After the search:**
+  - drop products whose footprint fits the floor in neither orientation
+  - apply minimum sizes and strict brands. For rugs, runners, and door mats,
+    also apply maximum sizes here, and accept either orientation.
+  - keep only design-only products for the plant slot
+  - move preferred brands to the front
+- **Size:** fetch 30 matches, so the checks after the search still leave enough.
+  Then keep 10 products per requested or required slot, 6 per optional slot, and
+  4 per decor slot.
+
+All slots search at the same time. Each needs one query embedding (0.55 to 0.9
+seconds in phase 2 tests) and one lookup (about 30 ms with a category filter).
+All three variants share the pool.
+
+A requested slot with no eligible product is a gap. The selection model is told,
+the run record lists it, and the validator does not require that item. The
+selection result reports it in `selection_strategy.gaps`, as legacy selection
+does. If the request's limits leave a required item, such as the bed, with no
+product, that slot drops the request's limits and the run record notes it.
 
 ### Request and events
 
@@ -237,6 +298,7 @@ which is gitignored. The record contains:
   and outcome.
 - One entry per model call, with stage, variant index, model, input, cached,
   output, and thought tokens, cost, elapsed time, and attempts.
+- One entry per slot, with candidate count and whether it is a gap.
 - One entry per variant, with outcome, reason, and ready time.
 - Totals: first ready variant, all ready, full run, and cost across all variants.
 
@@ -255,8 +317,9 @@ Phase 6 compares runs using these records.
    access, and branches for other routes. Add a selection-validation entry that
    takes explicit inputs, and the placement-mode mapping. Check: parity against
    the recorded legacy runs.
-3. **Shared stages.** Build interpretation, room context, and retrieval. Retrieval
-   requires the phase 2 retrieval function.
+3. **Shared stages.** Build interpretation, room context, and retrieval by slot.
+   Check: run the phase 2 slot search tests with the slots this stage plans,
+   and confirm the retrieval report has no failures.
 4. **Variant stages and graph.** Build selection, placement, correction, and
    validation, plus the `Send` fan-out, failure isolation, and variant directions.
 5. **Bounds and cancellation.** Add the call limits, loop limits, run deadline,
@@ -272,8 +335,8 @@ module's imports require. If porting needs another helper, add a row here.
 
 | File | Action | Planned change | Why |
 | --- | --- | --- | --- |
-| `pipeline/app/graph.py` (proposed) | Create | State types and reducer. Graph wiring: interpretation and room in parallel, retrieval, `Send` x3, variant subgraph. Failure isolation and bound constants. | Owns the LangGraph topology. No runtime exists in this repository. |
-| `pipeline/app/shared_stages.py` (proposed) | Create | Interpretation (prompt, schema, call), room context, and retrieval with pool limits. | Runs once per request. |
+| `pipeline/app/graph.py` (proposed) | Create | State types and reducer. Graph wiring: interpretation, room, retrieval, `Send` x3, variant subgraph. Failure isolation and bound constants. | Owns the LangGraph topology. No runtime exists in this repository. |
+| `pipeline/app/shared_stages.py` (proposed) | Create | Interpretation (prompt, schema with size limits, call), room context, slot planning, and parallel slot searches through `search_assets`. | Runs once per request. |
 | `pipeline/app/variant_stages.py` (proposed) | Create | Selection loop, placement, correction loop, final validation, and variant directions. | Runs once per variant. |
 | `pipeline/app/main.py` (proposed) | Create | FastAPI app, `POST /pipeline`, SSE framing, heartbeat, run deadline, cancellation on disconnect, and run-record write. | HTTP entry point for the runtime. |
 | `pipeline/app/contracts.py` (proposed) | Create | Request model, event payload builders, and render manifest builder. | Keeps today's request and event shapes in one place. |
@@ -282,6 +345,7 @@ module's imports require. If porting needs another helper, add a row here.
 | `pipeline/app/__init__.py` (proposed) | Create | Add `product-data/src` to the import path. | Reuse the phase 2 retrieval function and the price table. |
 | `pipeline/requirements.txt` (proposed) | Create | `langgraph>=1.2`, `fastapi`, `uvicorn`, `google-genai`, `psycopg[binary]`, `pgvector`, `shapely`, `numpy`, `pydantic`, and `python-dotenv`. Verify the versions at install. | Runtime dependencies. |
 | [pipeline/README.md](../../pipeline/README.md) | Edit | Add the run command, environment variables (`GEMINI_API_KEY`, `LOCAL_CONNECTION_STRING`, `LLM_DESIGN_MODEL`), and run-record location. | Describes how to run the service. |
+| [product-data/tests/test_search_assets.py](../../product-data/tests/test_search_assets.py) | Edit | Replace the fixed `LIVING_ROOM_SLOTS` with the slots the phase 3 slot planner returns for the same request. | The slot search tests then check the searches the runtime runs. |
 | `pipeline/app/rules/layout/analysis.py` (proposed) | Create | Port `core/layout/analysis.py`. | Layout findings by level (P0, P1, P2). |
 | `pipeline/app/rules/layout/validation_functional.py` (proposed) | Create | Port `core/layout/validation_functional.py`. | Access and function checks. |
 | `pipeline/app/rules/layout/validation_geometry.py` (proposed) | Create | Port `core/layout/validation_geometry.py`. | Overlap, boundary, and opening checks. |
@@ -328,14 +392,21 @@ module's imports require. If porting needs another helper, add a row here.
 | The run record lists every stage with elapsed time and every model call with tokens and cost. Totals cover all variants. | Graph test reads the record. |
 | After a client disconnect, no new model call starts and the record says `cancelled`. | API test with a slow fake model closes the client stream. |
 | The call, turn, and proposal limits and the run deadline each end with a recorded reason, not a hang. | Graph tests with a fake model that keeps failing. |
+| Each slot search returns the nearest products that pass its filters, and all slots of one request finish together in under 500 ms of database time. | The slot search tests in `product-data/tests/test_search_assets.py`, run with the slot planner's slots, and the retrieval report. The 2026-10-09 report measured 55 ms for 9 slots. |
+| The checks after each slot search work, and a requested slot with no product becomes a gap instead of a failure. | Retrieve-stage tests with fixed search results: products that fit the floor in neither orientation are dropped, minimum sizes and rug sizes accept either orientation, the plant slot keeps only design-only products, preferred brands come first, and an empty requested slot is listed as a gap while the run continues. |
 | Requests run end to end for all four room types with the real model and catalog. | Manual local run. Each variant ends ready or failed with a reason. Timings are recorded next to the legacy runs. This is not a speed gate. |
 
 Tests use a fake model client, because they check runtime behavior, not model output.
 
 ## Dependencies and risks
 
-- **Phase 2.** Retrieval and populated embeddings must exist. The retrieve stage
-  adapts to the phase 2 function signature.
+- **Phase 2** is implemented locally: 5,227 products are embedded, and
+  `search_assets` provides the filters each slot needs.
+- **Composition comes from slots.** The model can only pick from planned slots.
+  Optional slots follow today's role list, so nothing the legacy flow offered is
+  lost. Phase 4 can narrow the list by room type.
+- **Embedding calls.** One request makes one query embedding per slot, about 10
+  to 15 calls at the same time. Watch the Gemini rate limit during local runs.
 - **Lower valid rate at first.** Plain model stages without seeding or the legacy
   repair tools may pass validation less often than today. Phase 3 records
   failure reasons. Phase 4 improves the rate.
@@ -353,12 +424,13 @@ Tests use a fake model client, because they check runtime behavior, not model ou
 
 ## Deferred work
 
-- Phase 4: Jev, the refinement decision, the style-coherence audit, reselection
-  after a layout fails, placement seeding, targeted repair, and stricter candidate
-  filtering.
+- Phase 4: Jev ranking within slots, matching other pieces to the anchor piece's
+  style, slot sizes and room-type slot lists, the refinement decision, the
+  style-coherence audit, reselection after a layout fails, placement seeding, and
+  targeted repair.
 - Phase 5: `create_payload`, `turn_payload`, authentication, room saving, the chat
-  reply, `frontView` and `center` in prepared records, previews, and the web
-  app connection.
+  reply, `frontView` and `center` in prepared records, previews, the web app
+  connection, and a different slot search text for each variant direction.
 
 ## Unresolved questions
 

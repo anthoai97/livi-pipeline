@@ -20,7 +20,6 @@ import json
 import os
 import re
 import sys
-import time
 import urllib.error
 import urllib.request
 import uuid
@@ -39,6 +38,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from gemini_usage import GeminiUsage
+from llm_proxy import ProxyClient
 SCHEMA_PATH = ROOT / "sql" / "001_pipeline_assets_v2.sql"
 ASSET_NAMESPACE = uuid.UUID("6f1b9c2e-4a7d-4e1a-9c3b-8d2e5f7a1b64")
 S3_BUCKET = "livinit-storage-prod"
@@ -551,38 +551,6 @@ def fallback_record(record: dict, vocabulary: set[str]) -> dict:
     }
 
 
-class ProxyClient:
-    """OpenAI-compatible client for the local cli-proxy-api container."""
-
-    def __init__(self, base_url: str, api_key: str):
-        self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
-
-    def chat(self, model: str, messages: list, schema: dict) -> dict:
-        body = json.dumps({
-            "model": model,
-            "messages": messages,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {"name": "product_facts", "strict": True, "schema": schema},
-            },
-        }).encode()
-        request = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=body,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=120) as response:
-                return json.loads(response.read().decode())
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode(errors="replace")[:500]
-            raise RuntimeError(f"proxy {exc.code}: {detail}") from exc
-
-
 def product_schema() -> dict:
     schema = ProductFacts.model_json_schema()
     schema.pop("title", None)
@@ -593,7 +561,6 @@ def product_schema() -> dict:
 
 def call_json(
     client: ProxyClient,
-    model: str,
     text: str,
     usage: GeminiUsage,
     *,
@@ -608,24 +575,19 @@ def call_json(
             {"type": "text", "text": text},
             {"type": "image_url", "image_url": {"url": image_url}},
         ]
-    messages = [{"role": "user", "content": content}]
-    last_error = None
-    for attempt in range(3):
-        try:
-            payload = client.chat(model, messages, product_schema())
-            usage.record_chat(
-                payload,
-                step=step,
-                requested_model=model,
-                source_table=record["source_table"],
-                source_id=str(record["source_id"]),
-            )
-            message = payload["choices"][0]["message"].get("content") or ""
-            return ProductFacts.model_validate_json(message).model_dump()
-        except Exception as exc:
-            last_error = exc
-            time.sleep(1.5 * (attempt + 1))
-    raise RuntimeError(last_error)
+    facts = client.complete(
+        content,
+        product_schema(),
+        name="product_facts",
+        on_response=lambda payload: usage.record_chat(
+            payload,
+            step=step,
+            requested_model=client.model,
+            source_table=record["source_table"],
+            source_id=str(record["source_id"]),
+        ),
+    )
+    return ProductFacts.model_validate(facts).model_dump()
 
 
 def gap_fields(prepared: dict) -> list[str]:
@@ -683,7 +645,6 @@ def merge_gaps(prepared: dict, filled: dict, gaps: list[str], vocabulary: set[st
 
 def fill_missing(
     client: ProxyClient,
-    model: str,
     record: dict,
     prepared: dict,
     vocabulary: set[str],
@@ -714,7 +675,7 @@ def fill_missing(
         "Source:\n" + json.dumps(payload, ensure_ascii=True)
     )
     try:
-        filled = call_json(client, model, text, usage, step="fill_missing", record=record)
+        filled = call_json(client, text, usage, step="fill_missing", record=record)
     except Exception as exc:
         print(
             f"gap fill failed for {record['source_table']} {record['source_id']}: {exc}",
@@ -727,7 +688,6 @@ def fill_missing(
 
 def extract_record(
     client: ProxyClient,
-    model: str,
     row: dict,
     source_table: str,
     vocabulary: set[str],
@@ -749,13 +709,13 @@ def extract_record(
     try:
         prepared = apply_llm(
             record,
-            call_json(client, model, text, usage, step="extract", record=record),
+            call_json(client, text, usage, step="extract", record=record),
             vocabulary,
         )
     except Exception as exc:
         print(f"llm failed for {record['source_table']} {record['source_id']}: {exc}", file=sys.stderr)
         prepared = fallback_record(record, vocabulary)
-    return fill_missing(client, model, record, prepared, vocabulary, usage)
+    return fill_missing(client, record, prepared, vocabulary, usage)
 
 
 def ensure_local_schema(connection: psycopg.Connection) -> None:
@@ -870,13 +830,9 @@ def main() -> None:
 
     remote_dsn = os.environ.get("REMOTE_CONNECTION_STRING", "").strip()
     local_dsn = os.environ.get("LOCAL_CONNECTION_STRING", "").strip()
-    model = os.environ.get("LLM_PROXY_MODEL", "").strip() or "gpt-6-luna"
-    proxy_key = os.environ.get("AI_PROXY_API_KEY", "").strip()
-    proxy_base = os.environ.get("AI_PROXY_BASE_URL", "").strip() or "http://127.0.0.1:8317/v1"
     if not remote_dsn or not local_dsn:
         raise SystemExit("REMOTE_CONNECTION_STRING and LOCAL_CONNECTION_STRING are required")
-    if not proxy_key:
-        raise SystemExit("AI_PROXY_API_KEY is required")
+    client = ProxyClient()
 
     done: dict[str, list[uuid.UUID]] = {"catalog.assets": [], "pipeline.decor_items": []}
     with psycopg.connect(local_dsn, row_factory=dict_row) as local:
@@ -900,7 +856,6 @@ def main() -> None:
             file=sys.stderr,
         )
 
-    client = ProxyClient(proxy_base, proxy_key)
     usage = GeminiUsage(ROOT / "logs" / "model-usage.jsonl")
     prepared: list[dict] = []
     with (
@@ -908,7 +863,7 @@ def main() -> None:
         ThreadPoolExecutor(max_workers=args.workers) as pool,
     ):
         futures = [
-            pool.submit(extract_record, client, model, row, source_table, vocabulary, usage)
+            pool.submit(extract_record, client, row, source_table, vocabulary, usage)
             for row, source_table in rows
         ]
         for index, future in enumerate(as_completed(futures), start=1):
@@ -930,7 +885,7 @@ def main() -> None:
     report = usage.summary()
     totals = report["totals"]
     print(
-        f"prepared {len(prepared)} rows with model {model};"
+        f"prepared {len(prepared)} rows with model {client.model};"
         f" skipped={len(rows) - len(prepared)}"
         f" llm={llm_count} fallback={len(prepared) - llm_count}"
         f" gap_calls={gap_calls} gap_filled={gap_filled}"

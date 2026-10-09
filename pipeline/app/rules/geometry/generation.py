@@ -27,7 +27,7 @@ from app.rules.geometry.placement import (
     _search_placement,
     _skip_reason,
 )
-from app.rules.geometry.primitives import _blocker_polygons, is_rug, room_polygon
+from app.rules.geometry.primitives import _blocker_polygons, asset_polygon, is_rug, room_polygon
 
 def generate_deterministic_layout_with_report(
     assets: list[dict[str, Any]],
@@ -37,11 +37,14 @@ def generate_deterministic_layout_with_report(
     room_windows: list[dict[str, Any]] | None = None,
     planner_guidance: dict[str, Any] | None = None,
     protected_paths: list[dict[str, Any]] | None = None,
+    placed: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build a deterministic seed layout for the LLM.
 
     assets are the selected instances (keyed by uid); planner_guidance is
-    build_seed_guidance output. Returns (layout, report): layout maps uid to
+    build_seed_guidance output. placed holds poses fixed beforehand (the code
+    solver's groups): they are kept, their floor footprints block the other
+    items, and they get no outcome. Returns (layout, report): layout maps uid to
     {category, position, rotation, optional on_top_of} for placed items only;
     report holds placed_comfortably and placed_tightly uids, skipped outcomes
     ({uid, category, status: "skipped_<reason>", reason, ...}), and all outcomes.
@@ -83,8 +86,13 @@ def generate_deterministic_layout_with_report(
             )
         )
     }
-    layout: dict[str, Any] = {}
-    occupied: list[Polygon] = []
+    layout: dict[str, Any] = dict(placed or {})
+    occupied: list[Polygon] = [
+        asset_polygon(placement["position"], placement["rotation"][2],
+                      float(asset_map[uid].get("width", 0.5) or 0.5), float(asset_map[uid].get("depth", 0.5) or 0.5))
+        for uid, placement in layout.items()
+        if not is_rug(uid, asset_map[uid]) and float(placement["position"][2]) <= 0.1
+    ]
     outcomes: list[dict[str, Any]] = []
 
     ordered_assets = sorted(
@@ -100,7 +108,7 @@ def generate_deterministic_layout_with_report(
 
     for asset in ordered_assets:
         uid = asset.get("uid", "")
-        if not uid:
+        if not uid or uid in layout:
             continue
 
         width = float(asset.get("width", 0.5) or 0.5)

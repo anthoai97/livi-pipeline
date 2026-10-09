@@ -113,3 +113,43 @@ def test_stage_models_route_each_listed_stage_to_its_model_and_thinking_level():
 def test_malformed_stage_models_are_rejected(value):
     with pytest.raises(ValueError, match="LLM_STAGE_MODELS"):
         stage_models(value)
+
+
+def hedged_call(first_delay_s: float, hedge_after_s: float) -> tuple[RunContext, Plan, float]:
+    """One model call whose first HTTP request answers after `first_delay_s` and later ones at once."""
+    sent: list[int] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(1)
+        if len(sent) == 1:
+            await asyncio.sleep(first_delay_s)
+        note = "first" if len(sent) == 1 else "duplicate"
+        return httpx.Response(200, json={"candidates": [{"content": {"role": "model", "parts": [{"text": json.dumps({"note": note})}]}}]})
+
+    model = GeminiModel(gemini_client("test-key", httpx.MockTransport(handler)), "gemini-3.8-flash", stages="",
+                        hedge_after_s=hedge_after_s)
+    run = RunContext("test", REQUEST, model, 3)
+
+    async def main() -> tuple[Plan, float]:
+        started = asyncio.get_running_loop().time()
+        plan = await StageContext(run, "select", 0).generate(Plan, "pick")
+        return plan, asyncio.get_running_loop().time() - started
+
+    plan, elapsed = asyncio.run(main())
+    return run, plan, elapsed
+
+
+def test_slow_call_gets_a_duplicate_and_the_first_answer_wins():
+    run, plan, elapsed = hedged_call(first_delay_s=2.0, hedge_after_s=0.1)
+
+    assert plan.note == "duplicate" and elapsed < 1.0
+    # Both calls are recorded: the duplicate answered, the slow one was cancelled.
+    assert sorted(call["error"] or "ok" for call in run.model_calls) == ["cancelled", "ok"]
+    assert [note["text"] for note in run.notes] == ["select model call slower than 0.1 s; sent a duplicate"]
+
+
+def test_fast_call_gets_no_duplicate():
+    run, plan, _ = hedged_call(first_delay_s=0.0, hedge_after_s=0.5)
+
+    assert plan.note == "first"
+    assert len(run.model_calls) == 1 and not run.notes

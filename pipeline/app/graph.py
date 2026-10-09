@@ -34,6 +34,7 @@ from app.run import ModelCallError, RunContext, StageContext, describe
 
 MODEL_CALL_TIMEOUT_S = 60
 MODEL_CALL_ATTEMPTS = 3
+MODEL_HEDGE_AFTER_S = 8
 JEV_CALL_TIMEOUT_S = 5
 JEV_CALL_ATTEMPTS = 2
 MAX_SELECTION_TURNS = 4

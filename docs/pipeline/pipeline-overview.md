@@ -20,7 +20,8 @@ POST /pipeline
                     direction, then deals them so variants get different products
      then in parallel, each:
        b. select    model picks products, code and Jev check them (up to 4 turns)
-       c. place     rule seed layout, model moves items and places skipped ones
+       c. place     code solver places every item (no model call); with
+                    PLACEMENT=model, rule seed layout plus one model edit
        d. repair    code fixes layout problems (no model call)
        e. correct   model fixes what is left (up to 3 proposals)
        f. refine    model improves composition (when Jev says it is needed)
@@ -229,7 +230,44 @@ After 4 failed turns in all, the variant fails with `asset_selection_failed`.
 
 ### 4c. Place products
 
-`variant_stages.place` starts from a rule seed layout. The seed places anchors
+`PLACEMENT` decides how `variant_stages.place` lays out the selection.
+
+**`solver` (default): code places every item, with no model call.** The solver
+(`app.rules.layout.solver`) splits the selection into groups:
+
+- the bed with its nightstands
+- the sofa with its coffee table, accent chairs, side tables, and rug
+- the TV stand with its TV
+- the dining table with its chairs and ceiling lights
+- the desk with its chair
+- each other piece alone
+
+Each group has a few arrangements taken from the existing rules. For example,
+the sofa stands 0.1 m off its wall, the coffee table 0.47 or 0.54 m in front of
+it, and accent chairs beside the table or across from the sofa.
+
+The solver tries each group against every wall, facing into the room, and the
+dining table on a grid of positions. It drops a position that overlaps placed
+furniture, blocks a door or a protected path, or takes the space a bed side, a
+chair pull-out, or a cabinet front needs. When a TV faces the sofa, the sofa can
+also move forward off its wall, so that the viewing distance fits the TV size.
+
+Groups go in order, largest first. After each group, the best partial layouts,
+measured with the same checker as validation, go on to the next group. Lamps,
+tabletop items, and wall art are added last with the seed rules, and the
+complete layout with the fewest findings wins. A solve takes 0.1 to 1.5 s on the
+test rooms (up to 15 items).
+
+If the solver cannot place an item, or blocking findings remain, the stage
+swaps the largest item involved for the next smaller product in the same slot
+that keeps the selection valid, and solves again, up to 2 swaps. If a dining
+table or chair is still involved, it then removes one dining chair at a time,
+up to 2, when the selection stays valid. A request for an exact number of
+seats, or the room's minimum, keeps its chairs. Each swap or removal is kept
+only if the layout gets better, and the run record notes it. Findings that
+remain go to repair and correction.
+
+**`model`: a rule seed layout and one model edit.** The seed places anchors
 first: the bed against a wall, nightstands at the bed head, the coffee table in
 front of the sofa, the TV opposite the sofa, chairs around the table, and lamps
 beside seats. It reports the items it could not place.
@@ -332,6 +370,8 @@ ready variant and writes the run record.
 | Selection turns per variant, across reselection | 4 |
 | Correction proposals per layout | 3 |
 | Reselections per variant | 1 |
+| Solver product swaps per layout | 2 |
+| Solver dining chairs removed per layout | 2 |
 | Model call timeout | 60 s, up to 3 attempts |
 | Jev call timeout | 5 s, up to 2 attempts |
 | Run deadline | 300 s |

@@ -62,6 +62,7 @@ from app.rules.layout.dining import dining_chair_table_facts, dining_layout_meas
 from app.rules.layout.formatting import format_issues, format_layout
 from app.rules.layout.metrics import layout_issue_score
 from app.rules.layout.normalization import layout_from_placements, move_asset_with_supports, normalize_layout
+from app.rules.layout.solver import solve_layout
 from app.rules.layout.studio import is_freestanding_studio_media_support
 from app.rules.layout.validation_geometry import overlap_separation_facts, wall_mount_placement_facts
 from app.rules.layout_rules import (
@@ -713,6 +714,17 @@ def _jev_attribute_constraints(intent: Record) -> list[Record]:
     ]
 
 
+def _code_audit() -> Record:
+    """The constraint audit with only the checks validate_selection runs itself."""
+    return {
+        "passed": True,
+        "checked_constraints": ["counts, sizes, vocabulary attributes, brands, and prices (code)"],
+        "exact_count_violations": [],
+        "coordination_violations": [],
+        "attribute_constraint_checks": [],
+    }
+
+
 async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Record, products: dict[str, Record]) -> Record:
     """The constraint audit validate_selection reads, built by code and one Jev request.
 
@@ -726,13 +738,7 @@ async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Reco
     targets every product. Notes a rejection. With check off or failed, the audit
     holds only code results.
     """
-    audit: Record = {
-        "passed": True,
-        "checked_constraints": ["counts, sizes, vocabulary attributes, brands, and prices (code)"],
-        "exact_count_violations": [],
-        "coordination_violations": [],
-        "attribute_constraint_checks": [],
-    }
+    audit = _code_audit()
     if "check" not in ctx.run.jev_uses:
         return audit
     categories = {uid: normalize_category(product.get("category")) for uid, product in products.items()}
@@ -808,40 +814,13 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     reuse_rate = ctx.run.product_reuse_rate
     response = await ctx.generate(Selection, _selection_prompt(state, intent, fit_step, placement_feedback, reuse_rate))
 
-    candidates = _candidates(state["pool"])
-    by_id = {str(record["asset_id"]): record for record in candidates}
-    items = [
-        {"asset": by_id.get(asset.uid.strip()) or {"asset_id": asset.uid.strip()}, "quantity": 1,
-         "functional_group": asset.functional_group}
-        for asset in response.selected_assets
-    ]
-    uids = [str(item["asset"]["asset_id"]) for item in items]
-    products = {uid: {**catalog_asset(by_id[uid]), "uid": uid} for uid in uids if uid in by_id}
-    gaps = _gap_slots(shared["slots"])
-    validation = validate_selection(
-        items=items,
-        intent=intent,
-        room=shared["room"],
-        budget=shared["request"].budget,
-        candidates=candidates,
-        gaps=[slot["category"] for slot in gaps],
-        fit_step=fit_step,
-        fit_satisfaction=_fit_satisfaction(uids, shared["slots"], state["pool"]),
-        constraint_audit=await _constraint_audit(state, ctx, intent, products),
-    )
+    selected = [asset.model_dump() for asset in response.selected_assets]
+    audit = await _constraint_audit(state, ctx, intent, _products(state["pool"], selected))
+    validation = _validated(state, selected, intent, fit_step, audit, reuse_rate)
     instances = validation.pop("instances")
-    validation.pop("feedback")
-    shared_uids = [uid for uid in products if products[uid].get("shared")]
-    limit = math.floor(round(reuse_rate * len(products), 9))
-    if reuse_rate < 1 and len(shared_uids) > limit:
-        validation["valid"] = False
-        validation["errors"].append(
-            f"REUSE LIMIT: {len(shared_uids)} of {len(products)} products are shared with other variants; "
-            f"at most {limit} may be. Replace some with products not marked shared."
-        )
-    gap_text = "; ".join(f"{slot['label']}: no eligible catalog product" for slot in gaps)
+    gap_text = "; ".join(f"{slot['label']}: no eligible catalog product" for slot in _gap_slots(shared["slots"]))
     selection = {
-        "selected_assets": [asset.model_dump() for asset in response.selected_assets],
+        "selected_assets": selected,
         "gaps": "; ".join(text for text in (response.gaps.strip(), gap_text) if text),
         "fit_step": fit_step,
     }
@@ -854,6 +833,53 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     if placement_feedback is not None:
         update["placement_feedback"] = placement_feedback
     return update
+
+
+def _products(pool: dict[str, list[Record]], selected: list[Record]) -> dict[str, Record]:
+    """catalog_asset records of the selected pool products by uid, with rank's `shared` mark."""
+    by_id = {str(record["asset_id"]): record for record in _candidates(pool)}
+    return {uid: {**catalog_asset(by_id[uid]), "uid": uid} for asset in selected if (uid := asset["uid"].strip()) in by_id}
+
+
+def _validated(state: VariantState, selected: list[Record], intent: Record, fit_step: str | None, audit: Record,
+               reuse_rate: float) -> Record:
+    """validate_selection for `selected` ({uid, functional_group} per unit) from this variant's pool, plus the reuse limit.
+
+    Returns the validator report with `instances`, without `feedback`. The
+    selection also fails when more than `reuse_rate` of its distinct products
+    are marked `shared`.
+    """
+    shared = state["shared"]
+    candidates = _candidates(state["pool"])
+    by_id = {str(record["asset_id"]): record for record in candidates}
+    items = [
+        {"asset": by_id.get(asset["uid"].strip()) or {"asset_id": asset["uid"].strip()}, "quantity": 1,
+         "functional_group": asset.get("functional_group")}
+        for asset in selected
+    ]
+    uids = [str(item["asset"]["asset_id"]) for item in items]
+    validation = validate_selection(
+        items=items,
+        intent=intent,
+        room=shared["room"],
+        budget=shared["request"].budget,
+        candidates=candidates,
+        gaps=[slot["category"] for slot in _gap_slots(shared["slots"])],
+        fit_step=fit_step,
+        fit_satisfaction=_fit_satisfaction(uids, shared["slots"], state["pool"]),
+        constraint_audit=audit,
+    )
+    validation.pop("feedback")
+    products = _products(state["pool"], selected)
+    shared_uids = [uid for uid in products if products[uid].get("shared")]
+    limit = math.floor(round(reuse_rate * len(products), 9))
+    if reuse_rate < 1 and len(shared_uids) > limit:
+        validation["valid"] = False
+        validation["errors"].append(
+            f"REUSE LIMIT: {len(shared_uids)} of {len(products)} products are shared with other variants; "
+            f"at most {limit} may be. Replace some with products not marked shared."
+        )
+    return validation
 
 
 # --- place, repair, correct, and refine ----------------------------------------
@@ -1102,18 +1128,36 @@ def _measure(state: VariantState, layout: Record) -> VariantState:
     }
 
 
-async def place(state: VariantState, ctx: StageContext) -> VariantState:
-    """Build the rule seed layout, then one model call moves seed items and places skipped ones.
+MAX_SWAPS = 2
+MAX_DROPS = 2
 
-    Reads: `shared`, `instances`, `selection_validation`.
+
+async def place(state: VariantState, ctx: StageContext) -> VariantState:
+    """Place every selected instance: the code solver with PLACEMENT=solver, else the rule seed plus one model edit.
+
+    Reads: `shared`, `instances`, `selection_validation`; for a swap also
+    `selection`, `pool`, and `fit_step`.
     Returns: `layout`, `issues`, `findings`, `blocking_findings` (P0, P1, and
-    critical P2), and `non_blocking_findings`. The seed
-    (app.rules.geometry.generation) places anchors first and reports the items it
-    skipped; the stage notes them. The model returns poses only for the items it
-    moves and for every skipped item. A response that leaves a skipped item
-    unplaced or has non-finite values gets one retry with the error; a second one
-    fails the variant.
+    critical P2), and `non_blocking_findings`; after a kept swap also
+    `selection`, `selection_validation`, and `instances`.
+
+    Solver (app.rules.layout.solver), no model call, in a worker thread: while
+    the layout has unplaceable items or blocking findings, up to MAX_SWAPS
+    times, `_swap` replaces the largest named floor item with the next smaller
+    product of its slot that keeps the selection valid, and the solver runs
+    again. Then, while those items include a dining table or chair, up to
+    MAX_DROPS times, `_drop_chair` removes the last dining chair if the
+    selection stays valid, and the solver runs again. A swap or drop is kept
+    only when the layout scores better. Notes each solve, swap, and drop.
+
+    Model: the seed (app.rules.geometry.generation) places anchors first and
+    reports the items it skipped; the stage notes them. The model returns poses
+    only for the items it moves and for every skipped item. A response that
+    leaves a skipped item unplaced or has non-finite values gets one retry with
+    the error; a second one fails the variant.
     """
+    if ctx.run.placement == "solver":
+        return await asyncio.to_thread(_solve, state, ctx)
     room, instances = state["shared"]["room"], state["instances"]
     room_area = tuple(room["room_area"])
     guidance = build_seed_guidance(
@@ -1147,6 +1191,99 @@ async def place(state: VariantState, ctx: StageContext) -> VariantState:
     except ValueError as exc:
         layout = await propose(f"{prompt}\n\nYOUR PREVIOUS RESPONSE WAS REJECTED: {exc}. Return the poses again, with one pose for every skipped item.")
     return _measure(state, layout)
+
+
+def _solve(state: VariantState, ctx: StageContext) -> VariantState:
+    """The solver branch of `place`: solve, then swap products, then drop dining chairs, solving again while that helps."""
+    room, intent = state["shared"]["room"], state["shared"]["intent"]
+
+    def note(report: Record) -> str:
+        unplaceable = f", unplaceable {', '.join(report['unplaceable'])}" if report["unplaceable"] else ""
+        return (f"solver: score {report['score']}, {report['candidates']} candidates, {report['scored']} scored, "
+                f"{report['elapsed']:.2f} s{unplaceable}")
+
+    layout, report = solve_layout(state["instances"], room, intent)
+    ctx.run.note(note(report), ctx.variant_index)
+    update = _measure(state, layout)
+    for change, limit in ((_swap, MAX_SWAPS), (_drop_chair, MAX_DROPS)):
+        for _ in range(limit):
+            current = {**state, **update}
+            keys = report["unplaceable"] or _named_items(update["blocking_findings"], {_key(asset) for asset in current["instances"]})
+            changed = change(current, keys, ctx.run.product_reuse_rate) if keys else None
+            if changed is None:
+                break
+            selection, text = changed
+            layout, trial_report = solve_layout(selection["instances"], room, intent)
+            trial = _measure({**current, **selection}, layout)
+            before, after = layout_issue_score(update["issues"]), layout_issue_score(trial["issues"])
+            kept = after < before
+            ctx.run.note(f"{text}: {'kept' if kept else 'reverted'}, score {list(before)} -> {list(after)}; "
+                         f"{note(trial_report)}", ctx.variant_index)
+            if not kept:
+                break
+            update, report = {**update, **selection, **trial}, trial_report
+    return update
+
+
+def _swap(state: VariantState, keys: list[str], reuse_rate: float) -> tuple[VariantState, str] | None:
+    """Replace the largest floor item of `keys` with the next smaller product of its slot that keeps the selection valid.
+
+    Every unit of the replaced product changes, so a matched set stays matched.
+    The new selection passes validate_selection and the reuse limit again, with
+    the code-only constraint audit. Returns the `selection`,
+    `selection_validation`, and `instances` update with a description, or None.
+    """
+    shared = state["shared"]
+    by_key = {_key(asset): asset for asset in state["instances"]}
+    intent = _selection_intent(shared["intent"], shared["slots"])
+
+    def area(asset: Record) -> float:
+        return float(asset.get("width") or 0) * float(asset.get("depth") or 0)
+
+    floor = [key for key in keys if key in by_key and placement_mode_for_asset(by_key[key]) == "floor"]
+    for key in sorted(floor, key=lambda key: -area(by_key[key])):
+        uid = str(by_key[key]["asset_id"])
+        slot_id = next((slot_id for slot_id, rows in state["pool"].items() if any(str(r["asset_id"]) == uid for r in rows)), None)
+        if slot_id is None:
+            continue
+        smaller = [record for record in state["pool"][slot_id] if area(catalog_asset(record)) < area(by_key[key]) - 1e-9]
+        for record in sorted(smaller, key=lambda record: -area(catalog_asset(record))):
+            replacement = str(record["asset_id"])
+            selected = [{**asset, "uid": replacement} if asset["uid"].strip() == uid else asset
+                        for asset in state["selection"]["selected_assets"]]
+            validation = _validated(state, selected, intent, state.get("fit_step"), _code_audit(), reuse_rate)
+            if validation["valid"]:
+                instances = validation.pop("instances")
+                update: VariantState = {"selection": {**state["selection"], "selected_assets": selected},
+                                        "selection_validation": validation, "instances": instances}
+                return update, f"swap {uid} -> {replacement} in slot {slot_id}"
+    return None
+
+
+def _drop_chair(state: VariantState, keys: list[str], reuse_rate: float) -> tuple[VariantState, str] | None:
+    """Remove the last dining chair when `keys` name a dining table or chair, if the selection stays valid.
+
+    The re-check is the swap's (validate_selection and the reuse limit), so an
+    exact or minimum seat count is never broken. Returns the `selection`,
+    `selection_validation`, and `instances` update with a description, or None.
+    """
+    shared = state["shared"]
+    by_key = {_key(asset): asset for asset in state["instances"]}
+    dining = [key for key in keys if key in by_key and normalize_category(by_key[key].get("category")) in {"dining_table", "dining_chair"}]
+    chairs = [key for key, asset in by_key.items() if normalize_category(asset.get("category")) == "dining_chair"]
+    if not dining or not chairs:
+        return None
+    uid = str(by_key[chairs[-1]]["asset_id"])  # instances follow the selection order, so this unit is placed last
+    selected = list(state["selection"]["selected_assets"])
+    del selected[max(n for n, asset in enumerate(selected) if asset["uid"].strip() == uid)]
+    intent = _selection_intent(shared["intent"], shared["slots"])
+    validation = _validated(state, selected, intent, state.get("fit_step"), _code_audit(), reuse_rate)
+    if not validation["valid"]:
+        return None
+    instances = validation.pop("instances")
+    update: VariantState = {"selection": {**state["selection"], "selected_assets": selected},
+                            "selection_validation": validation, "instances": instances}
+    return update, f"dropped dining chair {chairs[-1]} ({len(chairs)} -> {len(chairs) - 1} chairs)"
 
 
 async def repair(state: VariantState, ctx: StageContext) -> VariantState:

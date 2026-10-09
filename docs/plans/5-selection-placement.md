@@ -1,8 +1,13 @@
 # Phase 4: rebuild selection and placement
 
 Issue: [#5](https://github.com/anthoai97/livi-pipeline/issues/5). Parent: [#1](https://github.com/anthoai97/livi-pipeline/issues/1).
-Status: implemented and benchmarked; the 60-second target is not met. Results are in
-[phase 4 benchmark](../pipeline/phase-4-benchmark.md). Phase 3 ([#4](https://github.com/anthoai97/livi-pipeline/issues/4)) is implemented.
+Status: stage 1 is implemented and benchmarked, and it misses the 60-second target. It is
+checkpointed in draft PR [#9](https://github.com/anthoai97/livi-pipeline/pull/9), and its
+results are in [phase 4 benchmark](../pipeline/phase-4-benchmark.md). Stage 2, the
+[three-step flow](#stage-2-three-step-flow), is ready for implementation on branch
+`issue-5-three-step-flow`. Phase 3 ([#4](https://github.com/anthoai97/livi-pipeline/issues/4)) is implemented.
+
+Sections from "Objective" to "Deferred work" describe stage 1.
 
 ## Objective
 
@@ -363,12 +368,121 @@ reselection adds about 10 to 15 s. These are estimates until the benchmark runs.
   only if Jev ranking loses on the benchmark.
 - Image-based refinement, after phase 5 adds previews.
 
+## Stage 2: three-step flow
+
+### Objective
+
+The job is three steps: understand the prompt, pick products, and put them in
+the room in a layout that makes sense. Do each step once, with the tool that
+fits it, and stop asking the language model to do geometry.
+
+### Why
+
+Stage 1 per-step timing (12 runs, lite placement and correction, escalating to
+`gemini-3.8-flash`) on the critical path, per run:
+
+| Step | Seconds | Share |
+| --- | ---: | ---: |
+| correct (mostly escalated) | 42.3 | 54% |
+| select | 20.8 | 26% |
+| interpret | 10.3 | 13% |
+| place, retrieve, rank, code | 5.5 | 7% |
+
+Correction escalates on bedroom and studio relationships: bed access,
+nightstands, TV viewing, and the media group. The lite model cannot fix them,
+and `gemini-3.8-flash` thinks for 20 to 50 s to do it. The checker
+(`analyze_layout`) takes 5.5 ms per layout, and the rule seed 146 ms. So code
+can score about 150 candidate layouts in under a second.
+
+### Flow
+
+```text
+1. understand  interpret (one model call)
+2. pick        retrieve -> rank + deal (Jev) -> select (one model call)
+3. place       solve (code) -> [fallback: swap, then model correction] -> validate
+```
+
+### Decisions
+
+| # | Decision | Options | Chosen | Why |
+| --- | --- | --- | --- | --- |
+| 11 | Who places furniture | (a) Code solver scored by the checker, with model correction only as a fallback. (b) Keep seed, model edit, and model correction. | (a) | Geometry is arithmetic, and the checker already defines a sensible layout. |
+| 12 | Unplaceable item | (a) Code swaps it for the next smaller product in its slot that stays within budget, and solves again. (b) Reselect with the model. (c) After swaps, drop one dining chair at a time. | (a), up to 2 swaps, then (c), up to 2 drops | Saves a selection turn of 5 to 25 s. The user approved (c); each drop passes the selection validator, so exact counts such as "seating for six" are never reduced. A swap or drop is kept only if the layout scores better. |
+| 13 | Slow model calls | (a) Send a duplicate call when one is slow and keep the first answer. (b) Wait. | (a), after 8 s | 70 to 80% of calls answer in about 5 s, so the duplicate usually wins. |
+| 14 | Switching over | (a) `PLACEMENT=solver` or `model`, compared on the benchmark, then the losing path is deleted. (b) Replace at once. | (a) | Keeps a comparison point, as the user asked. |
+
+### Solver
+
+- **Groups.** Seed guidance already assigns each item a role, an anchor, and a
+  placement mode. A group is an anchor plus the items tied to it:
+  - bed, nightstands, and bedside lamps
+  - sofa, coffee table, accent chairs, side tables, TV, and media unit
+  - dining table and chairs
+  - desk and office chair
+  - each storage piece on its own
+
+  Each group gets a template of relative poses. These come from the existing
+  living-group poses, the dining chair targets, and the seed's guided
+  candidates.
+- **Candidates.** Wall-aligned groups go against each wall segment, at steps
+  along the wall, facing into the room. Floating groups, such as a dining table,
+  go on a grid. Both orientations are tried.
+- **Search.** Place the largest groups first. Keep the best few partial layouts,
+  using cheap footprint, door, and path checks. Score each complete candidate
+  with `analyze_layout` and `layout_issue_score`, and keep the best.
+- **Accessories.** Rugs, lamps, plants, decor, and wall items are placed after
+  the groups, with the existing service-slot, rug, and wall-mount
+  normalization. The ported cleanups then run once.
+- **Result.** The best layout, its findings, and the items the solver could not
+  place. Rules and `final_layout_check` do not change.
+
+### Fallbacks
+
+1. The solver cannot place an item: swap it in code for a smaller product, then drop dining chairs one at a time if needed (decision 12), and solve again.
+2. Blocking findings remain: run the stage 1 correction loop from the solver's
+   layout, with lite correction escalating to `gemini-3.8-flash` when configured.
+3. Validation fails: reselect once, as in stage 1.
+
+### Implementation phases
+
+1. **Duplicate slow calls.** `llm.py` sends a second identical call when the
+   first has not answered after `MODEL_HEDGE_AFTER_S` (8 s). It keeps the first
+   answer, cancels the other, and records both calls. Check: test with a slow
+   fake transport.
+2. **Solver.** Build the groups, templates, candidates, and search, and score
+   with the checker. Check: on the parity fixtures and the benchmark rooms, the
+   solver returns layouts with no blocking findings for living, dining, bedroom,
+   and studio sets, in under 2 s.
+3. **Wire it in.** `place` uses the solver when `PLACEMENT=solver`, with swap and
+   correction fallbacks. Check: stage and graph tests with fakes.
+4. **Benchmark.** 12 runs with `PLACEMENT=solver` against stage 1.
+5. **Delete the losing path.** If the solver wins, remove the seed-plus-edit
+   placement, the refinement stage and its Jev trigger, and the Jev selection
+   check. Keep correction only as the fallback. Update docs.
+
+### File changes
+
+| File | Action | Planned change | Why |
+| --- | --- | --- | --- |
+| `pipeline/app/rules/layout/solver.py` (proposed) | Create | Groups, templates, candidates, search, scoring, and swap support. | New code-based placement. No existing module searches whole layouts. |
+| [pipeline/app/variant_stages.py](../../pipeline/app/variant_stages.py) | Edit | `place` calls the solver and code swap under `PLACEMENT=solver`. Phase 5 removes the losing path and the refine and check code. | Stage wiring. |
+| [pipeline/app/graph.py](../../pipeline/app/graph.py) | Edit | Routing for the swap and fallback. Phase 5 removes the refine node. | Topology. |
+| [pipeline/app/llm.py](../../pipeline/app/llm.py) | Edit | Duplicate slow calls. | Caps thinking tails. |
+| [pipeline/app/jev.py](../../pipeline/app/jev.py) | Edit | Read `PLACEMENT` with the other switches. Phase 5 drops `check` and `REFINEMENT`. | Switches. |
+| [pipeline/app/rules/planner/seed_guidance.py](../../pipeline/app/rules/planner/seed_guidance.py), [pipeline/app/rules/geometry/candidates.py](../../pipeline/app/rules/geometry/candidates.py) | Edit if needed | Expose group roles and candidate generators to the solver. | Reuse the seed rules. |
+| [pipeline/README.md](../../pipeline/README.md), [docs/pipeline/pipeline-overview.md](../pipeline/pipeline-overview.md), [docs/pipeline/phase-4-benchmark.md](../pipeline/phase-4-benchmark.md) | Edit | New flow, switches, and results. | Docs. |
+
+### Acceptance criteria
+
+| Criterion | Verification |
+| --- | --- |
+| At least 11 of 12 benchmark runs return three valid layouts in under 60 s, with a median at or under 30 s. | Benchmark with `PLACEMENT=solver`. |
+| Valid layouts are at least stage 1's 34 of 36. Non-blocking findings per run are reported against stage 1. | Same benchmark. |
+| The solver alone clears blocking findings in most variants. The run record notes when a swap or the correction fallback ran. | Run-record counts. |
+| A slow model call is capped by its duplicate. | `llm.py` test, and select call times in the benchmark. |
+| Rules and final validation are unchanged. | Existing parity tests pass. |
+
 ## Unresolved questions
 
-- How should phase 4 close the remaining gap to 60 seconds? The benchmark shows
-  that single Gemini calls thinking 2,000 to 6,000 tokens, plus 504 retries, are
-  the tail. Options:
-  - a faster model for the pose-edit calls (placement, correction)
-  - shorter call timeouts with fallbacks (keep the seed or the current layout)
-  - a second, duplicate call when the first is slow (higher cost)
-  - accepting the gap until phase 6
+None for stage 2. Deferred: a shorter interpretation output, and Jev choosing
+products per slot instead of the selection model call.

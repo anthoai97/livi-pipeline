@@ -14,6 +14,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from google.genai import types
+from test_rules_parity import RUNS, _room
 from test_runtime import FakeJevClient, of_type, parse
 
 from app import shared_stages, variant_stages
@@ -134,6 +135,8 @@ class FakeGenai:
 def default_switches(monkeypatch):
     for switch in ("JEV_USES", "REFINEMENT", "PRODUCT_REUSE_RATE", "LLM_STAGE_MODELS"):
         monkeypatch.delenv(switch, raising=False)
+    # These runs drive placement with fake model poses; the solver tests set PLACEMENT=solver.
+    monkeypatch.setenv("PLACEMENT", "model")
 
 
 @pytest.fixture
@@ -432,6 +435,159 @@ def test_jev_failure_never_fails_a_variant(tmp_path, searches, monkeypatch):
         assert {"jev rank failed", "jev check failed", "jev refine failed"} <= notes
     # A failed refinement trigger skips refinement.
     assert stage_runs(record, "refine", 0) == 1 and not [call for call in record["model_calls"] if call["stage"] == "refine"]
+
+
+# --- solver placement -------------------------------------------------------
+
+LARGEST_PLANT = "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4"  # 1.03 x 1.11 m; the decor plant slot also holds 1.02 x 1.07 and 0.97 x 1.09
+
+
+def test_solver_places_the_selection_without_a_model_call(tmp_path, searches, monkeypatch):
+    monkeypatch.setenv("PLACEMENT", "solver")
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Correction": poses(OVERLAPPING)})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    assert len(of_type(events, "variant_ready")) == 3
+    assert {call["stage"] for call in record["model_calls"]} == {"interpret", "select"}
+    assert record["switches"]["PLACEMENT"] == "solver"
+    for index in range(3):
+        assert [stage_runs(record, stage, index) for stage in ("place", "repair", "correct", "validate")] == [1, 1, 0, 1]
+        notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
+        assert any(note.startswith("solver: score [0, 0, 0],") for note in notes)
+
+
+def test_solver_swaps_an_unplaceable_item_for_the_next_smaller_product_in_its_slot(tmp_path, searches, monkeypatch):
+    monkeypatch.setenv("PLACEMENT", "solver")
+    solve = variant_stages.solve_layout
+
+    def no_room_for_the_largest_plant(instances, room, intent):
+        layout, report = solve(instances, room, intent)
+        if next(a["asset_id"] for a in instances if a["uid"] == "planter_1") != LARGEST_PLANT:
+            return layout, report
+        table = layout["dining_table_1"]["position"]
+        return {**layout, "planter_1": {**layout["planter_1"], "position": [table[0], table[1], 0.0]}}, {
+            **report, "unplaceable": ["planter_1"]}
+
+    monkeypatch.setattr(variant_stages, "solve_layout", no_room_for_the_largest_plant)
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Correction": poses(OVERLAPPING)})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
+    assert len(ready) == 3
+    for variant in ready:
+        plants = [asset["asset_id"] for asset in variant["selected_assets"] if asset["category"] == "planter"]
+        assert plants == ["decor_130b1ed4-b579-481b-a8ee-aaeee5c6e6ef"]
+        assert variant["selection_validation"]["valid"]
+    swaps = [note["text"] for note in record["notes"] if note["text"].startswith("swap ")]
+    assert len(swaps) == 3
+    assert all(note.startswith(f"swap {LARGEST_PLANT} -> decor_130b1ed4-b579-481b-a8ee-aaeee5c6e6ef in slot ")
+               and ": kept, score [1," in note for note in swaps)
+    assert not [call for call in record["model_calls"] if call["stage"] in {"place", "correct"}]
+
+
+def test_solver_layout_with_blocking_findings_falls_back_to_model_correction(tmp_path, searches, monkeypatch):
+    monkeypatch.setenv("PLACEMENT", "solver")
+    solve = variant_stages.solve_layout
+    solved: dict = {}
+
+    def chair_on_the_plant(instances, room, intent):
+        # Repair moves the chair off the plant, but only to a free spot away from the table.
+        layout, report = solve(instances, room, intent)
+        solved.setdefault("layout", layout)  # the selected table's layout, not the reverted swap's
+        return {**layout, "dining_chair_1": {**layout["dining_chair_1"], "position": list(layout["planter_1"]["position"])}}, report
+
+    def restore(prompt: str) -> dict:
+        pose = solved["layout"]["dining_chair_1"]
+        return {"poses": [{"uid": "dining_chair_1", "x": pose["position"][0], "y": pose["position"][1],
+                           "rotation_z": pose["rotation"][2]}]}
+
+    monkeypatch.setattr(variant_stages, "solve_layout", chair_on_the_plant)
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Correction": restore})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    assert len(of_type(events, "variant_ready")) == 3
+    assert {call["stage"] for call in record["model_calls"]} == {"interpret", "select", "correct"}
+    for index in range(3):
+        assert stage_runs(record, "correct", index) == 1
+        notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
+        # A smaller table does not free the chair, so the swap is reverted.
+        assert any(note.startswith("swap dining_table_3 -> dining_table_552 in slot dining_table: reverted,") for note in notes)
+
+
+# Recorded run 0, variant 1: a sleeper sofa leaves no room for four chairs around the 1.37 m table.
+SOFA_AND_DINING = next(turn["items"] for turn in RUNS[0]["selection_turns"] if turn["variant"] == 1)
+FOUR_CHAIRS = {"label": "four dining chairs", "canonical_category": "dining_chair", "count": 4, "exact": True,
+               "optional": False, "acceptable_substitutes": [], "descriptors": []}
+
+
+def place_sofa_and_dining(intent_fields: dict, *requested: dict) -> tuple[dict, list[str]]:
+    """Run the solver place stage on SOFA_AND_DINING with these intent fields; return its update and notes."""
+    intent, room = _room(RUNS[0])
+    intent = {**intent, **intent_fields, "requested_items": [*intent["requested_items"], *requested]}
+    request = PipelineRequest(user_intent="a dining room with a sleeper sofa",
+                              **{key: RUNS[0]["request"][key] for key in ("budget", "room_type", "room_area", "room_vertices",
+                                                                          "wall_height", "room_doors", "room_windows")})
+    slots, pool = [], {}
+    for uid, _ in SOFA_AND_DINING:
+        record = RUNS[0]["assets"][uid]
+        if record["category"] not in pool:
+            slots.append({"id": record["category"], "kind": "requested", "category": record["category"], "label": record["category"],
+                          "gap": False, "relaxed": False})
+            pool[record["category"]] = []
+        pool[record["category"]].append(record)
+    state = {"variant_index": 0, "direction": "", "pool": pool, "fit_step": None,
+             "shared": {"request": request, "intent": intent, "room": room, "slots": slots}}
+    selected = [{"uid": uid, "functional_group": None} for uid, count in SOFA_AND_DINING for _ in range(count)]
+    validation = variant_stages._validated(state, selected, intent, None, variant_stages._code_audit(), 1.0)
+    assert validation["valid"], validation["errors"]
+    state |= {"selection": {"selected_assets": selected, "gaps": ""}, "instances": validation.pop("instances"),
+              "selection_validation": validation}
+    run = RunContext("run", request, SimpleNamespace(client=None, stages={}), 3, placement="solver")
+    update = asyncio.run(variant_stages.place(state, StageContext(run, "place", 0)))
+    return {**state, **update}, [note["text"] for note in run.notes]
+
+
+def chairs(state: dict) -> int:
+    return sum(asset["category"] == "dining_chair" for asset in state["instances"])
+
+
+def test_solver_drops_a_dining_chair_when_four_do_not_fit():
+    # With space-first seating the validator accepts 2 to 4 chairs, so dropping one is allowed.
+    state, notes = place_sofa_and_dining({"fit_flexibility": "space_first"})
+
+    assert chairs(state) == 3 and state["blocking_findings"] == []
+    assert state["selection_validation"]["valid"]
+    assert sum(asset["uid"] == "dining_chair_723" for asset in state["selection"]["selected_assets"]) == 3
+    [drop] = [note for note in notes if note.startswith("dropped")]
+    assert drop.startswith("dropped dining chair dining_chair_4 (4 -> 3 chairs): kept, score [0, 1, 1] -> [0, 0, 0];")
+
+
+def test_solver_never_drops_below_an_exact_seat_count():
+    state, notes = place_sofa_and_dining({"fit_flexibility": "space_first"}, FOUR_CHAIRS)
+
+    assert chairs(state) == 4 and state["blocking_findings"]
+    assert not [note for note in notes if note.startswith("dropped")]
+
+
+def test_a_dropped_chair_that_does_not_improve_the_layout_is_reverted(monkeypatch):
+    solve = variant_stages.solve_layout
+
+    def sofa_outside_with_fewer_chairs(instances, room, intent):
+        layout, report = solve(instances, room, intent)
+        if sum(asset["category"] == "dining_chair" for asset in instances) < 4:
+            layout = {**layout, "sleeper_sofa_1": {**layout["sleeper_sofa_1"], "position": [-2.0, -2.0, 0.0]}}
+        return layout, report
+
+    monkeypatch.setattr(variant_stages, "solve_layout", sofa_outside_with_fewer_chairs)
+
+    state, notes = place_sofa_and_dining({"fit_flexibility": "space_first"})
+
+    assert chairs(state) == 4
+    assert [note.split(";")[0] for note in notes if note.startswith("dropped")] == [
+        "dropped dining chair dining_chair_4 (4 -> 3 chairs): reverted, score [0, 1, 1] -> [1, 0, 1]"]
 
 
 # --- rank -------------------------------------------------------------------

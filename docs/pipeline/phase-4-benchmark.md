@@ -98,6 +98,36 @@ for per-step models, and `PRODUCT_REUSE_RATE` for distinct products. 12 runs eac
   products with the others. Its own dealt products rank first for each variant,
   so the 50% cap was never reached.
 
+## Stage 2: code layout solver
+
+`PLACEMENT=solver`: code places every group and scores candidates with the
+checker. Correction is lite, escalating to `gemini-3.8-flash` as a fallback.
+Slow calls get a duplicate after 8 s. Reuse rate 0.5. 12 runs.
+
+| Configuration | Median | Max | Valid runs | Valid layouts | Under 60 s | Cost per run (USD) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Stage 1 defaults | 68.7 | 213.3 | 10 | 34 of 36 | 3 | 0.124 |
+| Stage 1, lite escalating | 68.7 | 220.3 | 10 | 34 of 36 | 5 | 0.122 |
+| **Stage 2 solver** | **31.1** | **47.9** | **11** | **35 of 36** | **12** | **0.062** |
+
+| Step | Median | p90 | Max | Share of critical path |
+| --- | ---: | ---: | ---: | ---: |
+| interpret | 8.4 | 11.9 | 18.2 | 30% |
+| select | 5.6 | 14.3 | 25.7 | 62% |
+| place (solver) | 0.40 | 0.86 | 1.18 | 1% |
+| retrieve, rank, repair, validate | 2.1 | - | - | 7% |
+
+- The solver cleared every layout it was given: no correction call, swap, or
+  chair drop ran.
+- The failed variant was a living-room selection that failed its fit check
+  4 times. Placement was not the cause.
+- Non-blocking findings rose to 2.5 per run, against 0.42 in stage 1:
+  - `sofa_wall_gap`: sofas floated off the wall to bring the TV into range
+  - `table_lamp_support`: bedroom table lamps placed on the desk, not the nightstands
+  - `rug_composition`, `media_group`, and `floor_lamp_reach`
+- Duplicate calls fired 16 times on select and 7 times on interpret. A normal
+  interpretation takes 8 to 9 s, so the 8 s threshold triggers too often there.
+
 ## Outcome
 
 The 60-second target is not met. The best valid setup so far (escalation) has

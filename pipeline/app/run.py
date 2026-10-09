@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from google import genai
 
     from app.contracts import PipelineRequest
-    from app.jev import Jev, Refinement
+    from app.jev import Jev, Placement, Refinement
 
 RUNS_DIR = Path(__file__).resolve().parents[1] / ".data" / "runs"
 
@@ -67,7 +67,8 @@ class StageContext:
       name, or None when the call fails; the failure is noted, and the caller
       falls back to its Jev-off behavior. `run.jev_uses` and `run.refinement`
       hold the switches that decide which uses run; `run.product_reuse_rate`
-      caps how much of a selection other variants may share.
+      caps how much of a selection other variants may share; `run.placement`
+      picks the code solver or the model for placement.
     - `run.record_slot(...)` and `run.note(...)`: run-record entries.
     """
 
@@ -97,6 +98,7 @@ class RunContext:
     jev_uses: frozenset[str] = frozenset()  # JEV_USES: "rank", "check"
     refinement: Refinement = "off"  # REFINEMENT
     product_reuse_rate: float = 0.5  # PRODUCT_REUSE_RATE
+    placement: Placement = "solver"  # PLACEMENT
     connection: psycopg.Connection[dict[str, Any]] | None = None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     _started: float = field(default_factory=time.monotonic)
@@ -239,6 +241,7 @@ class RunContext:
                 "JEV_USES": ",".join(sorted(self.jev_uses)),
                 "REFINEMENT": self.refinement,
                 "PRODUCT_REUSE_RATE": self.product_reuse_rate,
+                "PLACEMENT": self.placement,
             },
             "stages": self.stages,
             "model_calls": self.model_calls,

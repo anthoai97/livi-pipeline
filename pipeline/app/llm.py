@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from contextvars import ContextVar
@@ -13,7 +14,7 @@ from google import genai
 from google.genai import types
 from pydantic import ValidationError
 
-from app.graph import MODEL_CALL_ATTEMPTS, MODEL_CALL_TIMEOUT_S
+from app.graph import MODEL_CALL_ATTEMPTS, MODEL_CALL_TIMEOUT_S, MODEL_HEDGE_AFTER_S
 from app.run import M, ModelCallError, StageContext, describe
 
 DEFAULT_MODEL = "gemini-3.8-flash"
@@ -85,12 +86,19 @@ class GeminiModel:
     Stages listed in LLM_STAGE_MODELS use their own model and thinking level; the
     rest use LLM_DESIGN_MODEL at low thinking. A call can pass `model_key` to use
     another entry, such as `correct_escalate`.
+
+    A call that has not answered after MODEL_HEDGE_AFTER_S (0 turns this off) gets
+    a duplicate; the first answer wins and the other call is cancelled. Both calls
+    are recorded, and the run record notes the duplicate.
     """
 
-    def __init__(self, client: genai.Client, model: str | None = None, stages: str | None = None):
+    def __init__(self, client: genai.Client, model: str | None = None, stages: str | None = None,
+                 hedge_after_s: float | None = None):
         self.client = client
         self.model = model or os.environ.get("LLM_DESIGN_MODEL") or DEFAULT_MODEL
         self.stages = stage_models(stages if stages is not None else os.environ.get("LLM_STAGE_MODELS", ""))
+        self.hedge_after_s = hedge_after_s if hedge_after_s is not None else float(
+            os.environ.get("MODEL_HEDGE_AFTER_S", MODEL_HEDGE_AFTER_S))
 
     async def generate(
         self, ctx: StageContext, schema: type[M], contents: str, *, system: str | None = None, model_key: str | None = None
@@ -102,6 +110,31 @@ class GeminiModel:
             response_json_schema=schema.model_json_schema(),
             thinking_config=types.ThinkingConfig(thinking_level=level),
         )
+        tasks = [asyncio.create_task(self._call(ctx, schema, contents, model, config))]
+        try:
+            if self.hedge_after_s <= 0:
+                return await tasks[0]
+            done, _ = await asyncio.wait(tasks, timeout=self.hedge_after_s)
+            if done:
+                return tasks[0].result()
+            ctx.run.note(f"{ctx.stage} model call slower than {self.hedge_after_s:g} s; sent a duplicate", ctx.variant_index)
+            tasks.append(asyncio.create_task(self._call(ctx, schema, contents, model, config)))
+            pending = set(tasks)
+            while True:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                finished = [task for task in tasks if task in done]
+                if winner := next((task for task in finished if task.exception() is None), None):
+                    return winner.result()
+                if not pending:
+                    return finished[0].result()  # both failed: raise the last one's ModelCallError
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _call(self, ctx: StageContext, schema: type[M], contents: str, model: str,
+                    config: types.GenerateContentConfig) -> M:
+        """One model call, recorded under the stage and variant whether it succeeds, fails, or is cancelled."""
         counter = [0]
         token = _attempts.set(counter)
         started = time.monotonic()

@@ -348,7 +348,7 @@ def test_unknown_model_metadata_remains_unknown():
 
 
 def test_run_record_lists_stages_model_calls_and_totals(tmp_path, monkeypatch):
-    for switch in ("JEV_USES", "REFINEMENT", "PRODUCT_REUSE_RATE"):
+    for switch in ("JEV_USES", "REFINEMENT", "PRODUCT_REUSE_RATE", "PLACEMENT"):
         monkeypatch.delenv(switch, raising=False)
     _, _, record = post(tmp_path)
 
@@ -372,7 +372,8 @@ def test_run_record_lists_stages_model_calls_and_totals(tmp_path, monkeypatch):
         assert call["cost_usd"] == pytest.approx(1000 * 0.042 / 1_000_000)
     assert record["totals"]["jev_calls"] == 1
     assert record["totals"]["cost_usd"] == pytest.approx(sum(c["cost_usd"] for c in calls + jev_calls))
-    assert record["switches"] == {"JEV_USES": "check,rank", "REFINEMENT": "off", "PRODUCT_REUSE_RATE": 0.5}
+    assert record["switches"] == {"JEV_USES": "check,rank", "REFINEMENT": "off", "PRODUCT_REUSE_RATE": 0.5,
+                                  "PLACEMENT": "solver"}
     assert record["totals"]["first_ready_s"] <= record["totals"]["all_ready_s"] <= record["totals"]["full_run_s"]
     assert record["slots"] == [
         {"slot": "sofa", "candidates": 10, "gap": False, "note": None},

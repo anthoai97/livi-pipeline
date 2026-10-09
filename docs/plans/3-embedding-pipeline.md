@@ -16,7 +16,7 @@ the existing [embedding text format](../product-embedding-v2.md).
 
 Docker already includes pgvector. The repository has no embedding worker or
 embedding table. Build the offline Python job under `product-data/`.
-The TypeScript runtime in `pipeline/` will consume the same vectors and prepared
+The Python runtime in `pipeline/` will consume the same vectors and prepared
 records through LangGraph and Jev in later phases.
 
 Storage, embedding generation, retrieval, and catalog population are all part of

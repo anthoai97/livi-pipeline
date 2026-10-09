@@ -328,7 +328,7 @@ Phase 6 compares runs using these records.
 5. **Bounds and cancellation.** Add the call limits, loop limits, run deadline,
    and disconnect handling.
 6. **Local runs.** Send one request per room type to the local service with the
-   real model and the local catalog. Record timings next to the legacy runs.
+   real model and the local catalog. Record timings in [Phase 3 local runs](../pipeline/phase-3-local-runs.md).
 
 ## File changes
 
@@ -400,7 +400,7 @@ module's imports require. If porting needs another helper, add a row here.
 | The call, turn, and proposal limits and the run deadline each end with a recorded reason, not a hang. | Graph tests with a fake model that keeps failing. |
 | Each slot search returns the nearest products that pass its filters, and all slots of one request finish together in under 500 ms of database time. | The slot search tests in `product-data/tests/test_search_assets.py`, run with the slot planner's slots, and the retrieval report. The 2026-10-09 report measured 55 ms for 9 slots. |
 | The checks after each slot search work, and a requested slot with no product becomes a gap instead of a failure. | Retrieve-stage tests with fixed search results: products that fit the floor in neither orientation are dropped, minimum sizes and rug sizes accept either orientation, the plant slot keeps only design-only products, preferred brands come first, and an empty requested slot is listed as a gap while the run continues. |
-| Requests run end to end for all four room types with the real model and catalog. | Manual local run. Each variant ends ready or failed with a reason. Timings are recorded next to the legacy runs. This is not a speed gate. |
+| Requests run end to end for all four room types with the real model and catalog. | Manual local run. Each variant ends ready or failed with a reason. Timings are recorded in [Phase 3 local runs](../pipeline/phase-3-local-runs.md). This is not a speed gate. |
 
 Tests use a fake model client, because they check runtime behavior, not model output.
 

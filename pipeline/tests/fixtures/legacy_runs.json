@@ -1,0 +1,5087 @@
+[
+ {
+  "run": "af2e3dc6-5d39-4ac5-b5e9-de29c8f1975e_20261006_203355_626411",
+  "request": {
+   "room_type": "dining_room",
+   "budget": 10000.0,
+   "room_area": [
+    4.2672,
+    4.8768
+   ],
+   "room_vertices": [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     4.2672,
+     0.0
+    ],
+    [
+     4.2672,
+     4.8768
+    ],
+    [
+     0.0,
+     4.8768
+    ]
+   ],
+   "wall_height": 3.3528000000000002,
+   "room_doors": [
+    {
+     "id": "tpl-door-lr-japandi-zen",
+     "surface_key": "back",
+     "center": [
+      1.194816,
+      4.8768
+     ],
+     "width": 0.9,
+     "depth": 0.05,
+     "height": 2.08
+    }
+   ],
+   "room_windows": [
+    {
+     "id": "tpl-win-lr-japandi-zen",
+     "surface_key": "back",
+     "center": [
+      3.072384,
+      4.8768
+     ],
+     "width": 1.1,
+     "depth": 0.05,
+     "height": 1.2,
+     "sill_height": 0.9
+    }
+   ]
+  },
+  "intent": {
+   "normalized_prompt": "Airy coastal living room with sandy neutrals, pale blue accents, a linen sofa, woven baskets, and light oak furniture. Keep the windows clear and avoid nautical decorations.",
+   "room_type": "dining_room",
+   "requested_categories": [
+    "sofa",
+    "storage_unit"
+   ],
+   "excluded_categories": [],
+   "avoid_categories": [
+    "decor"
+   ],
+   "style_hints": [
+    "coastal",
+    "airy",
+    "sandy neutrals",
+    "pale blue accents"
+   ],
+   "functional_hints": [
+    "clear_windows"
+   ],
+   "material_preferences": [
+    "light oak",
+    "woven"
+   ],
+   "fabric_preferences": [
+    "linen"
+   ],
+   "lifestyle_requirements": [],
+   "requested_items": [
+    {
+     "label": "linen sofa",
+     "canonical_category": "sofa",
+     "count": 1,
+     "exact": false,
+     "optional": false,
+     "acceptable_substitutes": [
+      "loveseat"
+     ],
+     "descriptors": [
+      "linen",
+      "airy coastal"
+     ]
+    },
+    {
+     "label": "woven baskets",
+     "canonical_category": "storage_unit",
+     "count": 1,
+     "exact": false,
+     "optional": false,
+     "acceptable_substitutes": [
+      "decor"
+     ],
+     "descriptors": [
+      "woven",
+      "baskets"
+     ]
+    }
+   ],
+   "support_pairs": [],
+   "price_constraints": [],
+   "asset_attribute_constraints": [
+    {
+     "category": "sofa",
+     "attribute_type": "fabric",
+     "value": "linen",
+     "required": true,
+     "source_label": "linen sofa"
+    },
+    {
+     "category": null,
+     "attribute_type": "material",
+     "value": "light oak",
+     "required": true,
+     "source_label": "light oak furniture"
+    },
+    {
+     "category": "storage_unit",
+     "attribute_type": "material",
+     "value": "woven",
+     "required": true,
+     "source_label": "woven baskets"
+    },
+    {
+     "category": null,
+     "attribute_type": "color",
+     "value": "sandy neutrals",
+     "required": false,
+     "source_label": "sandy neutrals"
+    },
+    {
+     "category": null,
+     "attribute_type": "color",
+     "value": "pale blue",
+     "required": false,
+     "source_label": "pale blue accents"
+    }
+   ],
+   "room_goal": "create an airy coastal dining room with natural textures and light oak",
+   "requires_straight_circulation_path": false,
+   "fit_flexibility": "balanced",
+   "ambiguity_level": "medium",
+   "interpretation_source": "llm",
+   "budget_strategy": "not_specified",
+   "rationale": "Authoritative room purpose is set to dining_room despite user mentioning a living room. Requested items include the explicitly requested linen sofa and woven baskets, with furniture material constraints of light oak and avoidance of nautical decorations."
+  },
+  "digest": {
+   "room_scale": "medium",
+   "required_roles": [
+    "dining_table",
+    "dining_seating"
+   ],
+   "optional_categories": [
+    "planter",
+    "sofa",
+    "storage_unit",
+    "sideboard",
+    "cabinet",
+    "pendant_light",
+    "chandelier",
+    "painting",
+    "wall_art"
+   ],
+   "max_counts_by_category": {
+    "accent_chair": 4,
+    "bench": 4,
+    "bookcase": 2,
+    "cabinet": 2,
+    "ceiling_light": 5,
+    "chaise_lounge": 1,
+    "chandelier": 5,
+    "coffee_table": 1,
+    "console_table": 4,
+    "decor": 5,
+    "desk": 4,
+    "dining_chair": 4,
+    "dining_table": 1,
+    "dresser": 2,
+    "floor_lamp": 3,
+    "floor_mirror": 5,
+    "lamp": 3,
+    "loveseat": 1,
+    "media_unit": 2,
+    "office_chair": 4,
+    "ottoman": 4,
+    "painting": 5,
+    "pendant_light": 5,
+    "planter": 4,
+    "projector": 2,
+    "recliner": 4,
+    "rug": 1,
+    "sculpture": 5,
+    "sectional": 1,
+    "side_table": 4,
+    "sideboard": 2,
+    "sleeper_sofa": 1,
+    "sofa": 1,
+    "sofa_bed": 1,
+    "stool": 4,
+    "storage_unit": 2,
+    "swivel_chair": 4,
+    "table": 4,
+    "table_lamp": 5,
+    "tv": 2,
+    "tv_stand": 2,
+    "vase": 5,
+    "wall_art": 5,
+    "wall_mirror": 5,
+    "wardrobe": 2
+   },
+   "density_budget": {
+    "comfortable_max_score": 0.55,
+    "overcrowded_min_score": 0.75,
+    "sparse_below_score": 0.32,
+    "comfortable_load_sqm": 11.1487,
+    "overcrowded_load_sqm": 15.2027,
+    "sparse_below_load_sqm": 0.0
+   }
+  },
+  "assets": {
+   "dinning_8": {
+    "asset_id": "dinning_8",
+    "source_table": "catalog.assets",
+    "category": "dinning",
+    "title": "dinning_8",
+    "width_m": 1.6002,
+    "depth_m": 0.9004,
+    "height_m": 0.7471,
+    "placement_type": null,
+    "is_purchasable": true,
+    "price": 238
+   },
+   "dining_chair_200": {
+    "asset_id": "dining_chair_200",
+    "source_table": "catalog.assets",
+    "category": "dining_chair",
+    "title": "dining_chair_200",
+    "width_m": 0.4699,
+    "depth_m": 0.4191,
+    "height_m": 0.8382,
+    "placement_type": null,
+    "is_purchasable": true,
+    "price": 1298
+   },
+   "sleeper_sofa_13": {
+    "asset_id": "sleeper_sofa_13",
+    "source_table": "catalog.assets",
+    "category": "sleeper_sofa",
+    "title": "sleeper_sofa_13",
+    "width_m": 2.3644,
+    "depth_m": 1.045,
+    "height_m": 0.8043,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 1999
+   },
+   "storage_unit_9": {
+    "asset_id": "storage_unit_9",
+    "source_table": "catalog.assets",
+    "category": "storage_unit",
+    "title": "storage_unit_9",
+    "width_m": 1.463,
+    "depth_m": 0.3899,
+    "height_m": 0.8433,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 97.2
+   },
+   "decorative_bowl_14": {
+    "asset_id": "decorative_bowl_14",
+    "source_table": "catalog.assets",
+    "category": "decorative_bowl",
+    "title": "decorative_bowl_14",
+    "width_m": 0.4826,
+    "depth_m": 0.4826,
+    "height_m": 0.0762,
+    "placement_type": "surface",
+    "is_purchasable": true,
+    "price": 379
+   },
+   "pendant_36": {
+    "asset_id": "pendant_36",
+    "source_table": "catalog.assets",
+    "category": "pendant",
+    "title": "pendant_36",
+    "width_m": 0.9144,
+    "depth_m": 0.9144,
+    "height_m": 0.8128,
+    "placement_type": "ceiling",
+    "is_purchasable": true,
+    "price": 1000
+   },
+   "decor_071ef5b5-90dc-4690-990c-6d7892ce818e": {
+    "asset_id": "decor_071ef5b5-90dc-4690-990c-6d7892ce818e",
+    "source_table": "pipeline.decor_items",
+    "category": "planter",
+    "title": "Elegant Indoor Potted Fern",
+    "width_m": 0.724159,
+    "depth_m": 0.80203,
+    "height_m": 1.56948,
+    "placement_type": "floor",
+    "is_purchasable": false,
+    "price": null
+   },
+   "dining_table_688": {
+    "asset_id": "dining_table_688",
+    "source_table": "catalog.assets",
+    "category": "dining_table",
+    "title": "dining_table_688",
+    "width_m": 1.3716,
+    "depth_m": 1.3716,
+    "height_m": 0.762,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 1555
+   },
+   "dining_chair_466": {
+    "asset_id": "dining_chair_466",
+    "source_table": "catalog.assets",
+    "category": "dining_chair",
+    "title": "dining_chair_466",
+    "width_m": 0.4699,
+    "depth_m": 0.6604,
+    "height_m": 0.8763,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 756
+   },
+   "storage_organizer_15": {
+    "asset_id": "storage_organizer_15",
+    "source_table": "catalog.assets",
+    "category": "storage_unit",
+    "title": "storage_organizer_15",
+    "width_m": 0.3302,
+    "depth_m": 0.3683,
+    "height_m": 0.5461,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 89.95
+   },
+   "sideboard_11": {
+    "asset_id": "sideboard_11",
+    "source_table": "catalog.assets",
+    "category": "sideboard",
+    "title": "sideboard_11",
+    "width_m": 1.524,
+    "depth_m": 0.4572,
+    "height_m": 0.762,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 899
+   },
+   "bookcase_79": {
+    "asset_id": "bookcase_79",
+    "source_table": "catalog.assets",
+    "category": "bookcase",
+    "title": "bookcase_79",
+    "width_m": 1.9558,
+    "depth_m": 0.4064,
+    "height_m": 1.905,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 1699
+   },
+   "dining_chair_723": {
+    "asset_id": "dining_chair_723",
+    "source_table": "catalog.assets",
+    "category": "dining_chair",
+    "title": "dining_chair_723",
+    "width_m": 0.6604,
+    "depth_m": 0.62865,
+    "height_m": 0.7874,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 1122
+   },
+   "bookcase_272": {
+    "asset_id": "bookcase_272",
+    "source_table": "catalog.assets",
+    "category": "bookcase",
+    "title": "bookcase_272",
+    "width_m": 0.3048,
+    "depth_m": 0.8128,
+    "height_m": 1.9812,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 1079.14
+   },
+   "decorative_bowl_15": {
+    "asset_id": "decorative_bowl_15",
+    "source_table": "catalog.assets",
+    "category": "decorative_bowl",
+    "title": "decorative_bowl_15",
+    "width_m": 0.4064,
+    "depth_m": 0.4064,
+    "height_m": 0.0762,
+    "placement_type": "surface",
+    "is_purchasable": true,
+    "price": 219
+   },
+   "dining_chair_831": {
+    "asset_id": "dining_chair_831",
+    "source_table": "catalog.assets",
+    "category": "dining_chair",
+    "title": "dining_chair_831",
+    "width_m": 0.5207,
+    "depth_m": 0.5969,
+    "height_m": 0.9017,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 1120
+   }
+  },
+  "selection_turns": [
+   {
+    "variant": 0,
+    "turn": 1,
+    "items": [
+     [
+      "dinning_8",
+      1
+     ],
+     [
+      "dining_chair_200",
+      4
+     ],
+     [
+      "sleeper_sofa_13",
+      1
+     ],
+     [
+      "storage_unit_9",
+      1
+     ],
+     [
+      "decorative_bowl_14",
+      1
+     ],
+     [
+      "pendant_36",
+      1
+     ],
+     [
+      "decor_071ef5b5-90dc-4690-990c-6d7892ce818e",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "sofa",
+       "count": 1,
+       "selected_uids": [
+        "sleeper_sofa_13"
+       ]
+      },
+      {
+       "category": "storage_unit",
+       "count": 1,
+       "selected_uids": [
+        "storage_unit_9"
+       ]
+      },
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dinning_8"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 4,
+       "selected_uids": [
+        "dining_chair_200",
+        "dining_chair_200",
+        "dining_chair_200",
+        "dining_chair_200"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "linen sofa",
+      "light oak furniture",
+      "woven baskets",
+      "sandy neutrals",
+      "pale blue accents",
+      "no nautical decor",
+      "clear windows"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "linen sofa",
+       "target_uids": [
+        "sleeper_sofa_13"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "light oak furniture",
+       "target_uids": [
+        "dinning_8",
+        "dining_chair_200",
+        "storage_unit_9"
+       ],
+       "satisfied_uids": [
+        "dinning_8",
+        "dining_chair_200",
+        "storage_unit_9"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "woven baskets",
+       "target_uids": [
+        "storage_unit_9"
+       ],
+       "satisfied_uids": [],
+       "unsatisfied_uids": [
+        "storage_unit_9"
+       ]
+      },
+      {
+       "source_label": "sandy neutrals",
+       "target_uids": [
+        "sleeper_sofa_13",
+        "dinning_8",
+        "dining_chair_200",
+        "storage_unit_9"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13",
+        "dinning_8",
+        "dining_chair_200",
+        "storage_unit_9"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "pale blue accents",
+       "target_uids": [
+        "decorative_bowl_14"
+       ],
+       "satisfied_uids": [
+        "decorative_bowl_14"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": false,
+    "errors": [
+     "DINING GROUP: Select exactly one standalone dining_table and 4 dining_chairs; found 0 tables and 4 chairs. Preserve the requested seating count.",
+     "SELECTION CONSTRAINT AUDIT: attribute constraint \"woven baskets\" is not satisfied by ['storage_unit_9']"
+    ]
+   },
+   {
+    "variant": 0,
+    "turn": 2,
+    "items": [
+     [
+      "sleeper_sofa_13",
+      1
+     ],
+     [
+      "dining_table_688",
+      1
+     ],
+     [
+      "dining_chair_466",
+      4
+     ],
+     [
+      "storage_unit_9",
+      1
+     ],
+     [
+      "decorative_bowl_14",
+      1
+     ],
+     [
+      "pendant_36",
+      1
+     ],
+     [
+      "decor_071ef5b5-90dc-4690-990c-6d7892ce818e",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "sofa",
+       "count": 1,
+       "selected_uids": [
+        "sleeper_sofa_13"
+       ]
+      },
+      {
+       "category": "storage_unit",
+       "count": 1,
+       "selected_uids": [
+        "storage_unit_9"
+       ]
+      },
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dining_table_688"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 4,
+       "selected_uids": [
+        "dining_chair_466",
+        "dining_chair_466",
+        "dining_chair_466",
+        "dining_chair_466"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "linen sofa",
+      "light oak furniture",
+      "woven baskets",
+      "sandy neutrals",
+      "pale blue accents",
+      "no nautical decor",
+      "clear windows"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "linen sofa",
+       "target_uids": [
+        "sleeper_sofa_13"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "light oak furniture",
+       "target_uids": [
+        "dining_table_688",
+        "storage_unit_9"
+       ],
+       "satisfied_uids": [
+        "dining_table_688",
+        "storage_unit_9"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "woven baskets",
+       "target_uids": [
+        "storage_unit_9"
+       ],
+       "satisfied_uids": [],
+       "unsatisfied_uids": [
+        "storage_unit_9"
+       ]
+      },
+      {
+       "source_label": "sandy neutrals",
+       "target_uids": [
+        "sleeper_sofa_13",
+        "dining_table_688",
+        "storage_unit_9"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13",
+        "dining_table_688",
+        "storage_unit_9"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "pale blue accents",
+       "target_uids": [
+        "decorative_bowl_14"
+       ],
+       "satisfied_uids": [
+        "decorative_bowl_14"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": false,
+    "errors": [
+     "SELECTION CONSTRAINT AUDIT: attribute constraint \"woven baskets\" is not satisfied by ['storage_unit_9']"
+    ]
+   },
+   {
+    "variant": 0,
+    "turn": 3,
+    "items": [
+     [
+      "sleeper_sofa_13",
+      1
+     ],
+     [
+      "dining_table_688",
+      1
+     ],
+     [
+      "dining_chair_466",
+      4
+     ],
+     [
+      "storage_unit_9",
+      1
+     ],
+     [
+      "storage_organizer_15",
+      1
+     ],
+     [
+      "decorative_bowl_14",
+      1
+     ],
+     [
+      "pendant_36",
+      1
+     ],
+     [
+      "decor_071ef5b5-90dc-4690-990c-6d7892ce818e",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "sofa",
+       "count": 1,
+       "selected_uids": [
+        "sleeper_sofa_13"
+       ]
+      },
+      {
+       "category": "storage_unit",
+       "count": 2,
+       "selected_uids": [
+        "storage_unit_9",
+        "storage_organizer_15"
+       ]
+      },
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dining_table_688"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 4,
+       "selected_uids": [
+        "dining_chair_466",
+        "dining_chair_466",
+        "dining_chair_466",
+        "dining_chair_466"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "linen sofa",
+      "light oak furniture",
+      "woven baskets",
+      "sandy neutrals",
+      "pale blue accents",
+      "no nautical decor",
+      "clear windows"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "linen sofa",
+       "target_uids": [
+        "sleeper_sofa_13"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "light oak furniture",
+       "target_uids": [
+        "dining_table_688",
+        "storage_unit_9"
+       ],
+       "satisfied_uids": [
+        "dining_table_688",
+        "storage_unit_9"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "woven baskets",
+       "target_uids": [
+        "storage_organizer_15"
+       ],
+       "satisfied_uids": [
+        "storage_organizer_15"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "sandy neutrals",
+       "target_uids": [
+        "sleeper_sofa_13",
+        "dining_table_688",
+        "storage_unit_9",
+        "storage_organizer_15"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13",
+        "dining_table_688",
+        "storage_unit_9",
+        "storage_organizer_15"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "pale blue accents",
+       "target_uids": [
+        "decorative_bowl_14"
+       ],
+       "satisfied_uids": [
+        "decorative_bowl_14"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": false,
+    "errors": [
+     "COUNT LIMIT: Requested 1 storage_unit; selected 2."
+    ]
+   },
+   {
+    "variant": 0,
+    "turn": 4,
+    "items": [
+     [
+      "sleeper_sofa_13",
+      1
+     ],
+     [
+      "dining_table_688",
+      1
+     ],
+     [
+      "dining_chair_466",
+      4
+     ],
+     [
+      "sideboard_11",
+      1
+     ],
+     [
+      "storage_organizer_15",
+      1
+     ],
+     [
+      "decorative_bowl_14",
+      1
+     ],
+     [
+      "pendant_36",
+      1
+     ],
+     [
+      "decor_071ef5b5-90dc-4690-990c-6d7892ce818e",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "sofa",
+       "count": 1,
+       "selected_uids": [
+        "sleeper_sofa_13"
+       ]
+      },
+      {
+       "category": "storage_unit",
+       "count": 1,
+       "selected_uids": [
+        "storage_organizer_15"
+       ]
+      },
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dining_table_688"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 4,
+       "selected_uids": [
+        "dining_chair_466",
+        "dining_chair_466",
+        "dining_chair_466",
+        "dining_chair_466"
+       ]
+      },
+      {
+       "category": "sideboard",
+       "count": 1,
+       "selected_uids": [
+        "sideboard_11"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "linen sofa",
+      "light oak furniture",
+      "woven baskets",
+      "sandy neutrals",
+      "pale blue accents",
+      "no nautical decor",
+      "clear windows"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "linen sofa",
+       "target_uids": [
+        "sleeper_sofa_13"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "light oak furniture",
+       "target_uids": [
+        "dining_table_688",
+        "sideboard_11"
+       ],
+       "satisfied_uids": [
+        "dining_table_688",
+        "sideboard_11"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "woven baskets",
+       "target_uids": [
+        "storage_organizer_15"
+       ],
+       "satisfied_uids": [
+        "storage_organizer_15"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "sandy neutrals",
+       "target_uids": [
+        "sleeper_sofa_13",
+        "dining_table_688",
+        "sideboard_11",
+        "storage_organizer_15"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13",
+        "dining_table_688",
+        "sideboard_11",
+        "storage_organizer_15"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "pale blue accents",
+       "target_uids": [
+        "decorative_bowl_14"
+       ],
+       "satisfied_uids": [
+        "decorative_bowl_14"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": false,
+    "errors": [
+     "COUNT LIMIT: Requested 1 storage_unit; selected 2."
+    ]
+   },
+   {
+    "variant": 0,
+    "turn": 5,
+    "items": [
+     [
+      "sleeper_sofa_13",
+      1
+     ],
+     [
+      "dining_table_688",
+      1
+     ],
+     [
+      "dining_chair_466",
+      4
+     ],
+     [
+      "bookcase_79",
+      1
+     ],
+     [
+      "storage_organizer_15",
+      1
+     ],
+     [
+      "decorative_bowl_14",
+      1
+     ],
+     [
+      "pendant_36",
+      1
+     ],
+     [
+      "decor_071ef5b5-90dc-4690-990c-6d7892ce818e",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "sofa",
+       "count": 1,
+       "selected_uids": [
+        "sleeper_sofa_13"
+       ]
+      },
+      {
+       "category": "storage_unit",
+       "count": 1,
+       "selected_uids": [
+        "storage_organizer_15"
+       ]
+      },
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dining_table_688"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 4,
+       "selected_uids": [
+        "dining_chair_466",
+        "dining_chair_466",
+        "dining_chair_466",
+        "dining_chair_466"
+       ]
+      },
+      {
+       "category": "bookcase",
+       "count": 1,
+       "selected_uids": [
+        "bookcase_79"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "linen sofa",
+      "light oak furniture",
+      "woven baskets",
+      "sandy neutrals",
+      "pale blue accents",
+      "no nautical decor",
+      "clear windows"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "linen sofa",
+       "target_uids": [
+        "sleeper_sofa_13"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "light oak furniture",
+       "target_uids": [
+        "dining_table_688",
+        "bookcase_79"
+       ],
+       "satisfied_uids": [
+        "dining_table_688",
+        "bookcase_79"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "woven baskets",
+       "target_uids": [
+        "storage_organizer_15"
+       ],
+       "satisfied_uids": [
+        "storage_organizer_15"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "sandy neutrals",
+       "target_uids": [
+        "sleeper_sofa_13",
+        "dining_table_688",
+        "bookcase_79",
+        "storage_organizer_15"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13",
+        "dining_table_688",
+        "bookcase_79",
+        "storage_organizer_15"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "pale blue accents",
+       "target_uids": [
+        "decorative_bowl_14"
+       ],
+       "satisfied_uids": [
+        "decorative_bowl_14"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": false,
+    "errors": [
+     "COUNT LIMIT: Requested 1 storage_unit; selected 2."
+    ]
+   },
+   {
+    "variant": 0,
+    "turn": 6,
+    "items": [
+     [
+      "sleeper_sofa_13",
+      1
+     ],
+     [
+      "dining_table_688",
+      1
+     ],
+     [
+      "dining_chair_466",
+      4
+     ],
+     [
+      "storage_organizer_15",
+      1
+     ],
+     [
+      "decorative_bowl_14",
+      1
+     ],
+     [
+      "pendant_36",
+      1
+     ],
+     [
+      "decor_071ef5b5-90dc-4690-990c-6d7892ce818e",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "sofa",
+       "count": 1,
+       "selected_uids": [
+        "sleeper_sofa_13"
+       ]
+      },
+      {
+       "category": "storage_unit",
+       "count": 1,
+       "selected_uids": [
+        "storage_organizer_15"
+       ]
+      },
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dining_table_688"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 4,
+       "selected_uids": [
+        "dining_chair_466",
+        "dining_chair_466",
+        "dining_chair_466",
+        "dining_chair_466"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "linen sofa",
+      "light oak furniture",
+      "woven baskets",
+      "sandy neutrals",
+      "pale blue accents",
+      "no nautical decor",
+      "clear windows"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "linen sofa",
+       "target_uids": [
+        "sleeper_sofa_13"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "light oak furniture",
+       "target_uids": [
+        "dining_table_688"
+       ],
+       "satisfied_uids": [
+        "dining_table_688"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "woven baskets",
+       "target_uids": [
+        "storage_organizer_15"
+       ],
+       "satisfied_uids": [
+        "storage_organizer_15"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "sandy neutrals",
+       "target_uids": [
+        "sleeper_sofa_13",
+        "dining_table_688",
+        "storage_organizer_15"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13",
+        "dining_table_688",
+        "storage_organizer_15"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "pale blue accents",
+       "target_uids": [
+        "decorative_bowl_14"
+       ],
+       "satisfied_uids": [
+        "decorative_bowl_14"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": true,
+    "errors": []
+   },
+   {
+    "variant": 1,
+    "turn": 1,
+    "items": [
+     [
+      "dining_table_688",
+      1
+     ],
+     [
+      "dining_chair_723",
+      4
+     ],
+     [
+      "sleeper_sofa_13",
+      1
+     ],
+     [
+      "bookcase_272",
+      1
+     ],
+     [
+      "decorative_bowl_15",
+      1
+     ],
+     [
+      "decor_071ef5b5-90dc-4690-990c-6d7892ce818e",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dining_table_688"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 4,
+       "selected_uids": [
+        "dining_chair_723",
+        "dining_chair_723",
+        "dining_chair_723",
+        "dining_chair_723"
+       ]
+      },
+      {
+       "category": "sofa",
+       "count": 1,
+       "selected_uids": [
+        "sleeper_sofa_13"
+       ]
+      },
+      {
+       "category": "storage_unit",
+       "count": 1,
+       "selected_uids": [
+        "bookcase_272"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "linen sofa",
+      "light oak furniture",
+      "woven baskets",
+      "sandy neutrals",
+      "pale blue accents"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "linen sofa",
+       "target_uids": [
+        "sleeper_sofa_13"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "light oak furniture",
+       "target_uids": [
+        "dining_table_688"
+       ],
+       "satisfied_uids": [
+        "dining_table_688"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "woven baskets",
+       "target_uids": [
+        "bookcase_272"
+       ],
+       "satisfied_uids": [
+        "bookcase_272"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "sandy neutrals",
+       "target_uids": [
+        "sleeper_sofa_13",
+        "dining_chair_723",
+        "bookcase_272"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13",
+        "dining_chair_723",
+        "bookcase_272"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "pale blue accents",
+       "target_uids": [
+        "decorative_bowl_15"
+       ],
+       "satisfied_uids": [
+        "decorative_bowl_15"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": true,
+    "errors": []
+   },
+   {
+    "variant": 2,
+    "turn": 1,
+    "items": [
+     [
+      "dining_table_688",
+      1
+     ],
+     [
+      "dining_chair_831",
+      4
+     ],
+     [
+      "sleeper_sofa_13",
+      1
+     ],
+     [
+      "bookcase_272",
+      1
+     ],
+     [
+      "decorative_bowl_14",
+      1
+     ],
+     [
+      "decor_071ef5b5-90dc-4690-990c-6d7892ce818e",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "sofa",
+       "count": 1,
+       "selected_uids": [
+        "sleeper_sofa_13"
+       ]
+      },
+      {
+       "category": "storage_unit",
+       "count": 1,
+       "selected_uids": [
+        "bookcase_272"
+       ]
+      },
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dining_table_688"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 4,
+       "selected_uids": [
+        "dining_chair_831",
+        "dining_chair_831",
+        "dining_chair_831",
+        "dining_chair_831"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "linen sofa constraint",
+      "light oak furniture constraint",
+      "woven baskets constraint",
+      "sandy neutrals constraint",
+      "pale blue accents constraint"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "linen sofa",
+       "target_uids": [
+        "sleeper_sofa_13"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "light oak furniture",
+       "target_uids": [
+        "dining_table_688",
+        "dining_chair_831",
+        "bookcase_272"
+       ],
+       "satisfied_uids": [
+        "dining_table_688",
+        "dining_chair_831",
+        "bookcase_272"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "woven baskets",
+       "target_uids": [
+        "bookcase_272"
+       ],
+       "satisfied_uids": [
+        "bookcase_272"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "sandy neutrals",
+       "target_uids": [
+        "sleeper_sofa_13",
+        "dining_table_688",
+        "dining_chair_831",
+        "bookcase_272"
+       ],
+       "satisfied_uids": [
+        "sleeper_sofa_13",
+        "dining_table_688",
+        "dining_chair_831",
+        "bookcase_272"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "pale blue accents",
+       "target_uids": [
+        "decorative_bowl_14"
+       ],
+       "satisfied_uids": [
+        "decorative_bowl_14"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": true,
+    "errors": []
+   }
+  ],
+  "layout_assets": {
+   "0": [
+    {
+     "asset_id": "77815ae1-dc97-4f82-a0ea-0ff59e748211",
+     "source_table": "catalog.assets",
+     "category": "sleeper_sofa",
+     "width_m": 2.3644,
+     "depth_m": 1.045,
+     "height_m": 0.8043,
+     "placement_type": "floor",
+     "uid": "sleeper_sofa_13"
+    },
+    {
+     "asset_id": "a436bcf0-1f2c-4791-b81d-fba29715286b",
+     "source_table": "catalog.assets",
+     "category": "dining_table",
+     "width_m": 1.3716,
+     "depth_m": 1.3716,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "dining_table_688"
+    },
+    {
+     "asset_id": "6acd0669-4c63-4a66-9b2f-9188b9557bad",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.4699,
+     "depth_m": 0.6604,
+     "height_m": 0.8763,
+     "placement_type": "floor",
+     "uid": "dining_chair_466_1"
+    },
+    {
+     "asset_id": "6acd0669-4c63-4a66-9b2f-9188b9557bad",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.4699,
+     "depth_m": 0.6604,
+     "height_m": 0.8763,
+     "placement_type": "floor",
+     "uid": "dining_chair_466_2"
+    },
+    {
+     "asset_id": "6acd0669-4c63-4a66-9b2f-9188b9557bad",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.4699,
+     "depth_m": 0.6604,
+     "height_m": 0.8763,
+     "placement_type": "floor",
+     "uid": "dining_chair_466_3"
+    },
+    {
+     "asset_id": "6acd0669-4c63-4a66-9b2f-9188b9557bad",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.4699,
+     "depth_m": 0.6604,
+     "height_m": 0.8763,
+     "placement_type": "floor",
+     "uid": "dining_chair_466_4"
+    },
+    {
+     "asset_id": "ab0e5786-b567-4126-97b3-42893e3e961c",
+     "source_table": "catalog.assets",
+     "category": "storage_unit",
+     "width_m": 0.3302,
+     "depth_m": 0.3683,
+     "height_m": 0.5461,
+     "placement_type": "floor",
+     "uid": "storage_organizer_15"
+    },
+    {
+     "asset_id": "6d4aeb51-d6d9-4389-9372-fd2b4e10c47b",
+     "source_table": "catalog.assets",
+     "category": "pendant",
+     "width_m": 0.9144,
+     "depth_m": 0.9144,
+     "height_m": 0.8128,
+     "placement_type": "ceiling",
+     "uid": "pendant_36"
+    },
+    {
+     "asset_id": "071ef5b5-90dc-4690-990c-6d7892ce818e",
+     "source_table": "pipeline.decor_items",
+     "category": "planter",
+     "width_m": 0.724159,
+     "depth_m": 0.80203,
+     "height_m": 1.56948,
+     "placement_type": "floor",
+     "uid": "decor_071ef5b5-90dc-4690-990c-6d7892ce818e"
+    },
+    {
+     "asset_id": "53e8b22b-efa5-4dd9-bddf-c8d202026bb3",
+     "source_table": "catalog.assets",
+     "category": "decorative_bowl",
+     "width_m": 0.4826,
+     "depth_m": 0.4826,
+     "height_m": 0.0762,
+     "placement_type": "surface",
+     "uid": "decorative_bowl_14"
+    }
+   ],
+   "1": [
+    {
+     "asset_id": "77815ae1-dc97-4f82-a0ea-0ff59e748211",
+     "source_table": "catalog.assets",
+     "category": "sleeper_sofa",
+     "width_m": 2.3644,
+     "depth_m": 1.045,
+     "height_m": 0.8043,
+     "placement_type": "floor",
+     "uid": "sleeper_sofa_13"
+    },
+    {
+     "asset_id": "a436bcf0-1f2c-4791-b81d-fba29715286b",
+     "source_table": "catalog.assets",
+     "category": "dining_table",
+     "width_m": 1.3716,
+     "depth_m": 1.3716,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "dining_table_688"
+    },
+    {
+     "asset_id": "8526f903-337c-4386-8696-af7b3a920088",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.6604,
+     "depth_m": 0.62865,
+     "height_m": 0.7874,
+     "placement_type": "floor",
+     "uid": "dining_chair_723_1"
+    },
+    {
+     "asset_id": "8526f903-337c-4386-8696-af7b3a920088",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.6604,
+     "depth_m": 0.62865,
+     "height_m": 0.7874,
+     "placement_type": "floor",
+     "uid": "dining_chair_723_2"
+    },
+    {
+     "asset_id": "8526f903-337c-4386-8696-af7b3a920088",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.6604,
+     "depth_m": 0.62865,
+     "height_m": 0.7874,
+     "placement_type": "floor",
+     "uid": "dining_chair_723_3"
+    },
+    {
+     "asset_id": "8526f903-337c-4386-8696-af7b3a920088",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.6604,
+     "depth_m": 0.62865,
+     "height_m": 0.7874,
+     "placement_type": "floor",
+     "uid": "dining_chair_723_4"
+    },
+    {
+     "asset_id": "6c34df3b-9e5a-4e24-9ff4-1a97769b990c",
+     "source_table": "catalog.assets",
+     "category": "bookcase",
+     "width_m": 0.3048,
+     "depth_m": 0.8128,
+     "height_m": 1.9812,
+     "placement_type": "floor",
+     "uid": "bookcase_272"
+    },
+    {
+     "asset_id": "071ef5b5-90dc-4690-990c-6d7892ce818e",
+     "source_table": "pipeline.decor_items",
+     "category": "planter",
+     "width_m": 0.724159,
+     "depth_m": 0.80203,
+     "height_m": 1.56948,
+     "placement_type": "floor",
+     "uid": "decor_071ef5b5-90dc-4690-990c-6d7892ce818e"
+    },
+    {
+     "asset_id": "cc75f81e-6802-4065-a7a6-cf79f68068f4",
+     "source_table": "catalog.assets",
+     "category": "decorative_bowl",
+     "width_m": 0.4064,
+     "depth_m": 0.4064,
+     "height_m": 0.0762,
+     "placement_type": "surface",
+     "uid": "decorative_bowl_15"
+    }
+   ],
+   "2": [
+    {
+     "asset_id": "a436bcf0-1f2c-4791-b81d-fba29715286b",
+     "source_table": "catalog.assets",
+     "category": "dining_table",
+     "width_m": 1.3716,
+     "depth_m": 1.3716,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "dining_table_688"
+    },
+    {
+     "asset_id": "577bb025-c616-41a7-9091-53ec5ecc9f10",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5207,
+     "depth_m": 0.5969,
+     "height_m": 0.9017,
+     "placement_type": "floor",
+     "uid": "dining_chair_831_1"
+    },
+    {
+     "asset_id": "577bb025-c616-41a7-9091-53ec5ecc9f10",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5207,
+     "depth_m": 0.5969,
+     "height_m": 0.9017,
+     "placement_type": "floor",
+     "uid": "dining_chair_831_2"
+    },
+    {
+     "asset_id": "577bb025-c616-41a7-9091-53ec5ecc9f10",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5207,
+     "depth_m": 0.5969,
+     "height_m": 0.9017,
+     "placement_type": "floor",
+     "uid": "dining_chair_831_3"
+    },
+    {
+     "asset_id": "577bb025-c616-41a7-9091-53ec5ecc9f10",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5207,
+     "depth_m": 0.5969,
+     "height_m": 0.9017,
+     "placement_type": "floor",
+     "uid": "dining_chair_831_4"
+    },
+    {
+     "asset_id": "77815ae1-dc97-4f82-a0ea-0ff59e748211",
+     "source_table": "catalog.assets",
+     "category": "sleeper_sofa",
+     "width_m": 2.3644,
+     "depth_m": 1.045,
+     "height_m": 0.8043,
+     "placement_type": "floor",
+     "uid": "sleeper_sofa_13"
+    },
+    {
+     "asset_id": "6c34df3b-9e5a-4e24-9ff4-1a97769b990c",
+     "source_table": "catalog.assets",
+     "category": "bookcase",
+     "width_m": 0.3048,
+     "depth_m": 0.8128,
+     "height_m": 1.9812,
+     "placement_type": "floor",
+     "uid": "bookcase_272"
+    },
+    {
+     "asset_id": "53e8b22b-efa5-4dd9-bddf-c8d202026bb3",
+     "source_table": "catalog.assets",
+     "category": "decorative_bowl",
+     "width_m": 0.4826,
+     "depth_m": 0.4826,
+     "height_m": 0.0762,
+     "placement_type": "surface",
+     "uid": "decorative_bowl_14"
+    },
+    {
+     "asset_id": "071ef5b5-90dc-4690-990c-6d7892ce818e",
+     "source_table": "pipeline.decor_items",
+     "category": "planter",
+     "width_m": 0.724159,
+     "depth_m": 0.80203,
+     "height_m": 1.56948,
+     "placement_type": "floor",
+     "uid": "decor_071ef5b5-90dc-4690-990c-6d7892ce818e"
+    }
+   ]
+  },
+  "layouts": [
+   {
+    "label": "variant 0 final",
+    "variant": 0,
+    "layout": {
+     "sleeper_sofa_13": {
+      "position": [
+       0.62,
+       2.44,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_table_688": {
+      "position": [
+       2.8,
+       2.2,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_466_1": {
+      "position": [
+       2.5,
+       3.296,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71238898038469
+      ]
+     },
+     "dining_chair_466_2": {
+      "position": [
+       3.1,
+       3.296,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71238898038469
+      ]
+     },
+     "dining_chair_466_3": {
+      "position": [
+       2.5,
+       1.104,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "dining_chair_466_4": {
+      "position": [
+       3.1,
+       1.104,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "storage_organizer_15": {
+      "position": [
+       3.95,
+       4.642650000000001,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71238898038469
+      ]
+     },
+     "pendant_36": {
+      "position": [
+       2.8,
+       2.2,
+       1.9871999999999999
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "decor_071ef5b5-90dc-4690-990c-6d7892ce818e": {
+      "position": [
+       0.4,
+       0.5,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "decorative_bowl_14": {
+      "position": [
+       2.8,
+       2.2,
+       0.762
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "on_top_of": "dining_table_688"
+     }
+    },
+    "valid": true,
+    "blocking": {}
+   },
+   {
+    "label": "variant 1 final",
+    "variant": 1,
+    "layout": {
+     "sleeper_sofa_13": {
+      "position": [
+       0.62,
+       1.26,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_table_688": {
+      "position": [
+       2.312,
+       2.921,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_723_1": {
+      "position": [
+       1.232,
+       2.921,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_723_2": {
+      "position": [
+       3.392,
+       2.921,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.14159
+      ]
+     },
+     "dining_chair_723_3": {
+      "position": [
+       2.312,
+       4.001,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71239
+      ]
+     },
+     "dining_chair_723_4": {
+      "position": [
+       2.312,
+       1.841,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5708
+      ]
+     },
+     "bookcase_272": {
+      "position": [
+       3.8108,
+       4.0,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.141592653589793
+      ]
+     },
+     "decor_071ef5b5-90dc-4690-990c-6d7892ce818e": {
+      "position": [
+       0.36,
+       4.48,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "decorative_bowl_15": {
+      "position": [
+       2.312,
+       2.921,
+       0.762
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "on_top_of": "dining_table_688"
+     }
+    },
+    "valid": false,
+    "blocking": {
+     "living_dining_clearance_violations": [
+      {
+       "dining_table": "dining_table_688",
+       "living_item": "sleeper_sofa_13",
+       "gap": 0.48369999999999985,
+       "min_gap": 0.76
+      }
+     ]
+    }
+   },
+   {
+    "label": "variant 1 repair candidate_04",
+    "variant": 1,
+    "layout": {
+     "sleeper_sofa_13": {
+      "position": [
+       1.04,
+       2.44,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_table_688": {
+      "position": [
+       2.9,
+       2.44,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_723_1": {
+      "position": [
+       1.82,
+       2.44,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_723_2": {
+      "position": [
+       3.98,
+       2.44,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.1416
+      ]
+     },
+     "dining_chair_723_3": {
+      "position": [
+       2.9,
+       3.52,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.7124
+      ]
+     },
+     "dining_chair_723_4": {
+      "position": [
+       2.9,
+       1.36,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5708
+      ]
+     },
+     "bookcase_272": {
+      "position": [
+       3.8108,
+       4.0,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.141592653589793
+      ]
+     },
+     "decor_071ef5b5-90dc-4690-990c-6d7892ce818e": {
+      "position": [
+       0.36,
+       4.48,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "decorative_bowl_15": {
+      "position": [
+       2.9,
+       2.44,
+       0.762
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "on_top_of": "dining_table_688"
+     }
+    },
+    "valid": null,
+    "blocking": {
+     "dining_access_violations": [
+      {
+       "uid": "dining_chair_723_1",
+       "gap": 0.0,
+       "min_gap": 0.56,
+       "clear": false,
+       "blockers": [
+        "sleeper_sofa_13"
+       ],
+       "boundary_blocked": false,
+       "region": [
+        [
+         1.505675,
+         2.1098
+        ],
+        [
+         0.945675,
+         2.1098
+        ],
+        [
+         0.945675,
+         2.7702
+        ],
+        [
+         1.505675,
+         2.7702
+        ]
+       ],
+       "center_xy": [
+        1.82,
+        2.44
+       ],
+       "center_bounds_for_room_bbox": {
+        "x": [
+         0.8744,
+         3.9528
+        ],
+        "y": [
+         0.3302,
+         4.5466
+        ]
+       },
+       "kind": "chair_pullout_blocked",
+       "clearance_shortfall_m": 0.56,
+       "table": "dining_table_688",
+       "group_members": [
+        "dining_table_688",
+        "dining_chair_723_1",
+        "dining_chair_723_2",
+        "dining_chair_723_3",
+        "dining_chair_723_4"
+       ]
+      },
+      {
+       "uid": "dining_chair_723_2",
+       "gap": 0.0,
+       "min_gap": 0.56,
+       "clear": false,
+       "blockers": [],
+       "boundary_blocked": true,
+       "region": [
+        [
+         4.294322574206867,
+         2.7702023091514776
+        ],
+        [
+         4.854322574191756,
+         2.770206423141193
+        ],
+        [
+         4.854327425761057,
+         2.1098064231590143
+        ],
+        [
+         4.294327425776168,
+         2.109802309169299
+        ]
+       ],
+       "center_xy": [
+        3.98,
+        2.44
+       ],
+       "center_bounds_for_room_bbox": {
+        "x": [
+         0.3144,
+         3.3928
+        ],
+        "y": [
+         0.3303,
+         4.5465
+        ]
+       },
+       "kind": "chair_pullout_blocked",
+       "clearance_shortfall_m": 0.56,
+       "table": "dining_table_688",
+       "group_members": [
+        "dining_table_688",
+        "dining_chair_723_1",
+        "dining_chair_723_2",
+        "dining_chair_723_3",
+        "dining_chair_723_4"
+       ]
+      }
+     ],
+     "living_dining_clearance_violations": [
+      {
+       "dining_table": "dining_table_688",
+       "living_item": "sleeper_sofa_13",
+       "gap": 0.6517000000000001,
+       "min_gap": 0.76
+      }
+     ],
+     "overlaps": [
+      {
+       "a": "sleeper_sofa_13",
+       "b": "dining_chair_723_1"
+      }
+     ]
+    }
+   },
+   {
+    "label": "variant 2 final",
+    "variant": 2,
+    "layout": {
+     "dining_table_688": {
+      "position": [
+       2.1799999999999997,
+       2.6,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_831_1": {
+      "position": [
+       1.116,
+       2.9,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_831_2": {
+      "position": [
+       1.116,
+       2.3000000000000003,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_831_3": {
+      "position": [
+       3.2439999999999998,
+       2.9,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.14159
+      ]
+     },
+     "dining_chair_831_4": {
+      "position": [
+       3.2439999999999998,
+       2.3000000000000003,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.14159
+      ]
+     },
+     "sleeper_sofa_13": {
+      "position": [
+       1.3,
+       0.62,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "bookcase_272": {
+      "position": [
+       0.4564,
+       4.1,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "decorative_bowl_14": {
+      "position": [
+       2.1799999999999997,
+       2.6,
+       0.762
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "on_top_of": "dining_table_688"
+     },
+     "decor_071ef5b5-90dc-4690-990c-6d7892ce818e": {
+      "position": [
+       3.8,
+       0.4,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "valid": true,
+    "blocking": {}
+   },
+   {
+    "label": "variant 2 repair candidate_01",
+    "variant": 2,
+    "layout": {
+     "dining_table_688": {
+      "position": [
+       2.38,
+       2.5,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_831_1": {
+      "position": [
+       1.316,
+       2.8,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_831_2": {
+      "position": [
+       1.316,
+       2.2,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_831_3": {
+      "position": [
+       3.444,
+       2.8,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.14159
+      ]
+     },
+     "dining_chair_831_4": {
+      "position": [
+       3.444,
+       2.2,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.14159
+      ]
+     },
+     "sleeper_sofa_13": {
+      "position": [
+       1.3,
+       0.62,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "bookcase_272": {
+      "position": [
+       0.4564,
+       4.2,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "decorative_bowl_14": {
+      "position": [
+       2.38,
+       2.5,
+       0.762
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ],
+      "on_top_of": "dining_table_688"
+     },
+     "decor_071ef5b5-90dc-4690-990c-6d7892ce818e": {
+      "position": [
+       3.8,
+       0.4,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "valid": null,
+    "blocking": {
+     "dining_access_violations": [
+      {
+       "uid": "dining_chair_831_3",
+       "gap": 0.5247,
+       "min_gap": 0.56,
+       "clear": false,
+       "blockers": [],
+       "boundary_blocked": true,
+       "region": [
+        [
+         3.7424506908610518,
+         3.060349208035209
+        ],
+        [
+         4.3024506908590805,
+         3.060347722024925
+        ],
+        [
+         4.302449309134875,
+         2.5396477220267584
+        ],
+        [
+         3.7424493091368465,
+         2.5396492080370425
+        ]
+       ],
+       "center_xy": [
+        3.444,
+        2.8
+       ],
+       "center_bounds_for_room_bbox": {
+        "x": [
+         0.2985,
+         3.4087
+        ],
+        "y": [
+         0.2604,
+         4.6164
+        ]
+       },
+       "kind": "chair_pullout_blocked",
+       "clearance_shortfall_m": 0.0353,
+       "table": "dining_table_688",
+       "group_members": [
+        "dining_table_688",
+        "dining_chair_831_1",
+        "dining_chair_831_2",
+        "dining_chair_831_3",
+        "dining_chair_831_4"
+       ]
+      },
+      {
+       "uid": "dining_chair_831_4",
+       "gap": 0.5247,
+       "min_gap": 0.56,
+       "clear": false,
+       "blockers": [],
+       "boundary_blocked": true,
+       "region": [
+        [
+         3.7424506908610518,
+         2.4603492080352094
+        ],
+        [
+         4.3024506908590805,
+         2.4603477220249252
+        ],
+        [
+         4.302449309134875,
+         1.9396477220267585
+        ],
+        [
+         3.7424493091368465,
+         1.9396492080370427
+        ]
+       ],
+       "center_xy": [
+        3.444,
+        2.2
+       ],
+       "center_bounds_for_room_bbox": {
+        "x": [
+         0.2985,
+         3.4087
+        ],
+        "y": [
+         0.2604,
+         4.6164
+        ]
+       },
+       "kind": "chair_pullout_blocked",
+       "clearance_shortfall_m": 0.0353,
+       "table": "dining_table_688",
+       "group_members": [
+        "dining_table_688",
+        "dining_chair_831_1",
+        "dining_chair_831_2",
+        "dining_chair_831_3",
+        "dining_chair_831_4"
+       ]
+      }
+     ],
+     "door_violations": [
+      {
+       "uid": "bookcase_272",
+       "door": 0
+      }
+     ],
+     "living_dining_clearance_violations": [
+      {
+       "dining_table": "dining_table_688",
+       "living_item": "sleeper_sofa_13",
+       "gap": 0.6717000000000001,
+       "min_gap": 0.76
+      }
+     ]
+    }
+   }
+  ]
+ },
+ {
+  "run": "af2e3dc6-5d39-4ac5-b5e9-de29c8f1975e_20261006_210041_960509",
+  "request": {
+   "room_type": "dining_room",
+   "budget": 5000.0,
+   "room_area": [
+    4.2672,
+    4.8768
+   ],
+   "room_vertices": [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     4.2672,
+     0.0
+    ],
+    [
+     4.2672,
+     4.8768
+    ],
+    [
+     0.0,
+     4.8768
+    ]
+   ],
+   "wall_height": 3.3528000000000002,
+   "room_doors": [
+    {
+     "id": "tpl-door-lr-japandi-zen",
+     "surface_key": "back",
+     "center": [
+      1.194816,
+      4.8768
+     ],
+     "width": 0.9,
+     "depth": 0.05,
+     "height": 2.08
+    }
+   ],
+   "room_windows": [
+    {
+     "id": "tpl-win-lr-japandi-zen",
+     "surface_key": "back",
+     "center": [
+      3.072384,
+      4.8768
+     ],
+     "width": 1.1,
+     "depth": 0.05,
+     "height": 1.2,
+     "sill_height": 0.9
+    }
+   ]
+  },
+  "intent": {
+   "normalized_prompt": "A cozy Scandinavian dining room for four with light wood and soft neutral dining chairs. Keep the floor bare and the room uncluttered.",
+   "room_type": "dining_room",
+   "requested_categories": [
+    "dining_table",
+    "dining_chair"
+   ],
+   "excluded_categories": [
+    "rug"
+   ],
+   "avoid_categories": [],
+   "style_hints": [
+    "scandinavian",
+    "cozy",
+    "minimalist"
+   ],
+   "functional_hints": [
+    "minimal_furniture",
+    "uncluttered",
+    "bare_floor"
+   ],
+   "material_preferences": [
+    "light wood"
+   ],
+   "fabric_preferences": [],
+   "lifestyle_requirements": [],
+   "requested_items": [
+    {
+     "label": "light wood dining table for four",
+     "canonical_category": "dining_table",
+     "count": 1,
+     "exact": false,
+     "optional": false,
+     "acceptable_substitutes": [],
+     "descriptors": [
+      "light wood",
+      "for four",
+      "Scandinavian",
+      "cozy"
+     ]
+    },
+    {
+     "label": "soft neutral dining chairs",
+     "canonical_category": "dining_chair",
+     "count": 4,
+     "exact": true,
+     "optional": false,
+     "acceptable_substitutes": [],
+     "descriptors": [
+      "soft neutral",
+      "Scandinavian",
+      "matching"
+     ],
+     "relation": "around dining table"
+    }
+   ],
+   "support_pairs": [
+    {
+     "primary_category": "dining_chair",
+     "support_category": "dining_table",
+     "required": true,
+     "relation": "chairs around dining table"
+    }
+   ],
+   "price_constraints": [],
+   "asset_attribute_constraints": [
+    {
+     "category": "dining_table",
+     "attribute_type": "material",
+     "value": "light wood",
+     "required": true,
+     "source_label": "light wood"
+    },
+    {
+     "category": "dining_table",
+     "attribute_type": "style",
+     "value": "Scandinavian",
+     "required": true,
+     "source_label": "Scandinavian"
+    },
+    {
+     "category": "dining_chair",
+     "attribute_type": "color",
+     "value": "neutral",
+     "required": true,
+     "source_label": "soft neutral"
+    },
+    {
+     "category": "dining_chair",
+     "attribute_type": "style",
+     "value": "Scandinavian",
+     "required": true,
+     "source_label": "Scandinavian"
+    }
+   ],
+   "room_goal": "cozy Scandinavian dining for four with bare floors and minimal clutter",
+   "requires_straight_circulation_path": false,
+   "fit_flexibility": "strict_counts",
+   "ambiguity_level": "low",
+   "interpretation_source": "llm",
+   "budget_strategy": "not_specified",
+   "rationale": "The user specifies a dining room for four, translating to 1 dining table and exactly 4 dining chairs. Bare floor explicitly excludes rugs, and uncluttered maps to minimal_furniture."
+  },
+  "digest": {
+   "room_scale": "medium",
+   "required_roles": [
+    "dining_table",
+    "dining_seating"
+   ],
+   "optional_categories": [
+    "planter"
+   ],
+   "max_counts_by_category": {
+    "accent_chair": 4,
+    "bench": 4,
+    "bookcase": 2,
+    "cabinet": 2,
+    "ceiling_light": 5,
+    "chaise_lounge": 1,
+    "chandelier": 5,
+    "coffee_table": 1,
+    "console_table": 4,
+    "decor": 5,
+    "desk": 4,
+    "dining_chair": 4,
+    "dining_table": 1,
+    "dresser": 2,
+    "floor_lamp": 3,
+    "floor_mirror": 5,
+    "lamp": 3,
+    "loveseat": 1,
+    "media_unit": 2,
+    "office_chair": 4,
+    "ottoman": 4,
+    "painting": 5,
+    "pendant_light": 5,
+    "planter": 4,
+    "projector": 2,
+    "recliner": 4,
+    "rug": 0,
+    "sculpture": 5,
+    "sectional": 1,
+    "side_table": 4,
+    "sideboard": 2,
+    "sleeper_sofa": 1,
+    "sofa": 1,
+    "sofa_bed": 1,
+    "stool": 4,
+    "storage_unit": 2,
+    "swivel_chair": 4,
+    "table": 4,
+    "table_lamp": 5,
+    "tv": 2,
+    "tv_stand": 2,
+    "vase": 5,
+    "wall_art": 5,
+    "wall_mirror": 5,
+    "wardrobe": 2
+   },
+   "density_budget": {
+    "comfortable_max_score": 0.55,
+    "overcrowded_min_score": 0.75,
+    "sparse_below_score": 0.32,
+    "comfortable_load_sqm": 11.1487,
+    "overcrowded_load_sqm": 15.2027,
+    "sparse_below_load_sqm": 0.0
+   }
+  },
+  "assets": {
+   "dining_table_3": {
+    "asset_id": "dining_table_3",
+    "source_table": "catalog.assets",
+    "category": "dining_table",
+    "title": "dining_table_3",
+    "width_m": 2.0574,
+    "depth_m": 1.0414,
+    "height_m": 0.762,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 899
+   },
+   "dining_chair_39": {
+    "asset_id": "dining_chair_39",
+    "source_table": "catalog.assets",
+    "category": "dining_chair",
+    "title": "dining_chair_39",
+    "width_m": 0.53086,
+    "depth_m": 0.5461,
+    "height_m": 0.7747,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 510
+   },
+   "sideboard_1": {
+    "asset_id": "sideboard_1",
+    "source_table": "catalog.assets",
+    "category": "sideboard",
+    "title": "sideboard_1",
+    "width_m": 1.524,
+    "depth_m": 0.4572,
+    "height_m": 0.762,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 899
+   },
+   "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4": {
+    "asset_id": "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4",
+    "source_table": "pipeline.decor_items",
+    "category": "planter",
+    "title": "Charming Potted Mini Tree",
+    "width_m": 1.03204,
+    "depth_m": 1.11005,
+    "height_m": 1.40322,
+    "placement_type": "floor",
+    "is_purchasable": false,
+    "price": null
+   },
+   "dining_table_552": {
+    "asset_id": "dining_table_552",
+    "source_table": "catalog.assets",
+    "category": "dining_table",
+    "title": "dining_table_552",
+    "width_m": 2.1336,
+    "depth_m": 0.9652,
+    "height_m": 0.762,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 1999
+   },
+   "decor_130b1ed4-b579-481b-a8ee-aaeee5c6e6ef": {
+    "asset_id": "decor_130b1ed4-b579-481b-a8ee-aaeee5c6e6ef",
+    "source_table": "pipeline.decor_items",
+    "category": "planter",
+    "title": "Elegant Indoor Potted Fern",
+    "width_m": 1.02004,
+    "depth_m": 1.0698,
+    "height_m": 1.43211,
+    "placement_type": "floor",
+    "is_purchasable": false,
+    "price": null
+   },
+   "decor_0945418d-13aa-4ade-8e52-7b38f3e1daff": {
+    "asset_id": "decor_0945418d-13aa-4ade-8e52-7b38f3e1daff",
+    "source_table": "pipeline.decor_items",
+    "category": "planter",
+    "title": "Elegant Indoor Potted Plant",
+    "width_m": 0.974736,
+    "depth_m": 1.08951,
+    "height_m": 1.45641,
+    "placement_type": "floor",
+    "is_purchasable": false,
+    "price": null
+   }
+  },
+  "selection_turns": [
+   {
+    "variant": 0,
+    "turn": 1,
+    "items": [
+     [
+      "dining_table_3",
+      1
+     ],
+     [
+      "dining_chair_39",
+      4
+     ],
+     [
+      "sideboard_1",
+      1
+     ],
+     [
+      "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dining_table_3"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 4,
+       "selected_uids": [
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "exact_count: dining_chair = 4",
+      "material: dining_table = light wood",
+      "style: dining_table = Scandinavian/Minimalist",
+      "color: dining_chair = neutral",
+      "exclusion: rug"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "light wood",
+       "target_uids": [
+        "dining_table_3"
+       ],
+       "satisfied_uids": [
+        "dining_table_3"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "Scandinavian",
+       "target_uids": [
+        "dining_table_3",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39"
+       ],
+       "satisfied_uids": [
+        "dining_table_3",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "soft neutral",
+       "target_uids": [
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39"
+       ],
+       "satisfied_uids": [
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": true,
+    "errors": []
+   },
+   {
+    "variant": 1,
+    "turn": 1,
+    "items": [
+     [
+      "dining_table_552",
+      1
+     ],
+     [
+      "dining_chair_39",
+      4
+     ],
+     [
+      "decor_130b1ed4-b579-481b-a8ee-aaeee5c6e6ef",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dining_table_552"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 4,
+       "selected_uids": [
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39"
+       ]
+      },
+      {
+       "category": "planter",
+       "count": 1,
+       "selected_uids": [
+        "decor_130b1ed4-b579-481b-a8ee-aaeee5c6e6ef"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "light wood material for dining table",
+      "Scandinavian style for dining table",
+      "neutral color for dining chairs",
+      "Scandinavian style for dining chairs",
+      "exact count of 4 dining chairs",
+      "bare floor (no rug) constraint"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "light wood",
+       "target_uids": [
+        "dining_table_552"
+       ],
+       "satisfied_uids": [
+        "dining_table_552"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "Scandinavian",
+       "target_uids": [
+        "dining_table_552"
+       ],
+       "satisfied_uids": [
+        "dining_table_552"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "soft neutral",
+       "target_uids": [
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39"
+       ],
+       "satisfied_uids": [
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "Scandinavian",
+       "target_uids": [
+        "dining_chair_39",
+        "dining_chair_39,"
+       ],
+       "satisfied_uids": [
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": true,
+    "errors": []
+   },
+   {
+    "variant": 2,
+    "turn": 1,
+    "items": [
+     [
+      "dining_table_552",
+      1
+     ],
+     [
+      "dining_chair_39",
+      4
+     ],
+     [
+      "sideboard_1",
+      1
+     ],
+     [
+      "decor_0945418d-13aa-4ade-8e52-7b38f3e1daff",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dining_table_552"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 4,
+       "selected_uids": [
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "dining_chair count 4 exact",
+      "dining_table count 1",
+      "no rug included per exclusion",
+      "light wood material for table",
+      "soft neutral color for chairs",
+      "Scandinavian style for table and chairs"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "light wood",
+       "target_uids": [
+        "dining_table_552"
+       ],
+       "satisfied_uids": [
+        "dining_table_552"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "Scandinavian",
+       "target_uids": [
+        "dining_table_552"
+       ],
+       "satisfied_uids": [
+        "dining_table_552"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "soft neutral",
+       "target_uids": [
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39"
+       ],
+       "satisfied_uids": [
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "Scandinavian",
+       "target_uids": [
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39"
+       ],
+       "satisfied_uids": [
+        "dining_chair_39",
+        "dining_chair_39",
+        "dining_chair_39,"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": true,
+    "errors": []
+   }
+  ],
+  "layout_assets": {
+   "0": [
+    {
+     "asset_id": "19bc39a7-cc63-407e-9cb1-0b06d198e4bb",
+     "source_table": "catalog.assets",
+     "category": "dining_table",
+     "width_m": 2.0574,
+     "depth_m": 1.0414,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "dining_table_3"
+    },
+    {
+     "asset_id": "2be7f65f-89b0-4cc8-b386-679f54d5e5ee",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.53086,
+     "depth_m": 0.5461,
+     "height_m": 0.7747,
+     "placement_type": "floor",
+     "uid": "dining_chair_39_1"
+    },
+    {
+     "asset_id": "2be7f65f-89b0-4cc8-b386-679f54d5e5ee",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.53086,
+     "depth_m": 0.5461,
+     "height_m": 0.7747,
+     "placement_type": "floor",
+     "uid": "dining_chair_39_2"
+    },
+    {
+     "asset_id": "2be7f65f-89b0-4cc8-b386-679f54d5e5ee",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.53086,
+     "depth_m": 0.5461,
+     "height_m": 0.7747,
+     "placement_type": "floor",
+     "uid": "dining_chair_39_3"
+    },
+    {
+     "asset_id": "2be7f65f-89b0-4cc8-b386-679f54d5e5ee",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.53086,
+     "depth_m": 0.5461,
+     "height_m": 0.7747,
+     "placement_type": "floor",
+     "uid": "dining_chair_39_4"
+    },
+    {
+     "asset_id": "60c25a23-f1b3-4947-bcac-d5458b5be594",
+     "source_table": "catalog.assets",
+     "category": "sideboard",
+     "width_m": 1.524,
+     "depth_m": 0.4572,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "sideboard_1"
+    },
+    {
+     "asset_id": "047ff49d-65d8-4f1e-bd46-256e38ee5da4",
+     "source_table": "pipeline.decor_items",
+     "category": "planter",
+     "width_m": 1.03204,
+     "depth_m": 1.11005,
+     "height_m": 1.40322,
+     "placement_type": "floor",
+     "uid": "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4"
+    }
+   ],
+   "1": [
+    {
+     "asset_id": "8867c048-752f-4e84-ae2a-989f77ef3380",
+     "source_table": "catalog.assets",
+     "category": "dining_table",
+     "width_m": 2.1336,
+     "depth_m": 0.9652,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "dining_table_552"
+    },
+    {
+     "asset_id": "2be7f65f-89b0-4cc8-b386-679f54d5e5ee",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.53086,
+     "depth_m": 0.5461,
+     "height_m": 0.7747,
+     "placement_type": "floor",
+     "uid": "dining_chair_39_1"
+    },
+    {
+     "asset_id": "2be7f65f-89b0-4cc8-b386-679f54d5e5ee",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.53086,
+     "depth_m": 0.5461,
+     "height_m": 0.7747,
+     "placement_type": "floor",
+     "uid": "dining_chair_39_2"
+    },
+    {
+     "asset_id": "2be7f65f-89b0-4cc8-b386-679f54d5e5ee",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.53086,
+     "depth_m": 0.5461,
+     "height_m": 0.7747,
+     "placement_type": "floor",
+     "uid": "dining_chair_39_3"
+    },
+    {
+     "asset_id": "2be7f65f-89b0-4cc8-b386-679f54d5e5ee",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.53086,
+     "depth_m": 0.5461,
+     "height_m": 0.7747,
+     "placement_type": "floor",
+     "uid": "dining_chair_39_4"
+    },
+    {
+     "asset_id": "130b1ed4-b579-481b-a8ee-aaeee5c6e6ef",
+     "source_table": "pipeline.decor_items",
+     "category": "planter",
+     "width_m": 1.02004,
+     "depth_m": 1.0698,
+     "height_m": 1.43211,
+     "placement_type": "floor",
+     "uid": "decor_130b1ed4-b579-481b-a8ee-aaeee5c6e6ef"
+    }
+   ],
+   "2": [
+    {
+     "asset_id": "8867c048-752f-4e84-ae2a-989f77ef3380",
+     "source_table": "catalog.assets",
+     "category": "dining_table",
+     "width_m": 2.1336,
+     "depth_m": 0.9652,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "dining_table_552"
+    },
+    {
+     "asset_id": "2be7f65f-89b0-4cc8-b386-679f54d5e5ee",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.53086,
+     "depth_m": 0.5461,
+     "height_m": 0.7747,
+     "placement_type": "floor",
+     "uid": "dining_chair_39_1"
+    },
+    {
+     "asset_id": "2be7f65f-89b0-4cc8-b386-679f54d5e5ee",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.53086,
+     "depth_m": 0.5461,
+     "height_m": 0.7747,
+     "placement_type": "floor",
+     "uid": "dining_chair_39_2"
+    },
+    {
+     "asset_id": "2be7f65f-89b0-4cc8-b386-679f54d5e5ee",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.53086,
+     "depth_m": 0.5461,
+     "height_m": 0.7747,
+     "placement_type": "floor",
+     "uid": "dining_chair_39_3"
+    },
+    {
+     "asset_id": "2be7f65f-89b0-4cc8-b386-679f54d5e5ee",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.53086,
+     "depth_m": 0.5461,
+     "height_m": 0.7747,
+     "placement_type": "floor",
+     "uid": "dining_chair_39_4"
+    },
+    {
+     "asset_id": "60c25a23-f1b3-4947-bcac-d5458b5be594",
+     "source_table": "catalog.assets",
+     "category": "sideboard",
+     "width_m": 1.524,
+     "depth_m": 0.4572,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "sideboard_1"
+    },
+    {
+     "asset_id": "0945418d-13aa-4ade-8e52-7b38f3e1daff",
+     "source_table": "pipeline.decor_items",
+     "category": "planter",
+     "width_m": 0.974736,
+     "depth_m": 1.08951,
+     "height_m": 1.45641,
+     "placement_type": "floor",
+     "uid": "decor_0945418d-13aa-4ade-8e52-7b38f3e1daff"
+    }
+   ]
+  },
+  "layouts": [
+   {
+    "label": "variant 0 final",
+    "variant": 0,
+    "layout": {
+     "dining_table_3": {
+      "position": [
+       2.135,
+       2.3,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5708
+      ]
+     },
+     "dining_chair_39_1": {
+      "position": [
+       2.535,
+       3.1738,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71239
+      ]
+     },
+     "dining_chair_39_2": {
+      "position": [
+       1.735,
+       3.1738,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71239
+      ]
+     },
+     "dining_chair_39_3": {
+      "position": [
+       2.535,
+       1.4262,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5708
+      ]
+     },
+     "dining_chair_39_4": {
+      "position": [
+       1.735,
+       1.4262,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5708
+      ]
+     },
+     "sideboard_1": {
+      "position": [
+       3.9886,
+       2.3,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.141592653589793
+      ]
+     },
+     "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4": {
+      "position": [
+       0.6,
+       0.6,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5708
+      ]
+     }
+    },
+    "valid": true,
+    "blocking": {}
+   },
+   {
+    "label": "variant 1 final",
+    "variant": 1,
+    "layout": {
+     "dining_table_552": {
+      "position": [
+       2.8,
+       2.44,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "dining_chair_39_1": {
+      "position": [
+       2.3,
+       3.2756,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71238898
+      ]
+     },
+     "dining_chair_39_2": {
+      "position": [
+       3.3,
+       3.2756,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71238898
+      ]
+     },
+     "dining_chair_39_3": {
+      "position": [
+       2.3,
+       1.6044,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.57079633
+      ]
+     },
+     "dining_chair_39_4": {
+      "position": [
+       3.3,
+       1.6044,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.57079633
+      ]
+     },
+     "decor_130b1ed4-b579-481b-a8ee-aaeee5c6e6ef": {
+      "position": [
+       0.65,
+       0.65,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "valid": true,
+    "blocking": {}
+   },
+   {
+    "label": "variant 2 final",
+    "variant": 2,
+    "layout": {
+     "dining_table_552": {
+      "position": [
+       2.5,
+       2.8,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_39_1": {
+      "position": [
+       1.64,
+       3.125,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_39_2": {
+      "position": [
+       1.64,
+       2.475,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_39_3": {
+      "position": [
+       3.36,
+       3.125,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.141592653589793
+      ]
+     },
+     "dining_chair_39_4": {
+      "position": [
+       3.36,
+       2.475,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.141592653589793
+      ]
+     },
+     "sideboard_1": {
+      "position": [
+       2.5,
+       0.23,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "decor_0945418d-13aa-4ade-8e52-7b38f3e1daff": {
+      "position": [
+       0.6,
+       0.6,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "valid": true,
+    "blocking": {}
+   }
+  ]
+ },
+ {
+  "run": "af2e3dc6-5d39-4ac5-b5e9-de29c8f1975e_20261006_211421_165029",
+  "request": {
+   "room_type": "dining_room",
+   "budget": 10000.0,
+   "room_area": [
+    4.2672,
+    4.8768
+   ],
+   "room_vertices": [
+    [
+     0.0,
+     0.0
+    ],
+    [
+     4.2672,
+     0.0
+    ],
+    [
+     4.2672,
+     4.8768
+    ],
+    [
+     0.0,
+     4.8768
+    ]
+   ],
+   "wall_height": 3.3528000000000002,
+   "room_doors": [
+    {
+     "id": "tpl-door-lr-japandi-zen",
+     "surface_key": "back",
+     "center": [
+      1.194816,
+      4.8768
+     ],
+     "width": 0.9,
+     "depth": 0.05,
+     "height": 2.08
+    }
+   ],
+   "room_windows": [
+    {
+     "id": "tpl-win-lr-japandi-zen",
+     "surface_key": "back",
+     "center": [
+      3.072384,
+      4.8768
+     ],
+     "width": 1.1,
+     "depth": 0.05,
+     "height": 1.2,
+     "sill_height": 0.9
+    }
+   ]
+  },
+  "intent": {
+   "normalized_prompt": "A contemporary dining room for six with a rectangular table and matching comfortable chairs, plus a sideboard if it fits without reducing chair access.",
+   "room_type": "dining_room",
+   "requested_categories": [
+    "dining_table",
+    "dining_chair",
+    "sideboard"
+   ],
+   "excluded_categories": [],
+   "avoid_categories": [],
+   "style_hints": [
+    "contemporary"
+   ],
+   "functional_hints": [
+    "dining",
+    "entertaining"
+   ],
+   "material_preferences": [],
+   "fabric_preferences": [],
+   "lifestyle_requirements": [
+    "entertaining guests"
+   ],
+   "requested_items": [
+    {
+     "label": "rectangular dining table",
+     "canonical_category": "dining_table",
+     "count": 1,
+     "exact": false,
+     "optional": false,
+     "acceptable_substitutes": [
+      "table"
+     ],
+     "descriptors": [
+      "contemporary",
+      "rectangular",
+      "seats six"
+     ]
+    },
+    {
+     "label": "matching comfortable dining chairs",
+     "canonical_category": "dining_chair",
+     "count": 6,
+     "exact": true,
+     "optional": false,
+     "acceptable_substitutes": [],
+     "descriptors": [
+      "matching",
+      "comfortable",
+      "contemporary"
+     ],
+     "relation": "around dining table"
+    },
+    {
+     "label": "sideboard",
+     "canonical_category": "sideboard",
+     "count": 1,
+     "exact": false,
+     "optional": true,
+     "acceptable_substitutes": [
+      "cabinet",
+      "storage_unit"
+     ],
+     "descriptors": [
+      "contemporary",
+      "if it fits without reducing chair access"
+     ]
+    }
+   ],
+   "support_pairs": [
+    {
+     "primary_category": "dining_chair",
+     "support_category": "dining_table",
+     "required": true,
+     "relation": "surrounding"
+    }
+   ],
+   "price_constraints": [],
+   "asset_attribute_constraints": [
+    {
+     "category": "dining_table",
+     "attribute_type": "shape",
+     "value": "rectangular",
+     "required": true,
+     "source_label": "rectangular table"
+    },
+    {
+     "category": null,
+     "attribute_type": "style",
+     "value": "contemporary",
+     "required": true,
+     "source_label": "contemporary"
+    }
+   ],
+   "room_goal": "contemporary dining room seating six",
+   "requires_straight_circulation_path": false,
+   "fit_flexibility": "strict_counts",
+   "ambiguity_level": "low",
+   "interpretation_source": "llm",
+   "budget_strategy": "not_specified",
+   "rationale": "The user requested a dining room for six with a rectangular table and matching comfortable chairs, which specifies an exact count of 6 dining chairs and 1 table. The sideboard is marked optional because it was requested conditionally ('if it fits without reducing chair access')."
+  },
+  "digest": {
+   "room_scale": "medium",
+   "required_roles": [
+    "dining_table",
+    "dining_seating"
+   ],
+   "optional_categories": [
+    "planter",
+    "sideboard",
+    "cabinet",
+    "pendant_light",
+    "chandelier",
+    "painting",
+    "wall_art"
+   ],
+   "max_counts_by_category": {
+    "accent_chair": 4,
+    "bench": 4,
+    "bookcase": 2,
+    "cabinet": 2,
+    "ceiling_light": 5,
+    "chaise_lounge": 1,
+    "chandelier": 5,
+    "coffee_table": 1,
+    "console_table": 4,
+    "decor": 5,
+    "desk": 4,
+    "dining_chair": 6,
+    "dining_table": 1,
+    "dresser": 2,
+    "floor_lamp": 3,
+    "floor_mirror": 5,
+    "lamp": 3,
+    "loveseat": 1,
+    "media_unit": 2,
+    "office_chair": 4,
+    "ottoman": 4,
+    "painting": 5,
+    "pendant_light": 5,
+    "planter": 4,
+    "projector": 2,
+    "recliner": 4,
+    "rug": 1,
+    "sculpture": 5,
+    "sectional": 1,
+    "side_table": 4,
+    "sideboard": 2,
+    "sleeper_sofa": 1,
+    "sofa": 1,
+    "sofa_bed": 1,
+    "stool": 4,
+    "storage_unit": 2,
+    "swivel_chair": 4,
+    "table": 4,
+    "table_lamp": 5,
+    "tv": 2,
+    "tv_stand": 2,
+    "vase": 5,
+    "wall_art": 5,
+    "wall_mirror": 5,
+    "wardrobe": 2
+   },
+   "density_budget": {
+    "comfortable_max_score": 0.55,
+    "overcrowded_min_score": 0.75,
+    "sparse_below_score": 0.32,
+    "comfortable_load_sqm": 11.1487,
+    "overcrowded_load_sqm": 15.2027,
+    "sparse_below_load_sqm": 0.0
+   }
+  },
+  "assets": {
+   "dining_table_655": {
+    "asset_id": "dining_table_655",
+    "source_table": "catalog.assets",
+    "category": "dining_table",
+    "title": "dining_table_655",
+    "width_m": 2.2987,
+    "depth_m": 1.20015,
+    "height_m": 0.762,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 3823
+   },
+   "dining_chair_68": {
+    "asset_id": "dining_chair_68",
+    "source_table": "catalog.assets",
+    "category": "dining_chair",
+    "title": "dining_chair_68",
+    "width_m": 0.5309,
+    "depth_m": 0.5588,
+    "height_m": 0.889,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 750
+   },
+   "sideboard_29": {
+    "asset_id": "sideboard_29",
+    "source_table": "catalog.assets",
+    "category": "sideboard",
+    "title": "sideboard_29",
+    "width_m": 1.524,
+    "depth_m": 0.4572,
+    "height_m": 0.762,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 899
+   },
+   "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4": {
+    "asset_id": "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4",
+    "source_table": "pipeline.decor_items",
+    "category": "planter",
+    "title": "Charming Potted Mini Tree",
+    "width_m": 1.03204,
+    "depth_m": 1.11005,
+    "height_m": 1.40322,
+    "placement_type": "floor",
+    "is_purchasable": false,
+    "price": null
+   },
+   "dining_table_502": {
+    "asset_id": "dining_table_502",
+    "source_table": "catalog.assets",
+    "category": "dining_table",
+    "title": "dining_table_502",
+    "width_m": 2.1336,
+    "depth_m": 1.016,
+    "height_m": 0.762,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 1999
+   },
+   "decor_0945418d-13aa-4ade-8e52-7b38f3e1daff": {
+    "asset_id": "decor_0945418d-13aa-4ade-8e52-7b38f3e1daff",
+    "source_table": "pipeline.decor_items",
+    "category": "planter",
+    "title": "Elegant Indoor Potted Plant",
+    "width_m": 0.974736,
+    "depth_m": 1.08951,
+    "height_m": 1.45641,
+    "placement_type": "floor",
+    "is_purchasable": false,
+    "price": null
+   },
+   "dining_chair_667": {
+    "asset_id": "dining_chair_667",
+    "source_table": "catalog.assets",
+    "category": "dining_chair",
+    "title": "dining_chair_667",
+    "width_m": 0.6223,
+    "depth_m": 0.5334,
+    "height_m": 0.889,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 1217
+   },
+   "sideboard_1": {
+    "asset_id": "sideboard_1",
+    "source_table": "catalog.assets",
+    "category": "sideboard",
+    "title": "sideboard_1",
+    "width_m": 1.524,
+    "depth_m": 0.4572,
+    "height_m": 0.762,
+    "placement_type": "floor",
+    "is_purchasable": true,
+    "price": 899
+   }
+  },
+  "selection_turns": [
+   {
+    "variant": 0,
+    "turn": 1,
+    "items": [
+     [
+      "dining_table_655",
+      1
+     ],
+     [
+      "dining_chair_68",
+      6
+     ],
+     [
+      "sideboard_29",
+      1
+     ],
+     [
+      "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dining_table_655"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 6,
+       "selected_uids": [
+        "dining_chair_68",
+        "dining_chair_68",
+        "dining_chair_68",
+        "dining_chair_68",
+        "dining_chair_68",
+        "dining_chair_68"
+       ]
+      },
+      {
+       "category": "sideboard",
+       "count": 1,
+       "selected_uids": [
+        "sideboard_29"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "rectangular dining table attribute",
+      "contemporary style hint attribute",
+      "dining chair exact count of 6",
+      "matching chairs constraint"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "rectangular table",
+       "target_uids": [
+        "dining_table_655"
+       ],
+       "satisfied_uids": [
+        "dining_table_655"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "contemporary",
+       "target_uids": [
+        "dining_table_655",
+        "dining_chair_68",
+        "sideboard_29"
+       ],
+       "satisfied_uids": [
+        "dining_table_655",
+        "dining_chair_68",
+        "sideboard_29"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": true,
+    "errors": []
+   },
+   {
+    "variant": 1,
+    "turn": 1,
+    "items": [
+     [
+      "dining_table_502",
+      1
+     ],
+     [
+      "dining_chair_68",
+      6
+     ],
+     [
+      "sideboard_29",
+      1
+     ],
+     [
+      "decor_0945418d-13aa-4ade-8e52-7b38f3e1daff",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dining_table_502"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 6,
+       "selected_uids": [
+        "dining_chair_68",
+        "dining_chair_68",
+        "dining_chair_68",
+        "dining_chair_68",
+        "dining_chair_68",
+        "dining_chair_68"
+       ]
+      },
+      {
+       "category": "sideboard",
+       "count": 1,
+       "selected_uids": [
+        "sideboard_29"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "rectangular dining table",
+      "seating for six",
+      "contemporary style",
+      "sideboard inclusion"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "rectangular table",
+       "target_uids": [
+        "dining_table_502"
+       ],
+       "satisfied_uids": [
+        "dining_table_502"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "contemporary",
+       "target_uids": [
+        "dining_table_502",
+        "dining_chair_68",
+        "sideboard_29"
+       ],
+       "satisfied_uids": [
+        "dining_table_502",
+        "dining_chair_68",
+        "sideboard_29"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": true,
+    "errors": []
+   },
+   {
+    "variant": 2,
+    "turn": 1,
+    "items": [
+     [
+      "dining_table_502",
+      1
+     ],
+     [
+      "dining_chair_667",
+      6
+     ],
+     [
+      "sideboard_1",
+      1
+     ],
+     [
+      "decor_0945418d-13aa-4ade-8e52-7b38f3e1daff",
+      1
+     ]
+    ],
+    "fit_satisfaction": {
+     "selected_counts": [
+      {
+       "category": "dining_table",
+       "count": 1,
+       "selected_uids": [
+        "dining_table_502"
+       ]
+      },
+      {
+       "category": "dining_chair",
+       "count": 6,
+       "selected_uids": [
+        "dining_chair_667",
+        "dining_chair_667",
+        "dining_chair_667",
+        "dining_chair_667",
+        "dining_chair_667",
+        "dining_chair_667"
+       ]
+      },
+      {
+       "category": "sideboard",
+       "count": 1,
+       "selected_uids": [
+        "sideboard_1"
+       ]
+      }
+     ]
+    },
+    "constraint_audit": {
+     "passed": true,
+     "checked_constraints": [
+      "rectangular table",
+      "contemporary"
+     ],
+     "exact_count_violations": [],
+     "coordination_violations": [],
+     "attribute_constraint_checks": [
+      {
+       "source_label": "rectangular table",
+       "target_uids": [
+        "dining_table_502"
+       ],
+       "satisfied_uids": [
+        "dining_table_502"
+       ],
+       "unsatisfied_uids": []
+      },
+      {
+       "source_label": "contemporary",
+       "target_uids": [
+        "dining_table_502",
+        "dining_chair_667",
+        "sideboard_1"
+       ],
+       "satisfied_uids": [
+        "dining_table_502",
+        "dining_chair_667",
+        "sideboard_1"
+       ],
+       "unsatisfied_uids": []
+      }
+     ]
+    },
+    "valid": true,
+    "errors": []
+   }
+  ],
+  "layout_assets": {
+   "0": [
+    {
+     "asset_id": "5760efcd-8999-43e3-90d0-4fb02a87827c",
+     "source_table": "catalog.assets",
+     "category": "dining_table",
+     "width_m": 2.2987,
+     "depth_m": 1.20015,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "dining_table_655"
+    },
+    {
+     "asset_id": "a1e8c7e5-bf34-49b8-a7fe-43e0a8d6c078",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5309,
+     "depth_m": 0.5588,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_68_1"
+    },
+    {
+     "asset_id": "a1e8c7e5-bf34-49b8-a7fe-43e0a8d6c078",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5309,
+     "depth_m": 0.5588,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_68_2"
+    },
+    {
+     "asset_id": "a1e8c7e5-bf34-49b8-a7fe-43e0a8d6c078",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5309,
+     "depth_m": 0.5588,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_68_3"
+    },
+    {
+     "asset_id": "a1e8c7e5-bf34-49b8-a7fe-43e0a8d6c078",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5309,
+     "depth_m": 0.5588,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_68_4"
+    },
+    {
+     "asset_id": "a1e8c7e5-bf34-49b8-a7fe-43e0a8d6c078",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5309,
+     "depth_m": 0.5588,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_68_5"
+    },
+    {
+     "asset_id": "a1e8c7e5-bf34-49b8-a7fe-43e0a8d6c078",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5309,
+     "depth_m": 0.5588,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_68_6"
+    },
+    {
+     "asset_id": "8589b7ba-7917-467d-af2d-d988895fcbcd",
+     "source_table": "catalog.assets",
+     "category": "sideboard",
+     "width_m": 1.524,
+     "depth_m": 0.4572,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "sideboard_29"
+    },
+    {
+     "asset_id": "047ff49d-65d8-4f1e-bd46-256e38ee5da4",
+     "source_table": "pipeline.decor_items",
+     "category": "planter",
+     "width_m": 1.03204,
+     "depth_m": 1.11005,
+     "height_m": 1.40322,
+     "placement_type": "floor",
+     "uid": "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4"
+    }
+   ],
+   "1": [
+    {
+     "asset_id": "1f1bc233-3367-485a-8f09-1a1c7753e073",
+     "source_table": "catalog.assets",
+     "category": "dining_table",
+     "width_m": 2.1336,
+     "depth_m": 1.016,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "dining_table_502"
+    },
+    {
+     "asset_id": "a1e8c7e5-bf34-49b8-a7fe-43e0a8d6c078",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5309,
+     "depth_m": 0.5588,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_68_1"
+    },
+    {
+     "asset_id": "a1e8c7e5-bf34-49b8-a7fe-43e0a8d6c078",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5309,
+     "depth_m": 0.5588,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_68_2"
+    },
+    {
+     "asset_id": "a1e8c7e5-bf34-49b8-a7fe-43e0a8d6c078",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5309,
+     "depth_m": 0.5588,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_68_3"
+    },
+    {
+     "asset_id": "a1e8c7e5-bf34-49b8-a7fe-43e0a8d6c078",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5309,
+     "depth_m": 0.5588,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_68_4"
+    },
+    {
+     "asset_id": "a1e8c7e5-bf34-49b8-a7fe-43e0a8d6c078",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5309,
+     "depth_m": 0.5588,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_68_5"
+    },
+    {
+     "asset_id": "a1e8c7e5-bf34-49b8-a7fe-43e0a8d6c078",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.5309,
+     "depth_m": 0.5588,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_68_6"
+    },
+    {
+     "asset_id": "8589b7ba-7917-467d-af2d-d988895fcbcd",
+     "source_table": "catalog.assets",
+     "category": "sideboard",
+     "width_m": 1.524,
+     "depth_m": 0.4572,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "sideboard_29"
+    },
+    {
+     "asset_id": "0945418d-13aa-4ade-8e52-7b38f3e1daff",
+     "source_table": "pipeline.decor_items",
+     "category": "planter",
+     "width_m": 0.974736,
+     "depth_m": 1.08951,
+     "height_m": 1.45641,
+     "placement_type": "floor",
+     "uid": "decor_0945418d-13aa-4ade-8e52-7b38f3e1daff"
+    }
+   ],
+   "2": [
+    {
+     "asset_id": "1f1bc233-3367-485a-8f09-1a1c7753e073",
+     "source_table": "catalog.assets",
+     "category": "dining_table",
+     "width_m": 2.1336,
+     "depth_m": 1.016,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "dining_table_502"
+    },
+    {
+     "asset_id": "60c25a23-f1b3-4947-bcac-d5458b5be594",
+     "source_table": "catalog.assets",
+     "category": "sideboard",
+     "width_m": 1.524,
+     "depth_m": 0.4572,
+     "height_m": 0.762,
+     "placement_type": "floor",
+     "uid": "sideboard_1"
+    },
+    {
+     "asset_id": "8977fee6-2647-4de3-a7a6-74670ab3015f",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.6223,
+     "depth_m": 0.5334,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_667_1"
+    },
+    {
+     "asset_id": "8977fee6-2647-4de3-a7a6-74670ab3015f",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.6223,
+     "depth_m": 0.5334,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_667_2"
+    },
+    {
+     "asset_id": "8977fee6-2647-4de3-a7a6-74670ab3015f",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.6223,
+     "depth_m": 0.5334,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_667_3"
+    },
+    {
+     "asset_id": "8977fee6-2647-4de3-a7a6-74670ab3015f",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.6223,
+     "depth_m": 0.5334,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_667_4"
+    },
+    {
+     "asset_id": "8977fee6-2647-4de3-a7a6-74670ab3015f",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.6223,
+     "depth_m": 0.5334,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_667_5"
+    },
+    {
+     "asset_id": "8977fee6-2647-4de3-a7a6-74670ab3015f",
+     "source_table": "catalog.assets",
+     "category": "dining_chair",
+     "width_m": 0.6223,
+     "depth_m": 0.5334,
+     "height_m": 0.889,
+     "placement_type": "floor",
+     "uid": "dining_chair_667_6"
+    },
+    {
+     "asset_id": "0945418d-13aa-4ade-8e52-7b38f3e1daff",
+     "source_table": "pipeline.decor_items",
+     "category": "planter",
+     "width_m": 0.974736,
+     "depth_m": 1.08951,
+     "height_m": 1.45641,
+     "placement_type": "floor",
+     "uid": "decor_0945418d-13aa-4ade-8e52-7b38f3e1daff"
+    }
+   ]
+  },
+  "layouts": [
+   {
+    "label": "variant 0 final",
+    "variant": 0,
+    "layout": {
+     "dining_table_655": {
+      "position": [
+       2.52,
+       2.44,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "dining_chair_68_1": {
+      "position": [
+       1.76,
+       3.42,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71238898038469
+      ]
+     },
+     "dining_chair_68_2": {
+      "position": [
+       2.52,
+       3.42,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71238898038469
+      ]
+     },
+     "dining_chair_68_3": {
+      "position": [
+       3.28,
+       3.42,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71238898038469
+      ]
+     },
+     "dining_chair_68_4": {
+      "position": [
+       1.76,
+       1.46,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "dining_chair_68_5": {
+      "position": [
+       2.52,
+       1.46,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "dining_chair_68_6": {
+      "position": [
+       3.28,
+       1.46,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "sideboard_29": {
+      "position": [
+       0.23,
+       2.44,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4": {
+      "position": [
+       0.6,
+       0.6,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "valid": true,
+    "blocking": {}
+   },
+   {
+    "label": "variant 1 final",
+    "variant": 1,
+    "layout": {
+     "dining_table_502": {
+      "position": [
+       2.135,
+       2.2,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "dining_chair_68_1": {
+      "position": [
+       1.435,
+       3.07,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71238898038469
+      ]
+     },
+     "dining_chair_68_2": {
+      "position": [
+       2.135,
+       3.07,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71238898038469
+      ]
+     },
+     "dining_chair_68_3": {
+      "position": [
+       2.835,
+       3.07,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       4.71238898038469
+      ]
+     },
+     "dining_chair_68_4": {
+      "position": [
+       1.435,
+       1.33,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "dining_chair_68_5": {
+      "position": [
+       2.135,
+       1.33,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "dining_chair_68_6": {
+      "position": [
+       2.835,
+       1.33,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "sideboard_29": {
+      "position": [
+       0.23,
+       2.2,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "decor_0945418d-13aa-4ade-8e52-7b38f3e1daff": {
+      "position": [
+       3.7,
+       0.6,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "valid": true,
+    "blocking": {}
+   },
+   {
+    "label": "variant 2 final",
+    "variant": 2,
+    "layout": {
+     "dining_table_502": {
+      "position": [
+       2.0,
+       2.5,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "sideboard_1": {
+      "position": [
+       2.0,
+       0.23,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       1.5707963267948966
+      ]
+     },
+     "dining_chair_667_1": {
+      "position": [
+       1.105,
+       1.79,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_667_2": {
+      "position": [
+       1.105,
+       2.5,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_667_3": {
+      "position": [
+       1.105,
+       3.21,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     },
+     "dining_chair_667_4": {
+      "position": [
+       2.895,
+       1.79,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.141592653589793
+      ]
+     },
+     "dining_chair_667_5": {
+      "position": [
+       2.895,
+       2.5,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.141592653589793
+      ]
+     },
+     "dining_chair_667_6": {
+      "position": [
+       2.895,
+       3.21,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       3.141592653589793
+      ]
+     },
+     "decor_0945418d-13aa-4ade-8e52-7b38f3e1daff": {
+      "position": [
+       0.545,
+       0.485,
+       0.0
+      ],
+      "rotation": [
+       0.0,
+       0.0,
+       0.0
+      ]
+     }
+    },
+    "valid": true,
+    "blocking": {}
+   }
+  ]
+ }
+]

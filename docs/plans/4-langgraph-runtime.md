@@ -122,6 +122,9 @@ Deliberate rule changes, recorded as #1 requires:
   cannot count against the budget. This follows the phase 2 rule that unknown
   values cannot satisfy strict requirements. Design-only decor stays eligible
   and counts zero.
+- TVs are the exception: their prices never count toward the budget, and no
+  prepared TV has a price. TV-only slots skip the known-price and price filters,
+  and TVs search in their own slot, apart from their media supports.
 - No fit confirmation. Today the flow can pause to ask the user to accept furniture
   that overcrowds the room (`src/nodes/asset_selection/agent.py:80`,
   `src/nodes/asset_selection/fit.py:455`). Phase 3 never asks. It makes the fit
@@ -346,18 +349,21 @@ module's imports require. If porting needs another helper, add a row here.
 | `pipeline/requirements.txt` (proposed) | Create | `langgraph>=1.2`, `fastapi`, `uvicorn`, `google-genai`, `psycopg[binary]`, `pgvector`, `shapely`, `numpy`, `pydantic`, and `python-dotenv`. Verify the versions at install. | Runtime dependencies. |
 | [pipeline/README.md](../../pipeline/README.md) | Edit | Add the run command, environment variables (`GEMINI_API_KEY`, `LOCAL_CONNECTION_STRING`, `LLM_DESIGN_MODEL`), and run-record location. | Describes how to run the service. |
 | [product-data/tests/test_search_assets.py](../../product-data/tests/test_search_assets.py) | Edit | Replace the fixed `LIVING_ROOM_SLOTS` with the slots the phase 3 slot planner returns for the same request. | The slot search tests then check the searches the runtime runs. |
-| `pipeline/app/rules/layout/analysis.py` (proposed) | Create | Port `core/layout/analysis.py`. | Layout findings by level (P0, P1, P2). |
+| `pipeline/app/rules/layout/analysis.py` (proposed) | Create | Port `core/layout/analysis.py`, plus the final check from `nodes/render_scene.py` (`validate_fresh_render_manifest` and the exactly-once check). | Layout findings by level (P0, P1, P2). |
 | `pipeline/app/rules/layout/validation_functional.py` (proposed) | Create | Port `core/layout/validation_functional.py`. | Access and function checks. |
 | `pipeline/app/rules/layout/validation_geometry.py` (proposed) | Create | Port `core/layout/validation_geometry.py`. | Overlap, boundary, and opening checks. |
 | `pipeline/app/rules/layout/relations.py` (proposed) | Create | Port `core/layout/relations.py`. Import the placement mode from `rules/placement_mode.py`. | Furniture relationship checks. |
-| `pipeline/app/rules/layout/metrics.py` (proposed) | Create | Port `core/layout/metrics.py`. | Measurements used by the checks. |
+| `pipeline/app/rules/layout/metrics.py` (proposed) | Create | Port `core/layout/metrics.py`, plus `_has_blocking_solver_issues` from `nodes/layout_solver/common.py`. | Measurements used by the checks. |
 | `pipeline/app/rules/layout/dining.py` (proposed) | Create | Port `core/layout/dining.py`. | Dining chair access. |
 | `pipeline/app/rules/layout/comfort.py` (proposed) | Create | Port `core/layout/comfort.py`. | Sofa and table spacing. |
 | `pipeline/app/rules/layout/bedroom.py` (proposed) | Create | Port `core/layout/bedroom.py`. | Bed access. |
 | `pipeline/app/rules/layout/studio.py` (proposed) | Create | Port `core/layout/studio.py`. Import the placement mode from `rules/placement_mode.py`. | Studio group fit. |
 | `pipeline/app/rules/layout/constants.py` (proposed) | Create | Port `core/layout/constants.py`. | Levels and critical P2 findings. |
-| `pipeline/app/rules/layout/normalization.py` (proposed) | Create | Port `core/layout/normalization.py`. | Wall snapping, rug fit, and heights. |
+| `pipeline/app/rules/layout/normalization.py` (proposed) | Create | Port `core/layout/normalization.py` without the edit-scope `frozen_uids`, plus the placement cleanup from `nodes/layout_generation/initial_flow.py` (exactly-once check, wall-aligned rotation snap, wall and ceiling heights). | Wall snapping, rug fit, and heights. |
+| `pipeline/app/rules/layout/formatting.py` (proposed) | Create | Port `core/layout/formatting.py`. | Measured findings and poses as text for the correction prompt. |
 | `pipeline/app/rules/geometry/primitives.py` (proposed) | Create | Port `core/geometry/primitives.py`. | Footprint geometry. |
+| `pipeline/app/rules/geometry/living_group.py` (proposed) | Create | Port `core/geometry/living_group.py`. | Canonical living-group footprints used by selection preflight. |
+| `pipeline/app/rules/geometry/candidates.py` (proposed) | Create | Port only the support-surface helpers of `core/geometry/candidates.py`. | Tabletop support checks used by selection preflight. |
 | `pipeline/app/rules/door_geometry.py` (proposed) | Create | Port `core/door_geometry.py`. | Door swing and clearance zones. |
 | `pipeline/app/rules/protected_paths.py` (proposed) | Create | Port `core/protected_paths.py`. | Protected routes (P1). |
 | `pipeline/app/rules/categories.py` (proposed) | Create | Port `core/categories.py`. | Category keyword matching. |
@@ -377,7 +383,7 @@ module's imports require. If porting needs another helper, add a row here.
 | `pipeline/app/rules/selection/constants.py` (proposed) | Create | Port `nodes/asset_selection/constants.py`. | `BUDGET_FLEX_PCT` and required roles. |
 | `pipeline/app/rules/selection/fit.py` (proposed) | Create | Port `nodes/asset_selection/fit.py`, keeping the automatic-continue guidance and the `use_recommendation` count targets. Drop the helpers that pause to ask the user (`_fit_confirmation_from_warning`, `_should_defer_failed_selection_to_fit_confirmation`). | Physical fit checks and the two automatic fit steps. |
 | `pipeline/app/rules/selection/preflight.py` (proposed) | Create | Port the fresh-design parts of `nodes/asset_selection/preflight.py`. Take the intent as input instead of calling the model. | Required items and room checks. |
-| `pipeline/app/rules/selection/catalog.py` (proposed) | Create | Port `nodes/asset_selection/catalog.py` without the Supabase loader. | Candidate lookups used by validation. |
+| `pipeline/app/rules/selection/catalog.py` (proposed) | Create | Port `nodes/asset_selection/catalog.py` without the Supabase loader, plus `total_selection_cost` from `core/state_helpers.py` and `_filter_oversized_seating` from `nodes/asset_selection/revision.py`. | Candidate lookups used by validation. |
 
 ## Acceptance criteria and verification
 

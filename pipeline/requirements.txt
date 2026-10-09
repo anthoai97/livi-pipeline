@@ -1,0 +1,15 @@
+langgraph>=1.2
+fastapi>=0.139
+uvicorn>=0.51
+google-genai>=2.12
+httpx>=0.28
+anyio>=4.14
+psycopg[binary]>=3.3
+pgvector>=0.5
+shapely>=2.1
+numpy>=2.5
+pydantic>=2.13
+python-dotenv>=1.2
+# product-data/src/search_assets.py imports embed_assets, which needs Pillow.
+pillow>=12.3
+pytest>=8.4

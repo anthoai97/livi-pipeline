@@ -136,6 +136,48 @@ Slow calls get a duplicate after 8 s. Reuse rate 0.5. 12 runs.
   even across the short side. Lamp, floor-lamp, and rug findings are gone. The
   one failure was again a living-room selection that failed its fit check.
 
+## Benchmark review
+
+`pipeline/scripts/review.py` renders each variant's top-down plan and asks
+`gpt-6.1-sol` (medium effort, through the proxy) to score selection and layout
+from 1 to 5. Two benchmarks were reviewed: before and after the review fixes
+(requested TV retrieval, solver fit check, dining chairs, catalog prices and
+placement).
+
+| Run | Median | Max | Valid layouts | Under 60 s |
+| --- | ---: | ---: | ---: | ---: |
+| Before the review fixes | 29.1 | 93.2 | 33 of 36 | 9 |
+| After the review fixes | 22.6 | 45.1 | 36 of 36 | 12 |
+
+| Criterion | Before | After |
+| --- | ---: | ---: |
+| prompt_match | 3.73 | 4.28 |
+| style_coherence | 4.58 | 4.44 |
+| budget_use | 3.21 | 3.00 |
+| completeness | 3.12 | 3.53 |
+| scale_fit | 4.09 | 4.19 |
+| circulation | 4.21 | 4.25 |
+| functional_grouping | 3.55 | 3.81 |
+| space_use | 3.39 | 3.44 |
+| focal_point | 3.91 | 4.11 |
+| overall | 3.27 | 3.36 |
+| distinctness | 3.45 | 3.50 |
+
+Overall by room: living 3.00 to 3.22 (prompt match 3.0 to 5.0, the TV now
+appears), dining 3.56 to 4.00 (functional grouping 5.0), bedroom 3.44 to 3.22,
+and studio 3.00 to 3.00.
+
+Problems still open after the fixes:
+- A bedroom variant drops its requested nightstands and lamps. The first turn
+  fails on budget plus a lamp-to-nightstand fit check, and the capped step then
+  removes the requested items.
+- First selections often exceed the 110% allowance, which costs extra turns.
+  The reviewer also scores 100 to 110% of budget as over budget.
+- In studios, the TV is 4.4 to 6 m from the sofa, with the dining area in the
+  viewing line.
+- Smaller: an accent chair 0.30 m from the coffee table, a tall bookcase in
+  front of a window, and no dining lighting selected.
+
 ## Outcome
 
 The 60-second target is not met. The best valid setup so far (escalation) has

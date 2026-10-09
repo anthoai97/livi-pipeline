@@ -218,7 +218,7 @@ def _requested_role_validation_errors(count_guidance: dict[str, Any]) -> list[st
         errors.append(
             f"{REQUESTED_ROLE_PREFIX}: User requested {requested} {normalized}; "
             f"selected {selected}.{substitute_text} Add the requested role or "
-            "explain a valid substitute in fit_satisfaction."
+            "select a valid substitute from the requested item's slot."
         )
     return errors
 

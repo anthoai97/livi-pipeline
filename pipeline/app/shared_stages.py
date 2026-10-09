@@ -18,6 +18,7 @@ From `ctx` (see app.run.StageContext):
 from __future__ import annotations
 
 import asyncio
+from itertools import zip_longest
 from typing import TYPE_CHECKING, Any, Literal
 
 from prepare_assets import Color, Material, Style
@@ -256,8 +257,11 @@ async def room(state: PipelineState, ctx: StageContext) -> PipelineState:
 
 # --- retrieve --------------------------------------------------------------
 
+# Each slot's pool holds up to FETCH eligible products. Rank deals each variant up
+# to KEEP of them in embedding order, or up to RANKED_KEEP in Jev's order.
 FETCH = 30
 KEEP = {"requested": 10, "required": 10, "optional": 6, "decor": 4}
+RANKED_KEEP = {"requested": 6, "required": 6, "optional": 4, "decor": 3}
 DECOR_CATEGORIES = ("planter", "sculpture", "floor_mirror", "wall_mirror")
 _ATTRIBUTE_KEYS = ("colors", "styles", "materials")
 # Requested-item limits a slot carries: sizes in metres, then strict prepared attributes.
@@ -377,10 +381,12 @@ def plan_slots(intent: Record, room: Record, budget: float) -> list[Record]:
 def slot_filters(slot: Record) -> Record:
     """search_assets arguments for a slot.
 
-    Rug sizes follow the model axes, so they are checked after the search. TV-only
-    slots have no price filters, because TV prices never count toward the budget.
+    Each category fetches up to FETCH products, so one category cannot crowd out
+    the others. A design-only slot searches only design-only products. Rug sizes
+    follow the model axes, so they are checked after the search. TV-only slots have
+    no price filters, because TV prices never count toward the budget.
     """
-    filters: Record = {"limit": FETCH, "categories": slot["categories"]}
+    filters: Record = {"limit": FETCH, "categories": slot["categories"], "per_category": True, "design_only": slot["design_only"]}
     if not all(normalize_category(category) in BUDGET_EXCLUDED_CATEGORIES for category in slot["categories"]):
         filters.update(known_price=True, max_price=slot["max_price"])
     limits = slot["limits"]
@@ -394,17 +400,27 @@ def _orientation_free(slot: Record) -> bool:
     return any(normalize_category(category) in _ORIENTATION_FREE_CATEGORIES for category in slot["categories"])
 
 
+def merge_categories(rows: list[Record]) -> list[Record]:
+    """Interleave rows round-robin across canonical categories, each in distance order.
+
+    The first category is the one with the nearest row.
+    """
+    groups: dict[str, list[Record]] = {}
+    for row in rows:
+        groups.setdefault(normalize_category(row["category"]), []).append(row)
+    return [row for turn in zip_longest(*groups.values()) for row in turn if row is not None]
+
+
 def keep_slot(slot: Record, rows: list[Record], room: Record) -> list[Record]:
-    """Checks after the search, then the keep size.
+    """Merge categories, apply the checks after the search, and keep up to FETCH.
 
     Drops products that fit the floor in neither orientation, products outside the
     requested sizes (rugs in either orientation), other brands when a brand is strict,
-    purchasable products in a design-only slot, and products the room type excludes.
-    Preferred brands move to the front.
+    and products the room type excludes. Preferred brands move to the front.
     """
     width, depth = room["room_area"]
     kept = []
-    for row in rows:
+    for row in merge_categories(rows):
         asset = catalog_asset(row)
         w, d = asset["width"], asset["depth"]
         if not ((w <= width and d <= depth) or (d <= width and w <= depth)):
@@ -413,22 +429,21 @@ def keep_slot(slot: Record, rows: list[Record], room: Record) -> list[Record]:
             continue
         if slot["strict_brands"] and row.get("is_purchasable") and not _asset_matches_brand_preferences(row, slot["strict_brands"]):
             continue
-        if slot["design_only"] and row.get("is_purchasable") is not False:
-            continue
         if not asset_is_eligible_for_room(row, room["room_type"]):
             continue
         kept.append(row)
     if slot["preferred_brands"]:
         kept.sort(key=lambda row: not _asset_matches_brand_preferences(row, slot["preferred_brands"]))
-    return kept[: KEEP[slot["kind"]]]
+    return kept[:FETCH]
 
 
 async def retrieve(state: PipelineState, ctx: StageContext) -> PipelineState:
-    """Plan the slots and run one filtered `search_assets` call per slot, all at once.
+    """Plan the slots and run one embedding and one per-category `search_assets` call per slot, all at once.
 
     Reads: `request`, `intent`, `room`.
     Returns: `slots` (planned slots with id, role, count, descriptors, and a `gap`
-    flag) and `pool` (eligible candidates per slot id). Calls
+    flag) and `pool` (up to FETCH eligible candidates per slot id, categories
+    merged round-robin, preferred brands first, not yet cut to a keep size). Calls
     `ctx.run.record_slot(slot_id, candidates, gap)` for every slot.
     """
     request, intent, room_context = state["request"], state["intent"], state["room"]

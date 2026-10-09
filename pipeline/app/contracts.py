@@ -20,12 +20,15 @@ NODE_NAMES = {
     "interpret": "interpret",
     "room": "extract_room",
     "retrieve": "rag_scope_assets",
+    "rank": "select_asset_intent",
     "select": "select_asset_intent",
     "place": "layout_initial",
+    "repair": "layout_fix",
     "correct": "layout_fix",
+    "refine": "layout_refine",
     "validate": "render_scene",
 }
-NODES = list(NODE_NAMES.values())
+NODES = list(dict.fromkeys(NODE_NAMES.values()))
 
 
 class PipelineRequest(BaseModel):

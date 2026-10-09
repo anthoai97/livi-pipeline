@@ -63,19 +63,44 @@ def _counts(response: types.GenerateContentResponse | None) -> dict[str, int]:
     )
 
 
-class GeminiModel:
-    """ModelClient backed by google-genai. Tests pass a fake `client`."""
+def stage_models(value: str) -> dict[str, tuple[str, types.ThinkingLevel]]:
+    """Parse LLM_STAGE_MODELS, such as "place=gemini-3.5-flash-lite:minimal,correct=gemini-3.5-flash-lite:minimal",
+    into the model and thinking level per stage. The level defaults to low."""
+    models = {}
+    for entry in filter(None, (part.strip() for part in value.split(","))):
+        stage, _, spec = entry.partition("=")
+        model, _, level = spec.partition(":")
+        if not stage.strip() or not model.strip():
+            raise ValueError(f"LLM_STAGE_MODELS entry {entry!r} must look like stage=model or stage=model:level")
+        try:
+            models[stage.strip()] = (model.strip(), types.ThinkingLevel[(level.strip() or "low").upper()])
+        except KeyError:
+            raise ValueError(f"LLM_STAGE_MODELS entry {entry!r} has an unknown thinking level") from None
+    return models
 
-    def __init__(self, client: genai.Client, model: str | None = None):
+
+class GeminiModel:
+    """ModelClient backed by google-genai. Tests pass a fake `client`.
+
+    Stages listed in LLM_STAGE_MODELS use their own model and thinking level; the
+    rest use LLM_DESIGN_MODEL at low thinking. A call can pass `model_key` to use
+    another entry, such as `correct_escalate`.
+    """
+
+    def __init__(self, client: genai.Client, model: str | None = None, stages: str | None = None):
         self.client = client
         self.model = model or os.environ.get("LLM_DESIGN_MODEL") or DEFAULT_MODEL
+        self.stages = stage_models(stages if stages is not None else os.environ.get("LLM_STAGE_MODELS", ""))
 
-    async def generate(self, ctx: StageContext, schema: type[M], contents: str, *, system: str | None = None) -> M:
+    async def generate(
+        self, ctx: StageContext, schema: type[M], contents: str, *, system: str | None = None, model_key: str | None = None
+    ) -> M:
+        model, level = self.stages.get(model_key or ctx.stage, (self.model, types.ThinkingLevel.LOW))
         config = types.GenerateContentConfig(
             system_instruction=system,
             response_mime_type="application/json",
             response_json_schema=schema.model_json_schema(),
-            thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW),
+            thinking_config=types.ThinkingConfig(thinking_level=level),
         )
         counter = [0]
         token = _attempts.set(counter)
@@ -83,7 +108,7 @@ class GeminiModel:
         response: types.GenerateContentResponse | None = None
         error: str | None = "cancelled"
         try:
-            response = await self.client.aio.models.generate_content(model=self.model, contents=contents, config=config)
+            response = await self.client.aio.models.generate_content(model=model, contents=contents, config=config)
             result = schema.model_validate_json(response.text or "")
             error = None
             return result
@@ -96,10 +121,10 @@ class GeminiModel:
         finally:
             _attempts.reset(token)
             counts = _counts(response)
-            resolved = (response.model_version if response is not None else None) or self.model
+            resolved = (response.model_version if response is not None else None) or model
             cost, _ = estimate_cost(resolved, counts)
             if cost is None:
-                cost, _ = estimate_cost(self.model, counts)
+                cost, _ = estimate_cost(model, counts)
             ctx.run.record_model_call(
                 ctx,
                 model=resolved,

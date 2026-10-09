@@ -7,7 +7,7 @@ run inside the test transaction and are rolled back.
 Slot tests run one search per slot that the pipeline's slot planner
 (pipeline/app/shared_stages.py) plans for a living-room request. They embed each
 slot's search text with Gemini, so they need GEMINI_API_KEY, and compare each
-result with a brute-force nearest search over all stored vectors.
+result with a brute-force nearest search over all stored vectors, per category.
 
 Text query tests embed what a shopper might type, search it within its
 categories, and score the top results for the named attributes and duplicates.
@@ -38,7 +38,8 @@ load_dotenv(ROOT.parent / ".env")
 
 from app.rules.planner.intent_packet import coerce_intent_packet
 from app.rules.planner.room_facts import build_room_context
-from app.shared_stages import FETCH, KEEP, plan_slots
+from app.rules.planner.taxonomy import normalize_category
+from app.shared_stages import FETCH, KEEP, merge_categories, plan_slots
 from app.shared_stages import slot_filters as planned_filters
 from search_assets import embed_query, search_assets
 
@@ -61,7 +62,7 @@ INTENT = {
 }
 ROOM_AREA = (4.5, 5.5)
 ROOM_DOORS = [{"center": [2.25, 0.0], "width": 0.9, "depth": 0.05}]
-FILTER_KEYS = ("categories", "known_price", "max_price", "max_width_m", "max_depth_m", "max_height_m", "colors", "styles", "materials")
+FILTER_KEYS = ("categories", "per_category", "design_only", "known_price", "max_price", "max_width_m", "max_depth_m", "max_height_m", "colors", "styles", "materials")
 
 
 def planned_slots() -> list[dict]:
@@ -164,6 +165,7 @@ def slot_matches(row: dict, slot: dict) -> bool:
     return (
         row["category"] in slot["categories"]
         and placeable(row)
+        and (not slot.get("design_only") or row["is_purchasable"] is False)
         and (
             limit is None
             or row["is_purchasable"] is False
@@ -175,10 +177,8 @@ def slot_matches(row: dict, slot: dict) -> bool:
 
 
 def keep_slot(slot: dict, rows: list[dict]) -> list[dict]:
-    """The check after the search that needs no room geometry, then the keep size."""
-    if slot.get("design_only"):
-        rows = [row for row in rows if row["is_purchasable"] is False]
-    return rows[:KEEP[slot["kind"]]]
+    """The pipeline's category merge, then the keep size a variant uses without Jev ranking."""
+    return merge_categories(rows)[:KEEP[slot["kind"]]]
 
 
 def nearest(catalog: list[dict], vector: list[float], slot: dict) -> list[tuple[float, dict]]:
@@ -214,17 +214,37 @@ def search_slot(dsn: str, slot: dict, vector: list[float]) -> list[dict]:
         return search_assets(connection, vector, **slot_filters(slot))
 
 
+def by_category(expected: list[tuple[float, dict]]) -> dict[str, list[tuple[float, dict]]]:
+    groups: dict[str, list[tuple[float, dict]]] = {}
+    for similarity, row in expected:
+        groups.setdefault(row["category"], []).append((similarity, row))
+    return groups
+
+
+def fetched(expected: list[tuple[float, dict]]) -> int:
+    """How many products a per-category search returns: up to FETCH from each category."""
+    return sum(min(FETCH, len(group)) for group in by_category(expected).values())
+
+
 def same_nearest(results: list[dict], expected: list[tuple[float, dict]]) -> bool:
-    """True when results are the expected nearest products. Exact ties at the cut may swap."""
-    if len(results) != min(FETCH, len(expected)):
+    """True when results are the expected nearest products of each category, in distance order.
+
+    Exact ties at a category's cut may swap.
+    """
+    similarities = [row["similarity"] for row in results]
+    if len(results) != fetched(expected) or similarities != sorted(similarities, reverse=True):
         return False
-    if not results:
-        return True
-    cut = expected[len(results) - 1][0]
-    allowed = {row["asset_id"] for similarity, row in expected if similarity >= cut - 1e-6}
-    return all(row["asset_id"] in allowed for row in results) and all(
-        abs(row["similarity"] - similarity) < 1e-4 for row, (similarity, _) in zip(results, expected)
-    )
+    for category, group in by_category(expected).items():
+        found = [row for row in results if row["category"] == category]
+        if not found:
+            continue
+        cut = group[len(found) - 1][0]
+        allowed = {row["asset_id"] for similarity, row in group if similarity >= cut - 1e-6}
+        if not all(row["asset_id"] in allowed for row in found) or not all(
+            abs(row["similarity"] - similarity) < 1e-4 for row, (similarity, _) in zip(found, group)
+        ):
+            return False
+    return True
 
 
 def embed_all(texts: list[str]) -> list[list[float]]:
@@ -362,6 +382,17 @@ def test_unknown_purchase_status_fails_purchase_search(connection):
     assert asset_id not in ids(search_assets(connection, vector, limit=1000, known_price=True, placeable=False))
 
 
+def test_design_only_keeps_only_design_only_products(connection):
+    _, vector = stored_vector(connection, "a.category = 'planter'")
+    expected = ids([
+        row for row in embedded_records(connection)
+        if row["category"] in ("plant", "planter") and row["is_purchasable"] is False and placeable(row)
+    ])
+    results = search_assets(connection, vector, limit=1000, categories=["plant", "planter"], design_only=True)
+    assert expected and ids(results) == expected
+    assert any(row["is_purchasable"] for row in search_assets(connection, vector, limit=1000, categories=["plant", "planter"]))
+
+
 def test_unknown_placement_is_excluded_from_room_design(connection):
     asset_id, vector = stored_vector(connection, "a.placement_type IS NULL")
     assert asset_id in ids(search_assets(connection, vector, limit=5, placeable=False))
@@ -437,12 +468,25 @@ def test_slot_search_returns_the_nearest_matching_products(connection, catalog, 
 
 
 @pytest.mark.parametrize("slot", LIVING_ROOM_SLOTS, ids=[slot["slot"] for slot in LIVING_ROOM_SLOTS])
-def test_slot_keeps_enough_after_the_post_search_check(connection, catalog, slot_vectors, slot):
-    """Every product that passes the slot filters and the check is kept, up to the keep size."""
+def test_slot_keeps_enough_after_merging_categories(connection, catalog, slot_vectors, slot):
+    """Every product that passes the slot filters is kept, up to the keep size."""
     vector = slot_vectors[slot["slot"]]
     results = search_assets(connection, vector, **slot_filters(slot))
     eligible = [row for _, row in nearest(catalog, vector, slot)]
     assert len(keep_slot(slot, results)) == len(keep_slot(slot, eligible))
+
+
+@pytest.mark.parametrize(("slot_id", "wanted"), [("lighting", {"floor_lamp", "table_lamp"}), ("accent_seating", None)])
+def test_multi_category_slot_keeps_several_categories(connection, slot_vectors, slot_id, wanted):
+    """Each category is searched as if alone, and the kept products mix the categories."""
+    slot = next(slot for slot in LIVING_ROOM_SLOTS if slot["slot"] == slot_id)
+    vector = slot_vectors[slot_id]
+    results = search_assets(connection, vector, **slot_filters(slot))
+    for category in slot["categories"]:
+        alone = search_assets(connection, vector, **{**slot_filters(slot), "categories": [category], "per_category": False})
+        assert ids(row for row in results if row["category"] == category) == ids(alone)
+    kept = {normalize_category(row["category"]) for row in keep_slot(slot, results)}
+    assert wanted <= kept if wanted else len(kept) >= 3, kept
 
 
 def test_slot_searches_run_in_parallel(connection, slot_vectors):

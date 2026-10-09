@@ -2,28 +2,36 @@
 
 Each stage is `async def stage(state: VariantState, ctx: StageContext) -> VariantState`.
 It reads variant-state keys and returns a partial update with only the keys it
-owns. `state["shared"]` holds the request, intent, room, slots, and candidate
-pool; it is shared by all variants, so copy a record before changing it.
+owns. `state["shared"]` holds the request, intent, room, and slots; it is shared
+by all variants, so copy a record before changing it. `state["pool"]` holds this
+variant's candidates per slot id, dealt by the shared `rank` stage defined here.
 `state["variant_index"]` and `state["direction"]` identify the variant.
 
 The graph owns the loops and their bounds (app.graph): it counts
-`selection_turns` and `correction_proposals`, repeats select until
-`selection_validation["valid"]` or 8 turns, and repeats correct while
-`blocking_findings` is non-empty, up to 8 proposals. A stage that raises fails
-only its own variant (reason `model_call_failed` for ModelCallError, otherwise
-`variant_error`).
+`selection_turns`, `correction_proposals`, and `reselections`. It repeats select
+until `selection_validation["valid"]` or 4 turns in all; repeats correct while
+`blocking_findings` is non-empty and the last proposal improved (no
+`correction_stalled`), up to 3 proposals per layout; runs refine only when no
+blocking finding remains; and after a failed validate goes back to select once.
+A stage that raises fails only its own variant (reason `model_call_failed` for
+ModelCallError, otherwise `variant_error`). Correct and refine catch their own
+ModelCallError instead: a layout already exists, so they keep it and go on.
 
 `ctx` is the same as for shared stages (see app.shared_stages); model calls made
-through `ctx.generate` are recorded under this stage and variant.
+through `ctx.generate` and Jev calls made through `ctx.ask` are recorded under
+this stage and variant.
 
 Prompts port the legacy fresh-design text (livinit_pipeline
 src/nodes/asset_selection/agent.py, src/nodes/layout_generation/initial_flow.py,
-src/nodes/layout_fix.py). Tool-call wording becomes one JSON response, and the
-revision, seed-image, asset-feedback, and owned-asset branches are dropped.
+src/nodes/layout_fix.py, src/nodes/layout_generation/refine_flow.py). Tool-call
+wording becomes one JSON response, and the revision, seed-image, preview-image,
+asset-feedback, and owned-asset branches are dropped.
 """
 
 from __future__ import annotations
 
+import asyncio
+import itertools
 import json
 import math
 from typing import TYPE_CHECKING, Any, Literal
@@ -39,10 +47,18 @@ from app.rules.categories import (
     is_wall_mounted_asset,
 )
 from app.rules.door_geometry import format_door_for_prompt
+from app.rules.geometry.generation import generate_deterministic_layout_with_report
 from app.rules.layout.analysis import analyze_layout, final_layout_check, findings_by_level
-from app.rules.layout.comfort import comfort_placement_facts
+from app.rules.layout.bedroom import bedroom_layout_measurements
+from app.rules.layout.cleanup import (
+    clear_protected_paths,
+    run_deterministic_living_dining_cleanup,
+    run_deterministic_p0_cleanup,
+    satisfy_sofa_table_gaps,
+)
+from app.rules.layout.comfort import comfort_layout_measurements, comfort_placement_facts
 from app.rules.layout.constants import ISSUE_KEYS_BY_TIER
-from app.rules.layout.dining import dining_chair_table_facts, dining_placement_facts
+from app.rules.layout.dining import dining_chair_table_facts, dining_layout_measurements, dining_placement_facts
 from app.rules.layout.formatting import format_issues, format_layout
 from app.rules.layout.metrics import layout_issue_score
 from app.rules.layout.normalization import layout_from_placements, move_asset_with_supports, normalize_layout
@@ -58,16 +74,17 @@ from app.rules.placement_mode import placement_mode_for_asset
 from app.rules.planner.feasibility_digest import format_feasibility_digest_for_prompt
 from app.rules.planner.intent_packet import format_intent_packet_for_prompt, intent_prompt_text
 from app.rules.planner.room_facts import format_room_facts_for_prompt
+from app.rules.planner.seed_guidance import build_seed_guidance
 from app.rules.planner.taxonomy import normalize_category
-from app.rules.selection.catalog import _price_constraint_category_matches, catalog_asset
-from app.rules.selection.constants import BUDGET_FLEX_PCT
+from app.rules.selection.catalog import _asset_matches_brand_preferences, _price_constraint_category_matches, catalog_asset
+from app.rules.selection.constants import BUDGET_EXCLUDED_CATEGORIES, BUDGET_FLEX_PCT, FIT_ANCHOR_SEATING
 from app.rules.selection.fit import fit_step_guidance
 from app.rules.selection.validation import is_decor_plant, requires_spacious_perimeter_storage, validate_selection
-from app.shared_stages import LIMIT_KEYS
+from app.run import ModelCallError, StageContext, describe
+from app.shared_stages import KEEP, LIMIT_KEYS, RANKED_KEEP
 
 if TYPE_CHECKING:
-    from app.graph import VariantState
-    from app.run import StageContext
+    from app.graph import PipelineState, Shared, VariantState
 
 Record = dict[str, Any]
 
@@ -123,85 +140,169 @@ def direction(variant_index: int, room_type: str) -> str:
     return directive
 
 
+# --- rank --------------------------------------------------------------------
+
+# A slot needs this many eligible products per variant to be dealt; with fewer, the variants share it.
+MIN_DEAL = 2
+_RANK_QUESTION = "Is this product a good choice for the slot, given the brief and the variant direction? Product: {}"
+
+
+def _brief(shared: Shared | PipelineState, variant_direction: str) -> Record:
+    """What Jev reads about the request and one variant."""
+    intent = shared["intent"]
+    return {
+        "request": intent.get("normalized_prompt") or shared["request"].user_intent,
+        "style_hints": intent.get("style_hints") or [],
+        "room_type": shared["room"]["room_type"],
+        "variant_direction": variant_direction.strip() or "none",
+    }
+
+
+def _product_text(record: Record) -> str:
+    """A product's prepared fields as one line for a Jev question."""
+    asset = catalog_asset(record)
+    parts = [f"{record.get('title')} ({normalize_category(record.get('category'))})"]
+    parts += [
+        f"{field}: {', '.join(value) if isinstance(value, list) else value}"
+        for field in ("colors", "materials", "styles")
+        if (value := record.get(field))
+    ]
+    parts.append(f"size: {asset['width']:.2f} x {asset['depth']:.2f} x {asset['height']:.2f} m")
+    if record.get("price") is not None:
+        parts.append(f"price: ${float(record['price']):.0f}")
+    if record.get("description"):
+        parts.append(f"description: {str(record['description'])[:300]}")
+    return "; ".join(parts)
+
+
+async def rank(state: PipelineState, ctx: StageContext) -> PipelineState:
+    """Rank each slot's candidates for every variant direction, then deal them so the variants get mostly different products.
+
+    A shared stage (see app.shared_stages) that runs after retrieve; it lives here
+    beside the variant brief and directions.
+    Reads: `request`, `intent`, `room`, `slots`, `pool`.
+    Returns: `pools`, each variant's candidates per slot id, by variant index; the
+    graph sends each variant its own as `pool`. Each record gets `shared`: true
+    when another variant's pools also hold it, except products from slots too
+    small to deal. With Jev rank on, one Jev request per slot and direction asks
+    one yes/no question per candidate, recorded under that direction's variant
+    index; the direction's order puts preferred brands first, then yes
+    probability, and its list size is RANKED_KEEP. With rank off, or when a
+    request fails, the direction keeps the shared order and KEEP. Slots are dealt
+    in plan order (`_deal`) with `ctx.run.product_reuse_rate`. A slot with fewer
+    than MIN_DEAL products per variant is not dealt: each variant gets its own
+    list, and the run notes it.
+    """
+    slots, pool = state["slots"], state["pool"]
+    count = ctx.run.variant_count
+    briefs = [_brief(state, direction(index, state["request"].room_type)) for index in range(count)]
+
+    async def rank_slot(slot: Record, index: int) -> list[Record] | None:
+        """This direction's order of the slot's candidates, or None without Jev answers."""
+        rows = pool[slot["id"]]
+        if not rows or "rank" not in ctx.run.jev_uses:
+            return None
+        questions = {f"product_{n}": _RANK_QUESTION.format(_product_text(row)) for n, row in enumerate(rows)}
+        answers = await StageContext(ctx.run, ctx.stage, index).ask("rank", {**briefs[index], "slot": slot["label"]}, questions)
+        if answers is None:
+            return None
+        brands = slot["preferred_brands"]
+        order = sorted(
+            range(len(rows)),
+            key=lambda n: (bool(brands) and not _asset_matches_brand_preferences(rows[n], brands), -answers[f"product_{n}"]),
+        )
+        return [rows[n] for n in order]
+
+    ranked = await asyncio.gather(*(rank_slot(slot, index) for slot in slots for index in range(count)))
+    pools: list[dict[str, list[Record]]] = [{} for _ in range(count)]
+    holders: dict[str, set[int]] = {}  # asset id -> the variants whose pools hold it, across slots
+    exclusive: dict[str, int] = {}  # asset id -> the one variant whose pools may hold it
+    exempt: set[str] = set()  # asset ids from slots too small to deal
+    for n, slot in enumerate(slots):
+        rows = pool[slot["id"]]
+        orders = ranked[n * count : (n + 1) * count]
+        rankings = [rows if order is None else order for order in orders]
+        sizes = [(KEEP if order is None else RANKED_KEEP)[slot["kind"]] for order in orders]
+        if len(rows) < MIN_DEAL * count:
+            hands = [ranking[:size] for ranking, size in zip(rankings, sizes, strict=True)]
+            exempt |= {str(row["asset_id"]) for row in rows}
+            if rows:
+                ctx.run.note(f"slot {slot['id']} shared across variants: only {len(rows)} eligible products")
+        else:
+            hands = _deal(rankings, sizes, ctx.run.product_reuse_rate, holders, exclusive)
+        for index, hand in enumerate(hands):
+            pools[index][slot["id"]] = hand
+            for row in hand:
+                holders.setdefault(str(row["asset_id"]), set()).add(index)
+
+    def mark(row: Record) -> Record:
+        uid = str(row["asset_id"])
+        return {**row, "shared": len(holders[uid]) > 1 and uid not in exempt}
+
+    return {"pools": [{slot_id: [mark(row) for row in rows] for slot_id, rows in hands.items()} for hands in pools]}
+
+
+def _deal(
+    rankings: list[list[Record]], sizes: list[int], rate: float, holders: dict[str, set[int]], exclusive: dict[str, int]
+) -> list[list[Record]]:
+    """Deal one slot's ranked candidates to the variants. Updates `holders` and `exclusive`.
+
+    First, in rounds, each variant takes its highest-ranked candidate that no other
+    variant holds, as its exclusive, until it has ceil(size * (1 - rate)) of them;
+    round r starts at variant r. Then each variant fills up to its size with its
+    highest-ranked remaining candidates that are not another variant's exclusive;
+    these may be shared.
+    """
+    count = len(rankings)
+    hands: list[list[Record]] = [[] for _ in rankings]
+
+    def take(index: int, own: bool) -> bool:
+        held = {str(row["asset_id"]) for row in hands[index]}
+        for row in rankings[index]:
+            uid = str(row["asset_id"])
+            if uid not in held and (holders.get(uid, set()) <= {index} if own else exclusive.get(uid, index) == index):
+                hands[index].append(row)
+                holders.setdefault(uid, set()).add(index)
+                if own:
+                    exclusive[uid] = index
+                return True
+        return False
+
+    own_sizes = [math.ceil(round(size * (1 - rate), 9)) for size in sizes]
+    for first in itertools.count():
+        dealt = False
+        for index in ((first + turn) % count for turn in range(count)):
+            if len(hands[index]) < own_sizes[index] and take(index, own=True):
+                dealt = True
+        if not dealt:
+            break
+    for index in range(count):
+        while len(hands[index]) < sizes[index] and take(index, own=False):
+            pass
+    return hands
+
+
 # --- select ------------------------------------------------------------------
 
 # Legacy validate_selection tool arguments (src/nodes/asset_selection/contracts.py)
-# as one JSON response. The repeated uid list is selected_assets itself.
+# as one JSON response, trimmed to the selection and its gap notes. Code derives
+# fit_satisfaction, and code and Jev build the constraint audit.
 
 
 class SelectedAsset(BaseModel):
     uid: str
-    reason: str
     functional_group: Literal["sleeping", "sitting", "dining"] | None = Field(
         default=None,
         description="For studio rugs, side tables and ceiling lights, the functional group this accessory serves. Bedside tables serve sleeping.",
     )
 
 
-class SelectionStrategy(BaseModel):
-    summary: str
-    higher_budget_additions: str
-    lower_budget_savings: str
-    gaps: str
-    conflict: str
-
-
-class SelectedCount(BaseModel):
-    category: str
-    count: int
-    selected_uids: list[str]
-    reason: str | None = None
-
-
-class Substitution(BaseModel):
-    requested_category: str
-    selected_uid: str
-    reason: str
-
-
-class FitSatisfaction(BaseModel):
-    selected_counts: list[SelectedCount] = []
-    substitutions: list[Substitution] = []
-
-
-class AttributeConstraintCheck(BaseModel):
-    source_label: str
-    target_uids: list[str]
-    satisfied_uids: list[str]
-    unsatisfied_uids: list[str]
-    reason: str
-
-
-class ConstraintAudit(BaseModel):
-    passed: bool
-    checked_constraints: list[str]
-    exact_count_violations: list[str] = Field(
-        description="Actual exact-count violations. Must be empty when passed=true; do not put success explanations here."
-    )
-    coordination_violations: list[str] = Field(
-        description=(
-            "Actual style, material, color, or coordination violations. "
-            "Must be empty when passed=true; do not put success explanations here."
-        )
-    )
-    attribute_constraint_checks: list[AttributeConstraintCheck] = Field(
-        description=(
-            "One entry per required asset_attribute_constraint. Infer the constraint's semantic target "
-            "from its source_label and audit every selected UID in that target."
-        )
-    )
-
-
 class Selection(BaseModel):
     selected_assets: list[SelectedAsset]
-    total_cost: float | None = None
-    total_footprint_sqm: float | None = None
-    selection_strategy: SelectionStrategy
-    fit_satisfaction: FitSatisfaction | None = None
-    constraint_audit: ConstraintAudit
+    gaps: str
 
 
-_CSV_HEADER = "uid,category,name,price,width,depth,height,brand,color,style,material,asset_description,mount_type,features,is_decor_item,is_placeholder"
+_CSV_HEADER = "uid,category,name,price,width,depth,height,brand,color,style,material,asset_description,mount_type,features,is_decor_item,is_placeholder,shared"
 
 
 def _csv_text(value: Any, max_len: int | None = None) -> str:
@@ -210,14 +311,14 @@ def _csv_text(value: Any, max_len: int | None = None) -> str:
 
 
 def _csv_row(asset: Record) -> str:
-    """Legacy _assets_to_csv row from a prepared record. Prepared records have no shape or popularity."""
+    """Legacy _assets_to_csv row from a prepared record, plus rank's `shared` mark. Prepared records have no shape or popularity."""
     return (
         f"{asset['uid']},{normalize_category(asset.get('category'))},{_csv_text(asset.get('title'))},"
         f"{asset['price']:.2f},{asset['width']:.3f},{asset['depth']:.3f},{asset['height']:.3f},"
         f"{_csv_text(asset.get('brand'))},{_csv_text(asset.get('colors'))},{_csv_text(asset.get('styles'))},"
         f"{_csv_text(asset.get('materials'))},{_csv_text(asset.get('description'), 120)},"
         f"{_csv_text(asset.get('mount_type'))},{_csv_text(asset.get('features'))},"
-        f"{'true' if asset['is_decor_item'] else 'false'},false"
+        f"{'true' if asset['is_decor_item'] else 'false'},false,{'yes' if asset.get('shared') else 'no'}"
     )
 
 
@@ -285,8 +386,11 @@ def _selection_intent(intent: Record, slots: list[Record]) -> Record:
     }
 
 
-def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None) -> str:
-    """Legacy _build_selection_prompt for a fresh design, plus slot gaps and the previous turn's feedback."""
+def _selection_prompt(
+    state: VariantState, intent: Record, fit_step: str | None, placement_feedback: str | None, reuse_rate: float
+) -> str:
+    """Legacy _build_selection_prompt for a fresh design, plus the reuse limit, slot gaps,
+    placement feedback after a failed layout, and the previous turn's feedback."""
     shared = state["shared"]
     request, room = shared["request"], shared["room"]
     room_width, room_depth = request.room_area
@@ -294,7 +398,7 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None)
     room_type = room["room_type"]
     digest = room["digest"]
     furniture_area = float(room["furniture_area_sqm"])
-    candidates = [{**catalog_asset(record), "uid": str(record["asset_id"])} for record in _candidates(shared["pool"])]
+    candidates = [{**catalog_asset(record), "uid": str(record["asset_id"])} for record in _candidates(state["pool"])]
     density_budget = digest.get("density_budget") or {}
     footprint_floor = float(density_budget.get("sparse_below_load_sqm") or 0.0)
     comfortable_load = float(density_budget.get("comfortable_load_sqm") or 0.0)
@@ -406,6 +510,10 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None)
         if dining else
         "Include at least one fitting rug in every fresh design unless the user explicitly excludes rugs. Rugs do not count toward the density floor, but they must physically fit the room."
     )
+    reuse_guidance = (
+        f"- shared=yes marks products the other variants may also use. At most {reuse_rate:.0%} of your distinct products may be shared ones.\n"
+        if reuse_rate < 1 else ""
+    )
     selection_guidance = build_selection_guidance_block(room_width=room_width, room_depth=room_depth, room_type=room_type)
     fit_decision_guidance = fit_step_guidance(fit_step, room)
     if fit_step == "compact":
@@ -448,14 +556,14 @@ INTENT: {intent_prompt_text(intent, request.user_intent)}
 {fit_decision_guidance}{variant_directive}
 
 CATALOG (grouped by search slot; each slot lists only products that passed its filters):
-{_catalog_block(shared["slots"], shared["pool"])}
+{_catalog_block(shared["slots"], state["pool"])}
 
 STUDIO TV SIZE / VIEWING RANGE FACTS (metres; choose for the requested bed/sofa viewers):
 {json.dumps(media_selection_facts) if media_selection_facts else "Not applicable"}
 {f"For bed/shared viewing across opposing walls, the shorter room span minus a 0.60m combined eye/screen inset gives an approximate {opposed_wall_reference:.2f}m planning reference. Catalog screens whose preferred range reaches it: {wall_viewing_candidates}. Prefer these with a fitting console for a wall-backed arrangement; smaller screens need an intentionally closer arrangement. This is guidance, not a pose or feasibility guarantee." if studio and media_selection_facts else ""}
 
 CONSTRAINTS:
-- Use features as supported product capabilities. mount_type=wall_secured requires floor placement against a wall; wall_mounted and ceiling_mounted require those mounting surfaces. An empty mount_type is unknown.
+{reuse_guidance}- Use features as supported product capabilities. mount_type=wall_secured requires floor placement against a wall; wall_mounted and ceiling_mounted require those mounting surfaces. An empty mount_type is unknown.
 - {required_role_guidance}
 - {rug_guidance}
 {plant_guidance}- Budget is a spending cap, not a target: total cost must stay at or under ${budget * (1 + BUDGET_FLEX_PCT):.2f} (${budget:.2f} + 10% flex). There is no minimum spend — never inflate item prices to use the budget up.
@@ -465,16 +573,16 @@ CONSTRAINTS:
 - Assets with is_decor_item=true are non-shoppable: their zero budget contribution is bookkeeping, not a retail price. is_placeholder=true identifies temporary furniture for layout evaluation; a verified wardrobe placeholder can satisfy clothing storage, but cannot be purchased or count as spending more budget. Other non-shoppable finishing accents remain optional apart from any fresh-design plant requirement stated above. Never describe these items as free products.
 - TVs are normal catalog assets. Treat a TV and its media support as one pair: select neither, or select both a TV and a tv_stand/media_unit/media_console (a console_table is also a valid support). The TV must fit: width <= support width - 0.07m and depth <= max(0.08m, support depth - 0.07m). A TV without a fitting support, or a media support without a TV, fails validation; the server will not add, remove, or replace either asset.
 - TVs are non-sellable: exclude TV prices from every budget total while still including the TV UID in selected_assets and the layout.
-- You MUST return the exact UID list as selected_assets (one entry per unit), matching per-asset reasons, and the final selection strategy; the accepted response is the final result
+- You MUST return the exact UID list as selected_assets (one entry per unit); the accepted response is the final result
 
 STRATEGY:
 - Functional completeness over spend: satisfy the user's requested functions with a coherent set, then stop. Unspent budget is acceptable; never add an item solely because budget remains.
 - The {anchor_name}/anchor piece sets the style direction for all other picks
 - Primary goal: aesthetic coherence — select assets whose brand, color, style, shape, and description match the intent
-- Treat intent-packet brand constraints as strong preferences, not hard requirements. For each needed category, use the preferred brand when a catalog option also satisfies category, fit, budget, and every required attribute. If none does, select the best eligible option from another brand and identify that category-level fallback in selection_strategy.gaps. Never sacrifice a required role, physical fit, budget, or explicit non-brand attribute to preserve the brand preference.
+- Treat intent-packet brand constraints as strong preferences, not hard requirements. For each needed category, use the preferred brand when a catalog option also satisfies category, fit, budget, and every required attribute. If none does, select the best eligible option from another brand and identify that category-level fallback in gaps. Never sacrifice a required role, physical fit, budget, or explicit non-brand attribute to preserve the brand preference.
 - When multiple assets share a category, pick the best style match at a moderate price; reach for premium versions only after every furnishing role the room needs is covered
 - Treat every optional piece as a design decision: include it only when it serves a clear requested function or improves the composition in a specific way. {optional_piece_guidance}
-- If the requested set is below the density floor, prefer one or two substantial, useful additions over several small filler pieces. State the specific purpose of each addition.
+- If the requested set is below the density floor, prefer one or two substantial, useful additions over several small filler pieces.
 - Small room → prioritize essentials; do not add optional extras beyond the room-scale count caps
 - Duplicates are allowed only when the requested or justified count calls for multiples (e.g. 2x accent_chair_5 for a requested pair). Seating multiples must repeat the same UID as a matched set unless the user explicitly asks for variety; for other categories only mix different UIDs if their style, color, and shape are clearly compatible.
 - Honor user-stated counts and non-optional inferred count limits. Optional inferred counts are suggestions, not user requests. Never duplicate a category or add a new category purely to burn budget.
@@ -482,36 +590,26 @@ STRATEGY:
 PROCESS:
 0. Before selecting, estimate total footprint and cost from the catalog CSV. {selection_size_guidance} while staying under the budget cap. Do not drop coherent requested furniture solely to satisfy budget.
 1. Select the {anchor_name} first, then build remaining selection around its style
-2. Before every response, audit the proposed exact UID set against every user-stated exact count and every required style, material, color, and coordination constraint. Brand constraints are advisory and must not make constraint_audit fail. For every other required intent-packet asset_attribute_constraint, add one attribute_constraint_check using its exact source_label. Infer the semantic target from that source_label and the requested-item descriptors, then name every selected UID in that target: for example, "main seating" covers every selected primary and accent seat, and unrelated rugs, lamps, or decor cannot satisfy it. A category=null constraint is not automatically universal; use its natural-language scope. Replace any violating asset before validation, then include the completed constraint_audit with the response. When passed=true, both violation arrays and every unsatisfied_uids array must be empty; put success evidence in checked_constraints and attribute-check reasons, never in a violation array. Include fit_satisfaction when selected UIDs satisfy requested categories through compact substitutes, catalog-label mismatches, or an accepted fit decision.
+2. Before every response, check the proposed exact UID set against every user-stated exact count and every required style, material, color, coordination, and attribute constraint, and replace any violating asset. Brand constraints are advisory.
 3. {invalid_fix_guidance}
 4. Include the complete final payload in every response. When validation succeeds, that accepted response ends selection; there is no later formatting response.
 
 OUTPUT JSON:
 {{
-  "selected_assets": [{{"uid": "...", "reason": "Metadata match: color=X matches Y, style=X matches Y. Purpose: ..."}}],
-  "total_cost": number,
-  "total_footprint_sqm": number,
-  "fit_satisfaction": {{
-    "selected_counts": [{{"category": "requested_category", "count": number, "selected_uids": ["..."], "reason": "Why these selected UIDs satisfy this requested category"}}],
-    "substitutions": [{{"requested_category": "requested_category", "selected_uid": "...", "reason": "Why this UID is an acceptable substitute"}}]
-  }},
-  "selection_strategy": {{
-    "summary": "Overall approach and rationale for the selection",
-    "higher_budget_additions": "Suggested additions if user has more budget (e.g., upgrade sofa, add accent chairs, premium lighting)",
-    "lower_budget_savings": "What to remove or swap for cheaper alternatives if user needs to save money",
-    "gaps": "List each selected item where brand/color/style/shape does NOT match user intent, with reason why (e.g. 'rug_15: another brand because the preferred brand has no fitting rug' or 'rug_15: grey instead of green - no green rugs available'). Use an empty string only if ALL selected items match the intent",
-    "conflict": "If the user's request contains contradicting goals (e.g. 'more open' but also 'add more furniture'), describe the conflict and what tradeoff was made. Use an empty string if there is no conflict."
-  }}
+  "selected_assets": [{{"uid": "..."}}],
+  "gaps": "List each selected item where brand/color/style/shape does NOT match user intent, with reason why (e.g. 'rug_15: another brand because the preferred brand has no fitting rug' or 'rug_15: grey instead of green - no green rugs available'). Use an empty string only if ALL selected items match the intent"
 }}"""
     gaps = _gap_slots(shared["slots"])
     if gaps:
         prompt += (
             "\n\nCATALOG GAPS (no eligible product; these requested items are not required):\n"
             + "\n".join(f'- {slot["label"]} ({slot["category"]})' for slot in gaps)
-            + "\nName each one in selection_strategy.gaps."
+            + "\nName each one in gaps."
         )
+    if placement_feedback:
+        prompt += f"\n\n{placement_feedback}"
     previous = state.get("selection_validation")
-    if previous:
+    if previous and not previous.get("valid"):
         prompt += (
             f"\n\nPREVIOUS SELECTION (turn {state.get('selection_turns', 0)}) FAILED VALIDATION:\n"
             f"{json.dumps([asset['uid'] for asset in state['selection']['selected_assets']])}\n"
@@ -521,43 +619,204 @@ OUTPUT JSON:
     return prompt
 
 
+def _named_items(findings: list[Record], keys: set[str]) -> list[str]:
+    """The instance keys that these findings name anywhere in their values."""
+    named: set[str] = set()
+
+    def walk(value: Any) -> None:
+        if isinstance(value, str) and value in keys:
+            named.add(value)
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    for finding in findings:
+        walk(finding["finding"])
+    return sorted(named)
+
+
+def _placement_feedback(state: VariantState) -> str:
+    """Reselection text after a failed layout: the placed selection, the final check
+    errors, and the items the remaining blocking findings name."""
+    instances = {_key(asset): asset for asset in state["instances"]}
+    named = list(dict.fromkeys(f"{instances[key]['asset_id']} ({instances[key]['category']})"
+                               for key in _named_items(state.get("blocking_findings", []), set(instances))))
+    return (
+        "PREVIOUS SELECTION PASSED VALIDATION, BUT ITS LAYOUT FAILED THE FINAL CHECK:\n"
+        f"{json.dumps([asset['uid'] for asset in state['selection']['selected_assets']])}\n"
+        f"LAYOUT ERRORS:\n{json.dumps(state.get('validation_errors', []))}\n"
+        f"Items named in the remaining blocking findings: {', '.join(named) or 'none'}.\n"
+        "Replace these items with smaller products, or select fewer items, so the room can be laid out. "
+        "Return the complete corrected selection."
+    )
+
+
 def _next_fit_step(state: VariantState) -> str | None:
     """Fit step for this turn: compact from the start when the room fit estimate warns,
-    compact after the first fit failure, capped counts after the next."""
+    compact after the first fit failure or failed layout, capped counts after the next."""
     step = state.get("fit_step")
     previous = state.get("selection_validation")
     if previous is None:
         return "compact" if state["shared"]["room"]["fit_warning"] else None
-    if previous.get("fit_failed"):
+    if previous.get("fit_failed") or (state.get("validation_errors") and "placement_feedback" not in state):
         return "capped" if step else "compact"
     return step
 
 
-async def select(state: VariantState, ctx: StageContext) -> VariantState:
-    """Run one selection turn: one model call, then the ported selection validator.
+def _fit_satisfaction(uids: list[str], slots: list[Record], pool: dict[str, list[Record]]) -> Record:
+    """Selected counts per requested category, from slot membership: a product listed
+    under a requested slot satisfies that slot's category."""
+    category_of: dict[str, str] = {}
+    for slot in slots:
+        if slot["kind"] == "requested":
+            for record in pool[slot["id"]]:
+                category_of.setdefault(str(record["asset_id"]), slot["category"])
+    selected: dict[str, list[str]] = {}
+    for uid in uids:
+        if uid in category_of:
+            selected.setdefault(category_of[uid], []).append(uid)
+    return {"selected_counts": [{"category": category, "count": len(found), "selected_uids": found}
+                                for category, found in selected.items()]}
 
-    Reads: `shared`, `direction`, `selection_turns` (turns already made),
-    `selection` and `selection_validation` from the previous turn as feedback.
-    Returns: `selection` (the model's `selected_assets`, one entry per unit, with
-    gaps in `selection_strategy.gaps`), `selection_validation` (the legacy
-    validator report: `valid: bool`, `errors: list[str]`, ...), `instances`, and
-    `fit_step`. Notes the fit step applied with `ctx.run.note(...)`.
+
+# Anchor categories in priority order, as the selection prompt's anchor rule names them.
+_ANCHOR_CATEGORIES = {
+    "bedroom": ({"bed"},),
+    "dining_room": ({"dining_table"},),
+    "studio": ({"bed"}, FIT_ANCHOR_SEATING, {"dining_table"}),
+}
+# Constraint attribute types a prepared vocabulary filters, and the requested-item field holding the filter.
+_VOCABULARY_FIELDS = {"color": "colors", "style": "styles", "material": "materials", "fabric": "materials"}
+# Starting thresholds, to tune on the benchmark.
+STYLE_VIOLATION_BELOW = 0.3
+ATTRIBUTE_UNSATISFIED_BELOW = 0.5
+_STYLE_QUESTION = "Does this product match the anchor piece's style and palette? Product: {}"
+_ATTRIBUTE_QUESTION = 'This product meets the requirement "{}", or the requirement does not apply to it. Product: {}'
+
+
+def _jev_attribute_constraints(intent: Record) -> list[Record]:
+    """Required non-brand attribute constraints that no prepared-vocabulary filter checks."""
+
+    def filtered(constraint: Record) -> bool:
+        field = _VOCABULARY_FIELDS.get(constraint.get("attribute_type"))
+        return bool(field and constraint.get("category")) and any(
+            item.get(field) and _price_constraint_category_matches(constraint["category"], item["canonical_category"])
+            for item in intent.get("requested_items") or []
+        )
+
+    return [
+        constraint for constraint in intent.get("asset_attribute_constraints") or []
+        if constraint.get("required", True) and constraint.get("attribute_type") != "brand" and not filtered(constraint)
+    ]
+
+
+async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Record, products: dict[str, Record]) -> Record:
+    """The constraint audit validate_selection reads, built by code and one Jev request.
+
+    products: catalog_asset records of the selected products by uid. Counts, sizes,
+    vocabulary attributes, brands, and prices are checked by validate_selection
+    itself. With Jev check on, one request asks whether each other selected
+    product, except TVs and decor plants, matches the anchor's style and palette
+    (below STYLE_VIOLATION_BELOW is a coordination violation), and whether each
+    product a `_jev_attribute_constraints` entry targets meets it (below
+    ATTRIBUTE_UNSATISFIED_BELOW is unsatisfied). A constraint without a category
+    targets every product. Notes a rejection. With check off or failed, the audit
+    holds only code results.
+    """
+    audit: Record = {
+        "passed": True,
+        "checked_constraints": ["counts, sizes, vocabulary attributes, brands, and prices (code)"],
+        "exact_count_violations": [],
+        "coordination_violations": [],
+        "attribute_constraint_checks": [],
+    }
+    if "check" not in ctx.run.jev_uses:
+        return audit
+    categories = {uid: normalize_category(product.get("category")) for uid, product in products.items()}
+    room_type = state["shared"]["room"]["room_type"]
+    anchor = next((uid for group in _ANCHOR_CATEGORIES.get(room_type, (FIT_ANCHOR_SEATING,))
+                   for uid in products if categories[uid] in group), None)
+    styled = [uid for uid in products if anchor and uid != anchor
+              and categories[uid] not in BUDGET_EXCLUDED_CATEGORIES and not is_decor_plant(products[uid])]
+    constraints = [
+        (str(constraint.get("source_label") or constraint.get("label") or constraint.get("value") or "").strip(),
+         [uid for uid in products
+          if not constraint.get("category") or _price_constraint_category_matches(constraint["category"], categories[uid])])
+        for constraint in _jev_attribute_constraints(intent)
+    ]
+    questions = {f"style_{n}": _STYLE_QUESTION.format(_product_text(products[uid])) for n, uid in enumerate(styled)}
+    for i, (label, targets) in enumerate(constraints):
+        questions |= {f"attribute_{i}_{n}": _ATTRIBUTE_QUESTION.format(label, _product_text(products[uid]))
+                      for n, uid in enumerate(targets)}
+    if not questions:
+        return audit
+    answers = await ctx.ask("check", {**_brief(state["shared"], state["direction"]), "anchor": _product_text(products[anchor]) if anchor else "none"}, questions)
+    if answers is None:
+        return audit
+    if anchor:
+        audit["checked_constraints"].append(f"style and palette match to the anchor {anchor} (Jev)")
+    mismatched = {uid: answers[f"style_{n}"] for n, uid in enumerate(styled) if answers[f"style_{n}"] < STYLE_VIOLATION_BELOW}
+    audit["coordination_violations"] = [
+        f"{uid} does not match the style and palette of the anchor {anchor} (Jev yes {yes:.2f}); "
+        "choose a product that coordinates with it"
+        for uid, yes in mismatched.items()
+    ]
+    for i, (label, targets) in enumerate(constraints):
+        failing = [uid for n, uid in enumerate(targets) if answers[f"attribute_{i}_{n}"] < ATTRIBUTE_UNSATISFIED_BELOW]
+        audit["checked_constraints"].append(f'attribute "{label}" (Jev)')
+        audit["attribute_constraint_checks"].append({
+            "source_label": label,
+            "target_uids": targets,
+            "satisfied_uids": [uid for uid in targets if uid not in failing],
+            "unsatisfied_uids": failing,
+        })
+    unsatisfied = [f'"{check["source_label"]}" by {check["unsatisfied_uids"]}'
+                   for check in audit["attribute_constraint_checks"] if check["unsatisfied_uids"]]
+    audit["passed"] = not audit["coordination_violations"] and not unsatisfied
+    if not audit["passed"]:
+        ctx.run.note(f"jev check rejected: style {list(mismatched)}; attributes {'; '.join(unsatisfied) or 'none'}", ctx.variant_index)
+    return audit
+
+
+async def select(state: VariantState, ctx: StageContext) -> VariantState:
+    """Run one selection turn: one model call, the Jev check, then the ported selection validator.
+
+    Reads: `shared`, `pool` (this variant's candidates), `direction`,
+    `selection_turns` (turns already made), `selection` and
+    `selection_validation` from the previous turn as feedback, and after a
+    failed layout `validation_errors`, `blocking_findings`, and `instances`.
+    Returns: `selection` (the model's `selected_assets`, one entry per unit, and
+    `gaps`), `selection_validation` (the legacy validator report: `valid: bool`,
+    `errors: list[str]`, ...), `instances`, `fit_step`, and after a failed
+    layout `placement_feedback`. `fit_satisfaction` comes from slot membership
+    and the constraint audit from `_constraint_audit`. The selection also fails
+    when more than `ctx.run.product_reuse_rate` of its distinct products are
+    marked `shared`. Notes the fit step applied with `ctx.run.note(...)`.
     """
     shared = state["shared"]
     fit_step = _next_fit_step(state)
     turn = state.get("selection_turns", 0) + 1
     if fit_step != state.get("fit_step"):
         ctx.run.note(f"selection turn {turn}: fit step {fit_step}", ctx.variant_index)
+    placement_feedback = state.get("placement_feedback")
+    if placement_feedback is None and state.get("validation_errors"):
+        placement_feedback = _placement_feedback(state)
     intent = _selection_intent(shared["intent"], shared["slots"])
-    response = await ctx.generate(Selection, _selection_prompt(state, intent, fit_step))
+    reuse_rate = ctx.run.product_reuse_rate
+    response = await ctx.generate(Selection, _selection_prompt(state, intent, fit_step, placement_feedback, reuse_rate))
 
-    candidates = _candidates(shared["pool"])
+    candidates = _candidates(state["pool"])
     by_id = {str(record["asset_id"]): record for record in candidates}
     items = [
         {"asset": by_id.get(asset.uid.strip()) or {"asset_id": asset.uid.strip()}, "quantity": 1,
-         "reason": asset.reason, "functional_group": asset.functional_group}
+         "functional_group": asset.functional_group}
         for asset in response.selected_assets
     ]
+    uids = [str(item["asset"]["asset_id"]) for item in items]
+    products = {uid: {**catalog_asset(by_id[uid]), "uid": uid} for uid in uids if uid in by_id}
     gaps = _gap_slots(shared["slots"])
     validation = validate_selection(
         items=items,
@@ -567,40 +826,37 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
         candidates=candidates,
         gaps=[slot["category"] for slot in gaps],
         fit_step=fit_step,
-        fit_satisfaction=response.fit_satisfaction.model_dump() if response.fit_satisfaction else None,
-        constraint_audit=response.constraint_audit.model_dump(),
+        fit_satisfaction=_fit_satisfaction(uids, shared["slots"], state["pool"]),
+        constraint_audit=await _constraint_audit(state, ctx, intent, products),
     )
     instances = validation.pop("instances")
     validation.pop("feedback")
-    selection = response.model_dump()
+    shared_uids = [uid for uid in products if products[uid].get("shared")]
+    limit = math.floor(round(reuse_rate * len(products), 9))
+    if reuse_rate < 1 and len(shared_uids) > limit:
+        validation["valid"] = False
+        validation["errors"].append(
+            f"REUSE LIMIT: {len(shared_uids)} of {len(products)} products are shared with other variants; "
+            f"at most {limit} may be. Replace some with products not marked shared."
+        )
     gap_text = "; ".join(f"{slot['label']}: no eligible catalog product" for slot in gaps)
-    strategy = selection["selection_strategy"]
-    strategy["gaps"] = "; ".join(text for text in (strategy["gaps"].strip(), gap_text) if text)
-    return {
-        "selection": {**selection, "fit_step": fit_step},
+    selection = {
+        "selected_assets": [asset.model_dump() for asset in response.selected_assets],
+        "gaps": "; ".join(text for text in (response.gaps.strip(), gap_text) if text),
+        "fit_step": fit_step,
+    }
+    update: VariantState = {
+        "selection": selection,
         "selection_validation": validation,
         "instances": instances,
         "fit_step": fit_step,
     }
+    if placement_feedback is not None:
+        update["placement_feedback"] = placement_feedback
+    return update
 
 
-# --- place and correct -------------------------------------------------------
-
-
-class Placement(BaseModel):
-    uid: str
-    category: str = ""
-    position: list[float]
-    rotation: list[float]
-    on_top_of: str = Field(
-        default="",
-        description="UID of the parent asset this sits on. Empty string or omitted for floor/wall/ceiling items.",
-    )
-
-
-class InitialLayout(BaseModel):
-    layout_summary: str
-    layout: list[Placement]
+# --- place, repair, correct, and refine ----------------------------------------
 
 
 class Pose(BaseModel):
@@ -625,6 +881,29 @@ def _key(asset: Record) -> str:
     return str(asset.get("instance_key") or asset.get("uid") or "")
 
 
+def _pose_rows(layout: Record) -> list[Record]:
+    return [
+        {"uid": uid, "x": layout[uid]["position"][0], "y": layout[uid]["position"][1],
+         "rotation_z": layout[uid]["rotation"][2], "on_top_of": str(layout[uid].get("on_top_of") or "")}
+        for uid in sorted(layout)
+    ]
+
+
+def _apply_poses(layout: Record, poses: list[Pose], assets: list[Record]) -> Record:
+    """Apply model poses to a layout. Supported items move with their support; unmentioned items keep their pose."""
+    for pose in poses:
+        if pose.uid not in layout or not all(math.isfinite(value) for value in (pose.x, pose.y, pose.rotation_z)):
+            continue
+        layout = move_asset_with_supports(layout, pose.uid, pose.x, pose.y, assets)
+        placement = {**layout[pose.uid], "rotation": [0.0, 0.0, pose.rotation_z]}
+        if pose.on_top_of == "":
+            placement.pop("on_top_of", None)
+        elif pose.on_top_of in layout and pose.on_top_of != pose.uid:
+            placement["on_top_of"] = pose.on_top_of
+        layout = {**layout, pose.uid: placement}
+    return layout
+
+
 def _opening_lines(room: Record) -> list[str]:
     room_area = tuple(room["room_area"])
     lines = [
@@ -647,8 +926,9 @@ def _path_fit_facts(state: VariantState) -> str:
     })
 
 
-def _placement_prompt(state: VariantState) -> str:
-    """Legacy initial-layout prompt for a fresh design, without the seed image and asset-feedback decision."""
+def _placement_prompt(state: VariantState, seeded: Record, skipped: list[Record]) -> str:
+    """Legacy initial-layout prompt for a fresh design, without the seed image and asset-feedback
+    decision, answered with poses for moved and skipped items on the measured rule seed."""
     shared = state["shared"]
     request, intent, room = shared["request"], shared["intent"], shared["room"]
     room_width, room_depth = request.room_area
@@ -698,10 +978,11 @@ def _placement_prompt(state: VariantState) -> str:
         if placement_mode_for_asset(a) == "tabletop" and not is_table_lamp_asset(a.get("category", ""), _key(a))
     ]
     opening_lines = _opening_lines(room)
-    example_uid = _key(assets[0])
-    example_cat = assets[0].get("category", "furniture")
+    skipped_lines = [f"- {entry['uid']} ({entry.get('category', 'unknown')}): {entry.get('reason') or entry.get('status')}"
+                     for entry in skipped]
+    example_uid = skipped[0]["uid"] if skipped else _key(assets[0])
     none = "None"
-    return f"""Generate a 2D furniture layout for this room.
+    return f"""Edit the rule-based seed layout for this room.
 
 INTENT: {intent_prompt_text(intent, request.user_intent)}
 {format_intent_packet_for_prompt(intent)}
@@ -742,7 +1023,7 @@ SELECTION-STAGE PHYSICAL FIT FACTS:
 {_path_fit_facts(state)}
 These describe feasible footprints, not chosen poses. For a living-seating cluster, `as_dimensioned` places its listed width across the zone and depth along it; `quarter_turn` swaps those axes. Plan the complete group in a fitting orientation before calculating coordinates, while also preserving its media axis and all openings.
 
-ASSETS ({len(assets)} items, ALL must be placed):
+ASSETS ({len(assets)} items, ALL must end up placed):
 {chr(10).join(asset_lines)}
 
 WALL-ALIGNED in this set (flush to a wall, never diagonal):
@@ -763,6 +1044,18 @@ TABLE LAMPS in this set:
 TABLETOP DISPLAY OBJECTS in this set:
 {chr(10).join(tabletop_display_lines) if tabletop_display_lines else none}
 
+SEED LAYOUT (rule-based starting poses, normalized; anchors placed first):
+{json.dumps(_pose_rows(seeded["layout"]))}
+
+SEED ASSET BOUNDS:
+{format_layout(seeded["layout"], assets) or none}
+
+SEED FINDINGS (measured on the seed, which lacks the skipped items):
+{format_issues(seeded["issues"]) or none}
+
+SKIPPED BY THE SEED (not placed; return a pose for each):
+{chr(10).join(skipped_lines) if skipped_lines else none}
+
 NODE-LOCAL:
 - Respect mount_type: wall_secured items stand on the floor against a wall; wall_mounted and ceiling_mounted items need the stated mounting surface. Unknown mount_type provides no additional constraint.
 - Use each uid EXACTLY as provided.
@@ -770,15 +1063,12 @@ NODE-LOCAL:
 - If a TV and sofa are selected, plan their shared viewing axis together, facing each other across usable space. Do not assign them independently to convenient perpendicular walls, and do not place the TV across a window to solve another clearance problem.
 - If a sofa and coffee table are selected, place them as one reachable group. Calculate their facing edge-to-edge gap from the rotated footprints, not center distance; target the middle of the specified usable range, then place secondary seating outside both that gap and the entry route.
 - Before returning, check the complete group for overlaps and walking access. If a seat blocks entry, reposition that seat within the group instead of separating the sofa and coffee table to create a passage between them.
+- Move a seed item only to fix a seed finding, to make room for a skipped item, or to satisfy a rule above. The server applies your poses to the seed: every unmentioned item keeps its seed pose and support, and moving a support moves the items on it.
 
 OUTPUT JSON:
-{{
-  "layout_summary": "Briefly identify the clear entry route and, where applicable, the shared sofa/TV viewing axis and measured sofa/table edge gap in meters. Describe the returned poses, not the intended design.",
-  "layout": [{{"uid": "{example_uid}", "category": "{example_cat}", "position": [x, y, z], "rotation": [0, 0, radians], "on_top_of": ""}}]
-}}
+{{"poses": [{{"uid": "{example_uid}", "x": number, "y": number, "rotation_z": radians, "on_top_of": ""}}]}}
 
-The layout array must contain EXACTLY {len(assets)} items — one per asset, no exceptions.
-Order bottom-to-top: rugs → floor furniture → stacked items → wall-mounted."""
+Return a pose for every skipped item and for each seed item you move. Omit unchanged items."""
 
 
 def _measure(state: VariantState, layout: Record) -> VariantState:
@@ -802,34 +1092,92 @@ def _measure(state: VariantState, layout: Record) -> VariantState:
         return [{"level": name, "issue": key, "finding": finding}
                 for name in names for key, found in levels[name].items() for finding in found]
 
+    critical = levels["critical_p2"]
     return {
         "layout": layout,
         "issues": issues,
         "findings": flatten(("P0", "P1", "P2")),
         "blocking_findings": flatten(("P0", "P1", "critical_p2")),
+        "non_blocking_findings": [f for f in flatten(("P2",)) if f["finding"] not in critical.get(f["issue"], [])],
     }
 
 
 async def place(state: VariantState, ctx: StageContext) -> VariantState:
-    """Place every selected instance with one model call, then normalize and analyze.
+    """Build the rule seed layout, then one model call moves seed items and places skipped ones.
 
-    Reads: `shared`, `selection`.
-    Returns: `layout`, `findings`, and `blocking_findings` (P0, P1, and critical P2).
-    A response that does not place every instance exactly once with finite vectors
-    gets one retry with the error; a second malformed response fails the variant.
+    Reads: `shared`, `instances`, `selection_validation`.
+    Returns: `layout`, `issues`, `findings`, `blocking_findings` (P0, P1, and
+    critical P2), and `non_blocking_findings`. The seed
+    (app.rules.geometry.generation) places anchors first and reports the items it
+    skipped; the stage notes them. The model returns poses only for the items it
+    moves and for every skipped item. A response that leaves a skipped item
+    unplaced or has non-finite values gets one retry with the error; a second one
+    fails the variant.
     """
-    prompt = _placement_prompt(state)
-    room_area = tuple(state["shared"]["room"]["room_area"])
+    room, instances = state["shared"]["room"], state["instances"]
+    room_area = tuple(room["room_area"])
+    guidance = build_seed_guidance(
+        room_facts=room["facts"], intent_packet=state["shared"]["intent"],
+        feasibility_digest=room["digest"], selected_assets=instances,
+    )
+    seed, report = generate_deterministic_layout_with_report(
+        instances, room_area, room_vertices=room["room_vertices"], room_doors=room["room_doors"],
+        room_windows=room["room_windows"], planner_guidance=guidance, protected_paths=room["protected_paths"],
+    )
+    skipped = report["skipped"]
+    if skipped:
+        ctx.run.note("seed skipped " + ", ".join(f"{entry['uid']} ({entry['status']})" for entry in skipped), ctx.variant_index)
+    seeded = _measure(state, seed)
+    skipped_uids = {entry["uid"] for entry in skipped}
+    prompt = _placement_prompt(state, seeded, skipped)
 
     async def propose(prompt: str) -> Record:
-        response = await ctx.generate(InitialLayout, prompt, system=LAYOUT_SYSTEM_INSTRUCTION)
-        return layout_from_placements([p.model_dump() for p in response.layout], state["instances"], room_area)
+        response = await ctx.generate(Correction, prompt, system=LAYOUT_SYSTEM_INSTRUCTION)
+        moved = _apply_poses(seeded["layout"], [pose for pose in response.poses if pose.uid not in skipped_uids], instances)
+        placements = [{**placement, "uid": uid} for uid, placement in moved.items()]
+        placements += [
+            {"uid": pose.uid, "position": [pose.x, pose.y, 0.0], "rotation": [0.0, 0.0, pose.rotation_z],
+             "on_top_of": pose.on_top_of or ""}
+            for pose in response.poses if pose.uid in skipped_uids
+        ]
+        return layout_from_placements(placements, instances, room_area)
 
     try:
         layout = await propose(prompt)
     except ValueError as exc:
-        layout = await propose(f"{prompt}\n\nYOUR PREVIOUS LAYOUT WAS REJECTED: {exc}. Return the complete layout again.")
+        layout = await propose(f"{prompt}\n\nYOUR PREVIOUS RESPONSE WAS REJECTED: {exc}. Return the poses again, with one pose for every skipped item.")
     return _measure(state, layout)
+
+
+async def repair(state: VariantState, ctx: StageContext) -> VariantState:
+    """Apply the ported code fixes in order, keeping each only if layout_issue_score improves. No model call.
+
+    Reads: `shared`, `instances`, `layout`, `issues`.
+    Returns: `layout`, `issues`, `findings`, `blocking_findings`, and
+    `non_blocking_findings` after the kept fixes. The steps are the legacy P0
+    cleanup, the living and dining cleanup, protected-path clearing, and the
+    sofa-to-table gap fix. Notes each step's status.
+    """
+    room, instances = state["shared"]["room"], state["instances"]
+    room_area, boundary = tuple(room["room_area"]), room["room_vertices"]
+    openings = {"room_doors": room["room_doors"], "room_windows": room["room_windows"], "protected_paths": room["protected_paths"]}
+    steps = (
+        ("p0 cleanup", lambda layout: run_deterministic_p0_cleanup(layout, instances, room_area, boundary, **openings)),
+        ("living/dining cleanup", lambda layout: run_deterministic_living_dining_cleanup(layout, instances, room_area, boundary, **openings)),
+        ("path clearing", lambda layout: clear_protected_paths(layout, instances, room_area, boundary, **openings, room_type=room["room_type"])),
+        ("sofa-table gap", lambda layout: satisfy_sofa_table_gaps(layout, instances, room_area, boundary, **openings, room_type=room["room_type"])),
+    )
+    current: VariantState = {key: state[key] for key in ("layout", "issues", "findings", "blocking_findings", "non_blocking_findings")}
+    statuses = []
+    for name, step in steps:
+        layout, report = step(current["layout"])
+        candidate = _measure(state, layout)
+        kept = layout_issue_score(candidate["issues"]) < layout_issue_score(current["issues"])
+        if kept:
+            current = candidate
+        statuses.append(f"{name} {report['status']}{', kept' if kept else ''}")
+    ctx.run.note("repair: " + "; ".join(statuses), ctx.variant_index)
+    return current
 
 
 def _correction_prompt(state: VariantState) -> str:
@@ -841,11 +1189,6 @@ def _correction_prompt(state: VariantState) -> str:
     room_type = room["room_type"]
     layout, assets, issues = state["layout"], state["instances"], state["issues"]
     tiers = tuple(tier for tier, keys in ISSUE_KEYS_BY_TIER.items() if any(issues.get(key) for key in keys)) or ("P0", "P1", "P2")
-    rows = [
-        {"uid": uid, "x": layout[uid]["position"][0], "y": layout[uid]["position"][1],
-         "rotation_z": layout[uid]["rotation"][2], "on_top_of": str(layout[uid].get("on_top_of") or "")}
-        for uid in sorted(layout)
-    ]
     asset_lines = [
         f"- {_key(a)} ({a.get('category', 'unknown')}), W×D×H={float(a.get('width') or 0):.2f}×"
         f"{float(a.get('depth') or 0):.2f}×{float(a.get('height') or 0):.2f}m"
@@ -891,7 +1234,7 @@ ACTIVE ASSETS ({len(layout)}):
 {chr(10).join(asset_lines) or "None"}
 
 CURRENT NORMALIZED FULL-CANDIDATE ROWS:
-{json.dumps(rows)}
+{json.dumps(_pose_rows(layout))}
 
 CURRENT ASSET BOUNDS:
 {format_layout(layout, assets)}
@@ -962,29 +1305,189 @@ Submit the controlled edit now as JSON: {{"poses": [{{"uid": "...", "x": number,
 
 
 async def correct(state: VariantState, ctx: StageContext) -> VariantState:
-    """Make one correction proposal: send findings and poses, apply, normalize, analyze.
+    """Make one correction proposal for the findings left after repair: apply, normalize, analyze.
 
-    Reads: `shared`, `selection`, `layout`, `findings`, `blocking_findings`,
-    `correction_proposals` (proposals already made).
-    Returns: `layout`, `findings`, and `blocking_findings` for the best candidate
-    so far (fewest physical findings, then critical function, then the rest).
+    Reads: `shared`, `selection`, `layout`, `issues`, `correction_proposals`
+    (proposals already made).
+    Returns the candidate's `layout` and findings when it improves the score
+    (fewest physical findings, then critical function, then the rest). A proposal
+    that does not improve, or a failed model call (noted, keeping the best layout),
+    sets `correction_escalated` when LLM_STAGE_MODELS has a `correct_escalate`
+    model and this layout has not escalated yet, so the next proposals use that
+    model; otherwise it sets `correction_stalled`, which ends correction.
     """
-    response = await ctx.generate(Correction, _correction_prompt(state), system=LAYOUT_SYSTEM_INSTRUCTION)
-    layout, assets = state["layout"], state["instances"]
-    for pose in response.poses:
-        if pose.uid not in layout or not all(math.isfinite(value) for value in (pose.x, pose.y, pose.rotation_z)):
-            continue
-        layout = move_asset_with_supports(layout, pose.uid, pose.x, pose.y, assets)
-        placement = {**layout[pose.uid], "rotation": [0.0, 0.0, pose.rotation_z]}
-        if pose.on_top_of == "":
-            placement.pop("on_top_of", None)
-        elif pose.on_top_of in layout and pose.on_top_of != pose.uid:
-            placement["on_top_of"] = pose.on_top_of
-        layout = {**layout, pose.uid: placement}
-    candidate = _measure(state, layout)
-    if layout_issue_score(candidate["issues"]) < layout_issue_score(state["issues"]):
-        return candidate
-    return {}
+    escalated = state.get("correction_escalated", False)
+    try:
+        response = await ctx.generate(Correction, _correction_prompt(state), system=LAYOUT_SYSTEM_INSTRUCTION,
+                                      model_key="correct_escalate" if escalated else None)
+    except ModelCallError as exc:
+        ctx.run.note(f"correction call failed, kept the best layout: {describe(exc)}", ctx.variant_index)
+        response = None
+    if response is not None:
+        candidate = _measure(state, _apply_poses(state["layout"], response.poses, state["instances"]))
+        if layout_issue_score(candidate["issues"]) < layout_issue_score(state["issues"]):
+            return candidate
+    if not escalated and "correct_escalate" in ctx.run.model.stages:
+        ctx.run.note(f"correction escalated to {ctx.run.model.stages['correct_escalate'][0]}", ctx.variant_index)
+        return {"correction_escalated": True}
+    return {"correction_stalled": True}
+
+
+def _refine_prompt(state: VariantState) -> str:
+    """Legacy refine prompt (src/nodes/layout_generation/refine_flow.py) as text only:
+    no preview image or quality feedback, answered with poses."""
+    shared = state["shared"]
+    request, room = shared["request"], shared["room"]
+    room_width, room_depth = request.room_area
+    room_area = (room_width, room_depth)
+    room_type = room["room_type"]
+    boundary = room["room_vertices"]
+    layout, assets, issues = state["layout"], state["instances"], state["issues"]
+    tiers = tuple(tier for tier, keys in ISSUE_KEYS_BY_TIER.items() if any(issues.get(key) for key in keys)) or ("P2",)
+    comfort = comfort_layout_measurements(layout, assets, room_type, boundary=boundary)
+    studio = room_type == "studio"
+    studio_access = {
+        "bed_access": bedroom_layout_measurements(layout, assets, boundary, room_area, mixed_groups=True)["beds"],
+        "dining_chair_pullout": dining_layout_measurements(layout, assets, boundary, room_area, mixed_groups=True)["chairs"],
+    } if studio else {}
+    viewing_goal = ""
+    outside_viewers = [row for row in comfort["tv_viewing"] if not row["within_preferred_range"]]
+    if studio and outside_viewers:
+        viewing_goal = "REQUESTED VIEWING COMFORT NEEDS REFINEMENT:\n" + "\n".join(
+            f"- {row['media']} viewed by {row['viewer']} ({row['viewer_group']}): "
+            f"{row['estimated_view_distance_m']:.2f}m, preferred {row['preferred_distance_range_m']}m. "
+            f"{'Increase' if row['estimated_view_distance_m'] < row['preferred_distance_range_m'][0] else 'Reduce'} "
+            f"viewing distance by at least {row['distance_outside_preferred_range_m']:.2f}m."
+            for row in outside_viewers
+        ) + "\nThe layout is not already good for the requested TV use. Propose a feasible material improvement " \
+            "to the worst viewer and then the combined excess. Translate the TV/support or viewers' complete " \
+            "groups closer for an excessive distance, farther apart for a below-minimum distance. For shared viewing adjust " \
+            "the lateral media center between the viewers as well as its distance from the wall; moving only " \
+            "along the existing axis may still leave one viewer distant. Aim inside the preferred ranges " \
+            "where feasible, not merely at a smaller violation. Wall backing is a lower " \
+            "priority than comfortable viewing; an intentional divider may be appropriate. Preserve all access " \
+            "bands and check every viewer. Do not return no changes merely because physical validation passes.\n"
+    floating_supports = [row for row in comfort["media_placement"] if not row["wall_backed"]]
+    if studio and floating_supports:
+        viewing_goal += (
+            "\nFLOATING MEDIA REVIEW: " + json.dumps(floating_supports) + "\n"
+            "Evaluate a wall-backed arrangement of the whole viewing group before accepting a floating console. "
+            "An empty strip behind the console is not a functional zone divider. Preserve comfortable viewing, "
+            "bed headboard support and every service region; if another group obstructs the better arrangement, "
+            "reposition that group's table AND chairs together. A deliberate divider remains acceptable when "
+            "no wall-backed arrangement satisfies these relationships.\n"
+        )
+    return f"""Review this layout after collision fixing.
+
+ORIGINAL DESIGN REQUEST:
+{request.user_intent}
+
+{viewing_goal}
+
+{coordinate_system_block(room_width, room_depth)}
+
+USABLE FLOOR BOUNDARY (all furniture footprints must stay inside this polygon):
+{json.dumps(boundary)}
+
+{build_rules_block(tiers=tiers, include_definitions=True, room_type=room_type)}
+
+DOORS:
+{chr(10).join(format_door_for_prompt(i, door, boundary=boundary, room_area=room_area) for i, door in enumerate(room["room_doors"])) or "None"}
+
+WINDOW GEOMETRY:
+{json.dumps(room["room_windows"]) if room["room_windows"] else "None"}
+
+PROTECTED CIRCULATION PATHS:
+{json.dumps(room["protected_paths"]) if room["protected_paths"] else "None"}
+
+CURRENT LAYOUT:
+{format_layout(layout, assets)}
+
+CURRENT POSES:
+{json.dumps(_pose_rows(layout))}
+
+DINING PLACEMENT FACTS (table-local axes; chair fronts face the occupied edge):
+{json.dumps(dining_placement_facts(assets))}
+Reserve the full table/chairs/pull-out envelope together. Separating intersecting chairs
+is not a repair if it blocks their pull-out; move the editable group when necessary.
+
+CURRENT STUDIO SERVICE REGIONS (keep clear even when there are no existing violations):
+{json.dumps(studio_access) if studio_access else "Not applicable"}
+The regions and allowed center bounds are measured at current poses. Recalculate them
+for any moved group; do not put the TV/support or another group into a clear service region.
+
+VIOLATIONS:
+{format_issues(issues)}
+
+EXACT OVERLAP SEPARATIONS AND USABLE ARTWORK WALL SPANS:
+{json.dumps(overlap_separation_facts(layout, assets, issues.get("overlaps") or []))}
+{json.dumps(wall_mount_placement_facts(layout, assets, boundary, room["room_doors"], room["room_windows"], room_area))}
+
+MEDIA AND RUG COMFORT MEASUREMENTS (advisories yield to access and frozen scope):
+{json.dumps(comfort)}
+
+RULES:
+- Resolve any listed measurable violations first, then make only clear composition wins.
+- Prefer NO changes if the layout is already good. Return {{"poses": []}} when no changes are needed.
+- Output ONLY assets you want to change. Omit everything else.
+- Preserve anchor relationships. Move dependents before anchors whenever possible.
+- Prefer rotation tweaks or very small nudges when no functional relationship is broken and viewing distances are comfortable.
+- In a Studio, reduce the worst intended viewer's distance outside its preferred range, then the combined distance excess. A small move that keeps the same warning can still improve comfort. Evaluate a closer wall-backed group first; use an intentional divider if no usable wall arrangement gives comfortable viewing. A sofa-wall or exposed-console advisory may trade against a clear viewing improvement, but access, support and physical geometry must not worsen. Shared viewing must improve both viewers, not just the sofa.
+- When a listed violation breaks real use, move the needed functional group far enough to repair it; do not leave coffee tables, chairs, desks, media units, or lamps unusable just to keep a tiny move.
+- Do not create new overlaps, doorway violations, or boundary violations.
+- Keep a continuous usable entry route beyond the door swing, not just an empty swing rectangle. A chair or cabinet immediately beyond that rectangle can still block entry; repair its position without breaking the seating group's usable gaps.
+- For sofa ↔ coffee table violations: first reason about a collision-free coffee-table position inside the measured gap range that preserves protected paths. Move only the coffee table when that is sufficient. Move other seating-group assets only when no safe table-only repair exists, and re-check the whole group for overlaps and door, window, and path clearance.
+- Check the proposed sofa/table gap edge-to-edge using rotated footprints, and aim inside the measured range rather than at its rounding boundary. Do not accept a repair that clears circulation by moving the table out of reach.
+- Chairs should face their intended surface or group: task chairs face desks, dining chairs face dining tables, and lounge chairs face the conversation or focal point.
+- Floor lamps should sit beside the seat or surface they serve, not behind seating, in dead corners, or in circulation paths.
+- Choose TV/media support and the requested sofa/bed viewers together on readable focal axes. Prefer a solid wall segment that clears windows and doors without leaving viewers too distant. A Studio divider needs a deliberate zone edge, a considered exposed back and clear routes around it. Keep the console front accessible and dining chair pull-out outside the complete media group. Do not require a bed-only TV to face the sofa.
+- Wall and ceiling mounted heights are normalized automatically; focus on X/Y placement and yaw.
+- If you move a parent asset, stacked children follow automatically.
+
+OUTPUT (JSON):
+{{"poses": [{{"uid": "...", "x": number, "y": number, "rotation_z": number}}]}}"""
+
+
+_REFINE_QUESTION = (
+    "Does this layout need composition fixes, such as chairs not facing their surface, lamps away from "
+    "the seats they serve, a weak TV focal axis, or an uncomfortable viewing distance?"
+)
+REFINE_TRIGGER_AT = 0.5
+
+
+async def refine(state: VariantState, ctx: StageContext) -> VariantState:
+    """One text-only composition pass on a layout without blocking findings.
+
+    Reads: `shared`, `instances`, `layout`, `issues`, `non_blocking_findings`.
+    Runs when REFINEMENT is `always`, or `jev` and one Jev yes/no question (the
+    brief and the non-blocking findings as text) says the layout needs
+    composition fixes; a failed Jev call skips it. One model call returns poses
+    for the items it changes. Returns the refined `layout` and findings, or {}
+    when skipped, rolled back (the score got worse or a blocking finding
+    appeared), or the model call failed. Notes the outcome.
+    """
+    if ctx.run.refinement == "off":
+        return {}
+    if ctx.run.refinement == "jev":
+        findings = [f"{f['issue']}: {json.dumps(f['finding'], sort_keys=True)}" for f in state["non_blocking_findings"]]
+        answers = await ctx.ask("refine", {**_brief(state["shared"], state["direction"]), "non_blocking_findings": findings or ["none"]}, {"refine": _REFINE_QUESTION})
+        if answers is None:
+            return {}
+        if answers["refine"] < REFINE_TRIGGER_AT:
+            ctx.run.note(f"refinement skipped: Jev yes {answers['refine']:.2f}", ctx.variant_index)
+            return {}
+    try:
+        response = await ctx.generate(Correction, _refine_prompt(state), system=LAYOUT_SYSTEM_INSTRUCTION)
+    except ModelCallError as exc:
+        ctx.run.note(f"refinement call failed, kept the layout: {describe(exc)}", ctx.variant_index)
+        return {}
+    candidate = _measure(state, _apply_poses(state["layout"], response.poses, state["instances"]))
+    before, after = layout_issue_score(state["issues"]), layout_issue_score(candidate["issues"])
+    if candidate["blocking_findings"] or after > before:
+        ctx.run.note(f"refinement rolled back: score {list(before)} -> {list(after)}", ctx.variant_index)
+        return {}
+    ctx.run.note(f"refinement applied: {len(response.poses)} poses, score {list(before)} -> {list(after)}", ctx.variant_index)
+    return candidate
 
 
 # --- validate ----------------------------------------------------------------

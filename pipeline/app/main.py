@@ -21,6 +21,7 @@ from psycopg.rows import dict_row
 from app import contracts
 from app.contracts import PipelineRequest
 from app.graph import RUN_DEADLINE_S, VARIANT_COUNT, PipelineGraph, Stages, build_graph
+from app.jev import Jev, jev_client, switches
 from app.llm import GeminiModel, gemini_client
 from app.run import RUNS_DIR, ModelClient, RunContext, describe, json_default
 
@@ -34,6 +35,11 @@ Connect = Callable[[], psycopg.Connection[dict[str, Any]] | None]
 @cache
 def _default_model() -> GeminiModel:
     return GeminiModel(gemini_client(os.environ["GEMINI_API_KEY"]))
+
+
+@cache
+def _default_jev() -> Jev:
+    return Jev(jev_client(os.environ["JEV_API_KEY"]))
 
 
 def _connect() -> psycopg.Connection[dict[str, Any]]:
@@ -158,18 +164,19 @@ def create_app(
     *,
     stages: Stages | None = None,
     model: ModelClient | None = None,
+    jev: Jev | None = None,
     connect: Connect = _connect,
     run_deadline_s: float = RUN_DEADLINE_S,
     heartbeat_s: float = HEARTBEAT_S,
     runs_dir: Path = RUNS_DIR,
 ) -> FastAPI:
-    """Build the app. Tests inject fake stages, a fake model, and no database."""
+    """Build the app. Tests inject fake stages, a fake model, a fake Jev client, and no database."""
     graph = build_graph(stages or Stages())
     app = FastAPI(title="Livinit pipeline")
 
     @app.post("/pipeline")
     async def pipeline(request: PipelineRequest) -> StreamingResponse:
-        run = RunContext(uuid.uuid4().hex, request, model or _default_model(), VARIANT_COUNT)
+        run = RunContext(uuid.uuid4().hex, request, model or _default_model(), VARIANT_COUNT, jev or _default_jev(), **switches())
         return StreamingResponse(
             _stream_run(graph, run, connect, run_deadline_s, heartbeat_s, runs_dir),
             media_type="text/event-stream",

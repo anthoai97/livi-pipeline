@@ -1,0 +1,236 @@
+[
+  {
+    "label": "living_room",
+    "phase_3_run_id": "b5b6ce6e68744dd5850704eaa1e7f085",
+    "geometry": "Door centered on the front wall and windows spaced on the back wall, reconstructed from the recorded counts.",
+    "request": {
+      "user_intent": "A cozy modern living room with a cream sofa, a wooden coffee table, a floor lamp for reading, and a TV for movie nights.",
+      "budget": 5000.0,
+      "room_type": "living_room",
+      "room_area": [
+        5.0,
+        6.0
+      ],
+      "wall_height": 2.7,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          5.0,
+          0.0
+        ],
+        [
+          5.0,
+          6.0
+        ],
+        [
+          0.0,
+          6.0
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            2.5,
+            0.0
+          ],
+          "width": 0.9,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            2.5,
+            6.0
+          ],
+          "width": 1.1,
+          "depth": 0.05,
+          "height": 1.2,
+          "sill_height": 0.9
+        }
+      ]
+    }
+  },
+  {
+    "label": "bedroom",
+    "phase_3_run_id": "af3cb2938a684d91b82ff52460200175",
+    "geometry": "Door centered on the front wall and windows spaced on the back wall, reconstructed from the recorded counts.",
+    "request": {
+      "user_intent": "A calm Scandinavian bedroom with a queen bed, two nightstands with table lamps, and a dresser for clothes.",
+      "budget": 4000.0,
+      "room_type": "bedroom",
+      "room_area": [
+        4.0,
+        4.5
+      ],
+      "wall_height": 2.7,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          4.0,
+          0.0
+        ],
+        [
+          4.0,
+          4.5
+        ],
+        [
+          0.0,
+          4.5
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            2.0,
+            0.0
+          ],
+          "width": 0.9,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            2.0,
+            4.5
+          ],
+          "width": 1.1,
+          "depth": 0.05,
+          "height": 1.2,
+          "sill_height": 0.9
+        }
+      ]
+    }
+  },
+  {
+    "label": "dining_room",
+    "phase_3_run_id": "56cb72b9029549d0a328c60f6d683aa3",
+    "geometry": "Doors and windows from the legacy dining-room template (pipeline/tests/fixtures/legacy_runs.json).",
+    "request": {
+      "user_intent": "A cozy Scandinavian dining room for four with light wood and soft neutral dining chairs. Keep the floor bare and the room uncluttered.",
+      "budget": 5000.0,
+      "room_type": "dining_room",
+      "room_area": [
+        4.2672,
+        4.8768
+      ],
+      "wall_height": 3.3528,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          4.2672,
+          0.0
+        ],
+        [
+          4.2672,
+          4.8768
+        ],
+        [
+          0.0,
+          4.8768
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            1.194816,
+            4.8768
+          ],
+          "width": 0.9,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            3.072384,
+            4.8768
+          ],
+          "width": 1.1,
+          "depth": 0.05,
+          "height": 1.2,
+          "sill_height": 0.9
+        }
+      ]
+    }
+  },
+  {
+    "label": "studio",
+    "phase_3_run_id": "b1005cb4a1524727a82466a9fcf198f3",
+    "geometry": "Door centered on the front wall and windows spaced on the back wall, reconstructed from the recorded counts.",
+    "request": {
+      "user_intent": "A compact modern studio apartment with a bed, a small sofa facing a TV, and a dining table for two.",
+      "budget": 6000.0,
+      "room_type": "studio",
+      "room_area": [
+        5.5,
+        7.0
+      ],
+      "wall_height": 2.7,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          5.5,
+          0.0
+        ],
+        [
+          5.5,
+          7.0
+        ],
+        [
+          0.0,
+          7.0
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            2.75,
+            0.0
+          ],
+          "width": 0.9,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            1.8333,
+            7.0
+          ],
+          "width": 1.1,
+          "depth": 0.05,
+          "height": 1.2,
+          "sill_height": 0.9
+        },
+        {
+          "center": [
+            3.6667,
+            7.0
+          ],
+          "width": 1.1,
+          "depth": 0.05,
+          "height": 1.2,
+          "sill_height": 0.9
+        }
+      ]
+    }
+  }
+]

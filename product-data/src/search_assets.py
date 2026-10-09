@@ -5,7 +5,8 @@ to the prepared fields, and ranks by cosine distance. Returns complete prepared
 records with similarity scores. Unknown values never satisfy a filter. Without
 purchase=True, design-only items pass the price filters because they add nothing
 to the purchase total. Vectors whose text or image URL no longer match the
-prepared record are excluded.
+prepared record are excluded. With per_category=True, the limit applies to each
+category separately.
 """
 
 from __future__ import annotations
@@ -58,12 +59,16 @@ def search_assets(
     materials: list[str] | None = None,
     placeable: bool = True,
     known_price: bool = False,
+    per_category: bool = False,
+    design_only: bool = False,
 ) -> list[dict]:
     """Return the nearest prepared records that pass every exact filter.
 
     placeable requires a 3D model, known placement, and all three dimensions.
     known_price keeps only design-only items and items priced in currency, so
-    every result can be counted against a budget.
+    every result can be counted against a budget. per_category returns up to limit
+    nearest records from each category, still ordered by distance overall.
+    design_only keeps only non-purchasable records.
     """
     if not 1 <= limit <= 1000:
         raise ValueError("limit must be between 1 and 1000")
@@ -102,6 +107,8 @@ def search_assets(
         conditions.append("a.category = ANY(%(categories)s)")
     if purchase:
         conditions.append("a.is_purchasable")
+    if design_only:
+        conditions.append("a.is_purchasable = false")
     if max_price is not None:
         price = "(a.price <= %(max_price)s AND a.currency = %(currency)s)"
         conditions.append(price if purchase else f"({price} OR a.is_purchasable = false)")
@@ -121,17 +128,35 @@ def search_assets(
             " AND a.width_m IS NOT NULL AND a.depth_m IS NOT NULL AND a.height_m IS NOT NULL"
         )
 
-    return connection.execute(
+    if not per_category:
+        return connection.execute(
+            f"""
+            SELECT a.*, 1 - (e.embedding <=> %(vector)s::vector) AS similarity
+            FROM pipeline.asset_embeddings_v2 e
+            JOIN pipeline.pipeline_assets_v2 a USING (asset_id)
+            WHERE {" AND ".join(conditions)}
+            ORDER BY e.embedding <=> %(vector)s::vector
+            LIMIT %(limit)s
+            """,
+            params,
+        ).fetchall()
+    rows = connection.execute(
         f"""
-        SELECT a.*, 1 - (e.embedding <=> %(vector)s::vector) AS similarity
-        FROM pipeline.asset_embeddings_v2 e
-        JOIN pipeline.pipeline_assets_v2 a USING (asset_id)
-        WHERE {" AND ".join(conditions)}
-        ORDER BY e.embedding <=> %(vector)s::vector
-        LIMIT %(limit)s
+        SELECT * FROM (
+            SELECT a.*, 1 - (e.embedding <=> %(vector)s::vector) AS similarity,
+                row_number() OVER (PARTITION BY a.category ORDER BY e.embedding <=> %(vector)s::vector) AS category_rank
+            FROM pipeline.asset_embeddings_v2 e
+            JOIN pipeline.pipeline_assets_v2 a USING (asset_id)
+            WHERE {" AND ".join(conditions)}
+        ) ranked
+        WHERE category_rank <= %(limit)s
+        ORDER BY similarity DESC
         """,
         params,
     ).fetchall()
+    for row in rows:
+        del row["category_rank"]
+    return rows
 
 
 def main() -> None:
@@ -152,6 +177,8 @@ def main() -> None:
     parser.add_argument("--material", action="append")
     parser.add_argument("--include-unplaceable", action="store_true", help="allow products that cannot be placed")
     parser.add_argument("--known-price", action="store_true", help="only design-only or priced products")
+    parser.add_argument("--per-category", action="store_true", help="apply --limit to each category")
+    parser.add_argument("--design-only", action="store_true", help="only design-only products")
     args = parser.parse_args()
 
     local_dsn = os.environ.get("LOCAL_CONNECTION_STRING", "").strip()
@@ -181,6 +208,8 @@ def main() -> None:
             materials=args.material,
             placeable=not args.include_unplaceable,
             known_price=args.known_price,
+            per_category=args.per_category,
+            design_only=args.design_only,
         )
         finished = time.perf_counter()
 

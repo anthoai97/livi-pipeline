@@ -86,7 +86,7 @@ The pipeline automatically continued after a coarse category-size estimate; the 
 Original requested counts: {_format_fit_counts(requested_counts)}
 Keep these requests as the goal and try compact catalog items with their actual dimensions.
 The estimate does not establish that any requested item cannot fit and its recommended counts are not caps.
-Only omit optional furniture when concrete selection or layout constraints require it, and explain the constraint in selection_strategy.gaps.
+Only omit optional furniture when concrete selection or layout constraints require it, and explain the constraint in gaps.
 For bedrooms, preserve the bed and access, then prioritize requested wardrobe, requested TV/support, and requested desk/chair, in that order. These groups are opt-in; do not add a wardrobe that was not requested. Omit a lower-priority group before a higher-priority one and keep each functional group complete.
 All actual footprint, support, budget, and layout checks still apply.
 """
@@ -151,7 +151,7 @@ All actual footprint, support, budget, and layout checks still apply.
             "goal, but choose the most compact catalog item for every slot so the total "
             "footprint stays inside the stated furniture area. If the requested counts cannot "
             "all fit even at the smallest available sizes, drop the lowest-priority requested "
-            "items yourself and say so in selection_strategy.gaps. The server does not trim or "
+            "items yourself and say so in gaps. The server does not trim or "
             "re-add anything - whatever you return is what the room gets."
         )
     )
@@ -168,11 +168,10 @@ Selection target for this run: {_format_fit_counts(target_counts)}
 {reduction_rule}
 A selection that still exceeds the footprint limit fails validation outright; there is no second confirmation step, so bring it inside the limit in this run.
 Use your judgment to choose compact catalog items that satisfy the requested categories and target counts.
-Prefer exact category matches. If a selected item is a clear substitute for a requested category because of its name, description, dimensions, or style, keep it and explain that substitution in the item reason.
+Prefer exact category matches. A product listed under a requested item's slot satisfies that requested category.
 Do not add unrequested furniture categories just to spend budget.
 Include at least one fitting rug unless the user explicitly excluded rugs; rugs do not count toward the density floor.
 For this accepted fit decision, satisfying the target categories and preserving circulation is more important than using the remaining budget.
-Return fit_satisfaction.selected_counts for every requested category you satisfied. Each entry must use the requested category name, the count satisfied, and the selected UIDs that satisfy it. Include substitutions when a selected UID satisfies a different requested category.
 """
 
 def _fit_bucket_for_category(
@@ -337,8 +336,7 @@ def _fit_target_validation_feedback(
             "MISSING FIT TARGET: Accepted fit decision requires "
             f"{target_text}; this validation call is missing {missing_text}. "
             "Select compact catalog items for the missing requested categories. "
-            "If a selected asset is a legitimate compact substitute, include it in "
-            "fit_satisfaction.selected_counts with the requested category and selected_uids."
+            "A product listed under a requested item's slot counts toward that category."
         ],
         "target_counts": target_counts,
         "selected_counts": selected_counts,

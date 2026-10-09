@@ -386,12 +386,12 @@ def slot_cases(dsn: str, outcomes: dict[str, str]) -> tuple[list[dict], list[dic
             same = cases.same_nearest(rows, expected)
             kept = cases.keep_slot(slot, rows)
             keep = cases.KEEP[slot["kind"]]
-            after = " After the search, keep only design-only products." if slot.get("design_only") else ""
             results.append({
                 "id": f"L{index}",
                 "title": f"{slot['kind'].capitalize()} slot: {slot['slot']}",
-                "input": f"Search text: \"{slot['text']}\". Filters: {filters_text(filters)}.{after}",
-                "expected": f"The {min(cases.FETCH, len(expected))} products nearest to the search text, out of the"
+                "input": f"Search text: \"{slot['text']}\". Filters: {filters_text(filters)}.",
+                "expected": f"The {cases.fetched(expected)} products nearest to the search text, up to {cases.FETCH} per"
+                            f" category, out of the"
                             f" {len(expected)} that pass the filters. A brute-force similarity check over all"
                             f" {len(catalog)} products finds them. Target pool: {keep} kept products.",
                 "actual": f"{len(rows)} returned. Same products and order as the brute-force check:"
@@ -401,7 +401,7 @@ def slot_cases(dsn: str, outcomes: dict[str, str]) -> tuple[list[dict], list[dic
                 "test": "<br>".join(
                     test_outcome(outcomes, f"{name}[{slot['slot']}]")
                     for name in ("test_slot_search_returns_the_nearest_matching_products",
-                                 "test_slot_keeps_enough_after_the_post_search_check")
+                                 "test_slot_keeps_enough_after_merging_categories")
                 ),
                 "rows": kept,
             })
@@ -578,7 +578,7 @@ def render(
         " There is no rug slot, because the user excluded rugs. Each slot"
         f" searches its own text with these filters: its categories, requested attributes, a price no higher than the item's limit and the"
         f" USD {cases.BUDGET_ALLOWANCE:,} allowance (110% of the budget), placeable (3D model, placement, and all"
-        f" dimensions), and a known price. Each fetches up to {cases.FETCH} products. Target pools are"
+        f" dimensions), and a known price. Each fetches up to {cases.FETCH} products per category, merged round-robin across categories. Target pools are"
         f" {cases.KEEP['requested']} for requested and required slots, {cases.KEEP['optional']} for optional slots, and {cases.KEEP['decor']} for decor.",
         "",
         "Pytest verifies that search returns and keeps the available eligible products. This report also checks"

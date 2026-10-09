@@ -1,0 +1,141 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+/*
+  One accent (Livinit indigo), cool neutrals, light and dark.
+  Radius rule: panels 20px, cards and inputs 12px, buttons and chips full pill.
+*/
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f0f1f5;
+  --canvas: #eceef3;
+  --line: #e1e3ea;
+  --text: #15161b;
+  --muted: #545766;
+  --faint: #7b7e8e;
+  --accent: #4b4fd4;
+  --accent-hover: #3f43c2;
+  --accent-ink: #ffffff;
+  --accent-soft: #ebebfc;
+  --ok: #24724f;
+  --ok-soft: #e4f3eb;
+  --warn: #965410;
+  --warn-soft: #fbf0e1;
+  --bad: #b3261e;
+  --bad-soft: #fbe9e7;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101115;
+    --surface: #17181e;
+    --surface-2: #1e2028;
+    --canvas: #1b1c22;
+    --line: #2a2c36;
+    --text: #eeeff3;
+    --muted: #a9acba;
+    --faint: #858899;
+    --accent: #8d90f5;
+    --accent-hover: #a3a6f8;
+    --accent-ink: #12132a;
+    --accent-soft: #24264a;
+    --ok: #6fcf9f;
+    --ok-soft: #173326;
+    --warn: #e7b071;
+    --warn-soft: #362715;
+    --bad: #f1938c;
+    --bad-soft: #3a1c1a;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-canvas: var(--canvas);
+  --color-line: var(--line);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 3D labels rendered by drei <Html>; the room is always light, so they stay light. */
+.callout {
+  display: inline-block;
+  white-space: nowrap;
+  border-radius: 999px;
+  background: #ffffffee;
+  color: #15161b;
+  border: 1px solid #e1e3ea;
+  box-shadow: 0 6px 20px -8px rgb(40 44 70 / 0.35);
+  padding: 5px 11px;
+  font: 500 12.5px/1.2 var(--font-sans);
+  animation: callout-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes callout-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .callout {
+    animation: none;
+  }
+}
+
+/* Loading shimmer: placeholder blocks, and text the pipeline is reading. */
+.shimmer {
+  background: linear-gradient(100deg, var(--surface-2) 30%, var(--line) 50%, var(--surface-2) 70%) 0 0 / 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+.shimmer-text {
+  background: linear-gradient(100deg, var(--text) 35%, var(--accent) 50%, var(--text) 65%) 0 0 / 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.2s linear infinite;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shimmer,
+  .shimmer-text {
+    animation: none;
+  }
+  .shimmer-text {
+    color: var(--text);
+    background: none;
+  }
+}

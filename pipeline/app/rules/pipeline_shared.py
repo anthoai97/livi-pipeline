@@ -1,0 +1,55 @@
+"""Facade over the category and door helpers imported by the layout checks.
+
+Category vocabulary and predicates live in `app.rules.categories`; room-bounds
+and door geometry live in `app.rules.door_geometry`.
+"""
+
+from app.rules.categories import (  # noqa: F401
+    CEILING_HEIGHT_M,
+    CEILING_MOUNTED_CATEGORIES,
+    FLOOR_LAMP_CATEGORIES,
+    FLOOR_ONLY_CATEGORIES,
+    SEAT_HEIGHT_CATEGORIES,
+    SEAT_HEIGHT_M,
+    TABLE_LAMP_CATEGORIES,
+    TABLE_LAMP_SUPPORT_CATEGORIES,
+    WALL_ALIGNED_CATEGORY_KEYWORDS,
+    WALL_MOUNT_Z,
+    WALL_MOUNTED_CATEGORIES,
+    WINDOW_CLEARANCE_ROLE_KEYWORDS,
+    base_asset_uid,
+    ceiling_mount_z,
+    is_ceiling_mounted_asset,
+    is_floor_lamp_asset,
+    is_floor_only_asset,
+    is_table_lamp_asset,
+    is_table_lamp_support_asset,
+    is_tabletop_support_asset,
+    is_wall_aligned_asset,
+    is_wall_mounted_asset,
+    matches_category_keywords,
+    normalize_asset_label,
+    requires_window_clearance,
+    support_top_z,
+    tabletop_support_priority,
+)
+from app.rules.door_geometry import (  # noqa: F401
+    DEFAULT_DOOR_THICKNESS,
+    DEFAULT_DOOR_WIDTH,
+    DOOR_CLEARANCE,
+    RoomWall,
+    WALL_NAMES,
+    clamp,
+    door_clearance_area,
+    door_clearance_rect,
+    door_dimensions,
+    door_inward_normal,
+    door_opening_rect,
+    door_wall,
+    format_door_for_prompt,
+    infer_wall_from_center,
+    nearest_wall,
+    rect_bounds,
+    room_bounds,
+    room_walls,
+)

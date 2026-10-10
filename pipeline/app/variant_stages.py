@@ -558,7 +558,7 @@ CONSTRAINTS:
 - {required_role_guidance}
 - {rug_guidance}
 {plant_guidance}- Budget is a spending cap, not a target: total cost must stay at or under ${budget * (1 + BUDGET_FLEX_PCT):.2f} (${budget:.2f} + 10% flex). There is no minimum spend — never inflate item prices to use the budget up.
-- Decor: once the room is functionally complete, if the total is under ${budget:.2f}, add up to 2 decor pieces that suit the room (a tabletop sculpture on a surface, a plant, a floor mirror), keeping the total at or under ${budget:.2f}. Decor UIDs: {', '.join(decor_uids) or 'none available'}. A required decor plant does not count toward these. Skip decor for minimal briefs.
+- Decor: once the room is functionally complete, if the total is under ${budget:.2f}, add up to 2 decor pieces that suit the room (a sculpture, a plant, a floor mirror), keeping the total at or under ${budget:.2f}. Decor UIDs: {', '.join(decor_uids) or 'none available'}. A required decor plant does not count toward these. Skip decor for minimal briefs.
 - Furnish the room: total footprint (width x depth x 2 per asset, rugs excluded) must be at least {footprint_floor:.2f} sqm and at most {furniture_area:.2f} sqm. The comfortable load of {comfortable_load:.2f} sqm is an upper reference, not a target. Once the requested functions and density floor are satisfied, do not add pieces merely to approach it.
 {perimeter_storage_guidance}- Physical layout preflight must pass: rugs must fit the room; every tabletop asset must fit an eligible selected support surface; desk/dining clusters must fit with their chairs; and tiny rooms must not receive extra seating or floor lamps.
 - {count_guidance_constraint}
@@ -568,7 +568,7 @@ CONSTRAINTS:
 - You MUST return the exact UID list as selected_assets (one entry per unit); the accepted response is the final result
 
 STRATEGY:
-- Functional completeness over spend: satisfy the user's requested functions with a coherent set, then stop. Unspent budget is acceptable; never add an item solely because budget remains.
+- Functional completeness over spend: furnish the room's functions with a coherent set. Unspent budget is acceptable; apart from the decor rule above, never add an item solely because budget remains.
 - The {anchor_name}/anchor piece sets the style direction for all other picks
 - Primary goal: aesthetic coherence — select assets whose brand, color, style, shape, and description match the intent
 - Treat intent-packet brand constraints as strong preferences, not hard requirements. For each needed category, use the preferred brand when a catalog option also satisfies category, fit, budget, and every required attribute. If none does, select the best eligible option from another brand and identify that category-level fallback in gaps. Never sacrifice a required role, physical fit, budget, or explicit non-brand attribute to preserve the brand preference.

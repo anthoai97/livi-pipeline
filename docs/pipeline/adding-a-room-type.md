@@ -38,7 +38,7 @@ gets living-room behavior, without it.
 | 15 | Layout checks | `pipeline/app/rules/layout/analysis.py:119-124`, new `layout/home_office.py` | A measurement function and its issue keys | Optional |
 | 16 | Issue tiers | `layout/constants.py:114`, `:148`; `layout/formatting.py:17-25`; `layout/metrics.py:100`, `:175` | Register the new issue keys | Required with 15 |
 | 17 | Solver | `pipeline/app/rules/layout/solver.py:160`, `:303`, `:710` | `_STORAGE_FRONTS`, `_groups`, `_preference` | Optional |
-| 18 | Final review prompt | `variant_stages.py:1246` `_arrangement_prompt` | Nothing, unless its review bullets (`:1274-1279`) miss a zone | Optional |
+| 18 | Final review prompt | `variant_stages.py:1303` `_arrangement_prompt` | Nothing, unless its design rules (`:1334`) miss a zone | Optional |
 | 19 | Web brief | `web/src/lib/types.ts:4`, `web/src/lib/room.ts:102`, `:111` | `RoomType`, `ROOM_TYPES`, four `PROMPT_STARTERS` with sizes | Required |
 | 20 | Benchmark, tests | `pipeline/scripts/benchmark_requests.json`, `pipeline/tests/` | One case and focused tests | Required |
 
@@ -129,7 +129,7 @@ gets living-room behavior, without it.
 
 11. **Write the layout rules text.** Add `elif room_type == "home_office":` to
     `build_rules_block`: what anchors the room, what is not required, and the
-    access rules. Selection and the final review prompt (`:1290`) both read it.
+    access rules. Selection and the final review prompt (`:1345`) both read it.
 
 12. **Add layout checks** when the room has geometry rules no shared check
     covers. Model them on `layout/dining.py:114`: a read-only function that

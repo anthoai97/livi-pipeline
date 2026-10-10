@@ -1,6 +1,8 @@
 from collections.abc import Mapping
 from typing import Any
 
+from app.rules.selection.constants import TV_HOST_CATEGORIES
+
 from .taxonomy import CANONICAL_CATEGORIES, normalize_category
 
 
@@ -67,7 +69,8 @@ def _clean_requested_items(value: Any) -> list[dict[str, Any]]:
                 _clean_category(candidate)
                 for candidate in (item.get("acceptable_substitutes") or [])
             )
-            if candidate and candidate != category
+            # A media support is not a TV: a TV needs none, and select adds a missing TV.
+            if candidate and candidate != category and not (category == "tv" and candidate in TV_HOST_CATEGORIES)
         ]
         entry = {
             "label": _normalize_prompt(item.get("label") or category),

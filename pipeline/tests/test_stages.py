@@ -1034,9 +1034,10 @@ def test_requested_tv_with_a_substitute_keeps_unpriced_tvs(monkeypatch):
 
     slots, pool, _, _, calls = retrieve(monkeypatch, "living_room", packet, search)
 
-    assert set(slots["tv"]["categories"]) >= {"tv", "tv_stand"} and not slots["tv"]["gap"]
-    assert sorted(pool["tv"]) == ["stand_priced", "tv_unpriced"]
-    [tv_filters] = [f for f in calls if "tv_stand" in f["categories"] and "tv" in f["categories"]]
+    # A media support is not a TV substitute, so the TV slot holds only TVs.
+    assert "tv" in slots["tv"]["categories"] and "tv_stand" not in slots["tv"]["categories"] and not slots["tv"]["gap"]
+    assert pool["tv"] == ["tv_unpriced"]
+    [tv_filters] = [f for f in calls if "tv" in f["categories"]]
     assert tv_filters["known_price"] and tv_filters["price_exempt"] == ["television", "tv"]
 
 
@@ -1062,3 +1063,62 @@ def test_empty_requested_slot_is_a_gap_and_required_slot_drops_request_limits(mo
     assert "without them" in records["bed"]["note"] and not records["bed"]["gap"]
     notes = [note["text"] for note in run.notes]
     assert records["bed"]["note"] in notes and records["floor_mirror"]["note"] in notes
+
+
+# --- select: TVs ------------------------------------------------------------
+
+STAND = product("stand", "tv_stand", 1.5, 0.4, height_m=0.55)
+WIDE_TV = product("tv_wide", "tv", 1.6, 0.25, placement_type="surface", is_purchasable=False, price=None)  # wider than the stand
+FITTING_TV = product("tv_fits", "tv", 1.2, 0.25, placement_type="surface", is_purchasable=False, price=None)
+
+
+def select_with_requested_tv(model_uids: list[str], tvs: list[dict]) -> tuple[dict, list[str]]:
+    """One select turn in the recorded dining room whose brief also asks for a TV; the model answers `model_uids`.
+    The TVs fill the requested TV slot and STAND an optional media slot."""
+    tv = {"label": "TV", "canonical_category": "tv", "count": 1, "exact": False, "optional": False,
+          "acceptable_substitutes": [], "descriptors": []}
+    intent = coerce_intent_packet({**RUN["intent"], "requested_items": [*RUN["intent"]["requested_items"], tv]}, room_type="dining_room")
+    _, room = _room(RUN)
+    request = PipelineRequest(**REQUEST)
+    pool = {"tv": tvs}
+    for uid, _ in TURN["items"]:
+        pool.setdefault(RUN["assets"][uid]["category"], []).append(RUN["assets"][uid])
+    slots = [{"id": slot_id, "kind": "requested", "category": slot_id, "label": slot_id, "count": 1, "required": True, "gap": False,
+              "relaxed": False} for slot_id in pool]
+    pool["media"] = [STAND]
+    slots.append({"id": "media", "kind": "optional", "category": None, "label": "media", "gap": False, "relaxed": False})
+    state = {"variant_index": 0, "direction": "", "pool": pool, "fit_step": None,
+             "shared": {"request": request, "intent": intent, "room": room, "slots": slots}}
+    answer = {"selected_assets": [{"uid": uid} for uid in model_uids], "gaps": ""}
+    run = RunContext("run", request, GeminiModel(FakeGenai({"Selection": answer})), 3, product_reuse_rate=1.0)
+    update = asyncio.run(variant_stages.select(state, StageContext(run, "select", 0)))
+    return update, [note["text"] for note in run.notes]
+
+
+@pytest.mark.parametrize(("stand", "tvs", "added", "placement"), [
+    (True, [WIDE_TV, FITTING_TV], "tv_fits", "tabletop"),  # the first TV that fits the selected stand
+    (True, [WIDE_TV], "tv_wide", "wall_mounted"),  # no TV fits the stand: the TV hangs on the wall instead
+    (False, [WIDE_TV, FITTING_TV], "tv_wide", "wall_mounted"),  # no stand selected: the first ranked TV
+])
+def test_select_adds_a_requested_tv_that_stands_on_a_fitting_stand_or_hangs_on_the_wall(stand, tvs, added, placement):
+    model_uids = [uid for uid, count in TURN["items"] for _ in range(count)] + (["stand"] if stand else [])
+
+    update, notes = select_with_requested_tv(model_uids, tvs)
+
+    assert update["selection_validation"]["valid"], update["selection_validation"]["errors"]
+    assert f"selection turn 1: added TV {added}" in notes
+    assert update["selection"]["selected_assets"][-1]["uid"] == added
+    [tv] = [instance for instance in update["instances"] if instance["category"] == "tv"]
+    assert tv["placement_mode"] == placement
+    assert tv.get("paired_support_uid") == ("tv_stand_1" if placement == "tabletop" else None)
+
+
+def test_select_swaps_a_tv_too_wide_for_the_selected_stand_for_one_that_fits():
+    model_uids = [uid for uid, count in TURN["items"] for _ in range(count)] + ["stand", "tv_wide"]
+
+    update, notes = select_with_requested_tv(model_uids, [WIDE_TV, FITTING_TV])
+
+    assert update["selection_validation"]["valid"], update["selection_validation"]["errors"]
+    assert "selection turn 1: replaced TV tv_wide with tv_fits" in notes
+    [tv] = [instance for instance in update["instances"] if instance["category"] == "tv"]
+    assert tv["placement_mode"] == "tabletop" and tv["paired_support_uid"] == "tv_stand_1"

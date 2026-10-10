@@ -31,6 +31,7 @@ from app.rules.layout.relations import (
     _back_wall_name,
     _build_blocker_specs,
     _is_ceiling_mounted_layout_asset,
+    _is_media_display_asset,
     _is_near_cardinal,
     _is_wall_mounted_layout_asset,
     _inward_rotation_for_wall,
@@ -261,7 +262,7 @@ def compute_wall_mount_violations(
         height = float(asset.get("height", 0.0) or 0.0)
         if (
             exterior.distance(point) > WALL_MOUNT_WALL_THRESHOLD
-            or (pos[2] < 1.2 and height <= CEILING_HEIGHT_M - 1.2)
+            or (pos[2] < 1.2 and height <= CEILING_HEIGHT_M - 1.2 and not _is_media_display_asset(asset, uid))
             or pos[2] < 0
             or pos[2] + height > CEILING_HEIGHT_M + 1e-6
             or not _is_near_cardinal(rotation_z)

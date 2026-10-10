@@ -305,7 +305,6 @@ def _layout_preflight_for_assets(
         "budget_ratio": round(total_cost / budget, 3) if budget else None,
         "anchor_seating": [],
         "rugs": [],
-        "media_pairs": [],
         "support_requirements": [],
         "clusters": [],
         "protected_path_zones": protected_path_zones,
@@ -666,70 +665,6 @@ def _layout_preflight_for_assets(
                     "the requested chair count."
                 )
 
-    displays = [
-        asset for asset in selected_assets
-        if _asset_matches_any(asset, MEDIA_DISPLAY_CATEGORIES, keywords=("television", "monitor"))
-        and not _asset_matches_any(asset, TV_HOST_CATEGORIES, keywords=("tv stand", "media console", "media unit"))
-    ]
-    supports = [
-        asset for asset in selected_assets
-        if _asset_matches_any(
-            asset,
-            TV_COMPATIBLE_SUPPORT_CATEGORIES,
-            keywords=TV_COMPATIBLE_SUPPORT_KEYWORDS,
-        )
-    ]
-    media_hosts = [
-        asset
-        for asset in selected_assets
-        if _asset_matches_any(
-            asset,
-            TV_HOST_CATEGORIES,
-            keywords=("tv stand", "media console", "media unit"),
-        )
-    ]
-    if media_hosts and not displays:
-        errors.append(
-            f"{LAYOUT_PREFLIGHT_PREFIX}: media support(s) "
-            f"{', '.join(_asset_uid(asset) for asset in media_hosts)} were "
-            "selected without a TV. Select a fitting TV with the media support "
-            "or remove the media support."
-        )
-    for display in displays:
-        display_width, display_depth = _asset_width_depth(display)
-        fitting_supports = []
-        for support in supports:
-            support_width, support_depth = _asset_width_depth(support)
-            support_metric = {
-                "uid": _asset_uid(support),
-                "width": round(support_width, 3),
-                "depth": round(support_depth, 3),
-            }
-            if _tv_fits_on_support(display, support):
-                fitting_supports.append(support_metric)
-        metrics["media_pairs"].append(
-            {
-                "display_uid": _asset_uid(display),
-                "display_width": round(display_width, 3),
-                "display_depth": round(display_depth, 3),
-                "support_count": len(supports),
-                "fitting_supports": fitting_supports,
-            }
-        )
-        if not supports:
-            errors.append(
-                f"{LAYOUT_PREFLIGHT_PREFIX}: display {_asset_uid(display)} was "
-                "selected without a media support. Add a tv_stand/media_unit/"
-                "console_table or remove the display."
-            )
-        elif not fitting_supports:
-            errors.append(
-                f"{LAYOUT_PREFLIGHT_PREFIX}: display {_asset_uid(display)} "
-                f"({display_width:.2f}m x {display_depth:.2f}m) does not fit "
-                "on any selected media support. Select a smaller display or a "
-                "wider/deeper support."
-            )
-
     desks = [
         asset for asset in selected_assets
         if _asset_matches_any(asset, DESK_CATEGORIES, keywords=("desk",))
@@ -904,7 +839,10 @@ def _tv_support_in_selection(tv: dict, selected_assets: list[dict]) -> dict | No
     )
 
 def _annotate_tv_placement(selected_assets: list[dict]) -> list[dict]:
-    """Hydrate placement metadata without changing the model-selected UID set."""
+    """Hydrate placement metadata without changing the model-selected UID set.
+
+    A TV that fits a selected support stands on it (tabletop with
+    paired_support_uid); any other TV is wall-mounted."""
     annotated: list[dict] = []
     for asset in selected_assets:
         if normalize_category(asset.get("category")) != "tv":
@@ -922,6 +860,7 @@ def _annotate_tv_placement(selected_assets: list[dict]) -> list[dict]:
             placed["placement_mode"] = "tabletop"
             placed["paired_support_uid"] = _asset_uid(support)
         else:
+            placed["placement_mode"] = "wall_mounted"
             placed.pop("paired_support_uid", None)
         annotated.append(placed)
     return annotated

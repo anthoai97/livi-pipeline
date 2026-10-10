@@ -115,8 +115,8 @@ def build_instances(items: list[dict[str, Any]], intent: dict[str, Any]) -> list
     reason/functional_group/functional_role/viewing_target}]. Each instance is
     the record plus catalog_asset fields, keyed uid = instance_key =
     "<normalized category>_<n>" (n counts per category from 1). A TV that fits a
-    selected media support becomes tabletop with paired_support_uid; studio
-    media gets its viewing_target.
+    selected media support becomes tabletop with paired_support_uid, any other
+    TV wall_mounted; studio media gets its viewing_target.
     """
     counts: Counter[str] = Counter()
     instances: list[dict[str, Any]] = []

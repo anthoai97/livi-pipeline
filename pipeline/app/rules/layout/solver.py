@@ -15,12 +15,13 @@ Wall groups take the seed's wall candidates for the group's footprint box, facin
 into the room. The sofa keeps the wall gap sofa_wall_gap accepts, so a TV reaches
 its preferred viewing range by the choice of wall pair, or by a media group pulled
 off its wall as far as the wall-flush check allows. The dining group goes on the
-legacy repack grid in both orientations; a media group (a support with its TV, or
-a floor-standing TV) on the walls, preferring the one its viewer faces. In a
+legacy repack grid in both orientations; a media group (a support with its TV, a
+floor-standing TV, or a wall-mounted TV with any support flush under it) on the
+walls, preferring the one its viewer faces. In a
 studio, a TV on a support the studio checks let stand free also gets divider
 candidates on its viewer's axis, inside its viewing range; comfort marks a
 floating support, so a wall-backed group in range still wins. Furniture taller
-than the TV's support (not the viewer or a coffee table) costs more when it stands
+than the screen's bottom (not the viewer or a coffee table) costs more when it stands
 in the strip between the viewer and the screen, before or after the TV. Floor lamps take
 the legacy service-slot targets beside each lounge seat (dining chairs only in a
 room without one), ranked by the floor lamp reach rule (when none passes the
@@ -121,6 +122,7 @@ from app.rules.layout.relations import (
     _angle_to,
     _back_wall_name,
     _facing_axis_and_sign,
+    _wall_mount_z,
     _window_seating_clearance_poly,
     floor_assets,
 )
@@ -210,8 +212,11 @@ class _Room:
     guidance: Record
     plan: Record
     supports: dict[str, str] = field(default_factory=dict)  # TV uid -> the media support it stands on
+    mounted: dict[str, str] = field(default_factory=dict)  # wall TV uid -> the media support under it, or ""
     rug: str | None = None  # the sitting group's rug
-    view: Record | None = None  # viewer, bed, tv, support, low, high, inset: the TV distance the viewer's pose should reach
+    # viewer, bed, tv, low, high, inset: the TV distance the viewer's pose should reach; screen_z: the screen's
+    # bottom, which taller floor furniture hides (None for a floor TV)
+    view: Record | None = None
     stats: Record = field(default_factory=lambda: {"candidates": 0, "scored": 0})
 
     def dims(self, uid: str) -> tuple[float, float]:
@@ -223,6 +228,11 @@ class _Room:
         asset = self.assets[uid]
         return (not is_rug(uid, asset) and uid not in self.supports
                 and placement_mode_for_asset(asset) not in {"wall_mounted", "ceiling_mounted", "tabletop"})
+
+    def mount_z(self, uid: str) -> float:
+        """The bottom z of a wall-mounted item, above the support under a wall TV."""
+        support = self.mounted.get(uid)
+        return _wall_mount_z(self.assets[uid], float(self.assets[support].get("height") or 0) if support else 0.0)
 
     def analyze(self, layout: Record) -> Record:
         room = self.room
@@ -342,18 +352,22 @@ def _groups(ctx: _Room) -> list[_Group]:
            and media_display_fits_support_dimensions(*ctx.dims(uid), *ctx.dims(media[0]))][:1]
     ctx.supports = {tv: media[0] for tv in tvs}
     floor_tv = None if tvs else next((uid for uid in pick("media") if category[uid] == "tv" and ctx.floor(uid)), None)
-    screen = (*media, *tvs) if tvs else (floor_tv,) if floor_tv else tuple(media)
+    wall_tv = None if tvs or floor_tv else next((uid for uid in pick("media") if category[uid] == "tv"
+                                                and placement_mode_for_asset(ctx.assets[uid]) == "wall_mounted"), None)
+    ctx.mounted = {wall_tv: next(iter(media), "")} if wall_tv else {}
+    screen = (*media, *tvs) if tvs else (*media, wall_tv) if wall_tv else (floor_tv,) if floor_tv else tuple(media)
     # Outside studios, a floor TV goes after the media support it does not stand on, which media focal alignment centers.
     split = bool(floor_tv and media) and not studio
     take(*screen, *(media if split else ()))
-    tv = next(iter(tvs), floor_tv)
+    tv = next(iter(tvs), floor_tv or wall_tv)
     target = next((ctx.assets[uid].get("viewing_target") for uid in (tv, *media) if uid and ctx.assets[uid].get("viewing_target")), None)
     viewer = (bed if target == "bed" or not sofa else sofa) if studio else (sofa or bed)
     if tv and viewer:
         low, high = (ctx.dims(tv)[0] * factor for factor in TV_VIEW_WIDTH_RANGE)
         # The screen point sits half the TV depth in front of the TV center (comfort).
         screen_inset = (ctx.dims(media[0])[1] + ctx.dims(tv)[1]) / 2 if tvs else ctx.dims(tv)[1]
-        ctx.view = {"viewer": viewer, "bed": viewer == bed, "tv": tv, "support": ctx.supports.get(tv),
+        screen_z = float(ctx.assets[media[0]].get("height") or 0) if tvs else ctx.mount_z(tv) if wall_tv else None
+        ctx.view = {"viewer": viewer, "bed": viewer == bed, "tv": tv, "screen_z": screen_z,
                     "low": low, "high": high, "inset": _SEED_MARGIN + screen_inset}
 
     dining_table = next(iter(pick("dining_table")), None)
@@ -375,9 +389,11 @@ def _groups(ctx: _Room) -> list[_Group]:
     groups = sorted(anchored, key=lambda group: -_footprint_area(ctx, group.templates[0]))
     for members in ((tuple(media), screen) if split else (screen,) if screen else ()):
         # Flush, or pulled toward the viewer (only worth its cost when the flush TV is past its range).
+        # A wall TV and the support under it stay flush, each on the wall line.
         groups.append(_Group("media", tuple(
-            _Template(name, {uid: (0.0, ctx.dims(members[0])[1] / 2 + pull, math.pi / 2) for uid in members}, penalty=penalty)
-            for name, pull, penalty in (("media", 0.0, 0.0), ("media pulled", MEDIA_PULL_M, 0.05)))))
+            _Template(name, {uid: (0.0, ctx.dims(uid if wall_tv else members[0])[1] / 2 + pull, math.pi / 2) for uid in members},
+                      penalty=penalty)
+            for name, pull, penalty in (("media", 0.0, 0.0), ("media pulled", MEDIA_PULL_M, 0.05)) if not (wall_tv and pull))))
     if dining_table:
         groups.append(_Group("dining", _dining_templates(ctx, dining_table, chairs, lights)))
     if desk:
@@ -566,7 +582,8 @@ def _placements(ctx: _Room, parent: _Partial, group: _Group, template: _Template
         )
         return [((_back_wall_name(rotation) if mode in _WALL_MODES else round(center[0]), round(center[1])),
                  {uid: (center[0], center[1], normalize_rotation(rotation))}) for center, rotation in candidates]
-    footprint = {uid: pose for uid, pose in template.poses.items() if ctx.floor(uid)}
+    # A media group's box also spans a wall TV, which has no footprint and may be wider than its support.
+    footprint = {uid: pose for uid, pose in template.poses.items() if ctx.floor(uid) or group.kind == "media"}
     _, (x0, _, x1, y1) = oriented_living_group_bounds(footprint, dims, 0)
     walls = (ctx.plan["preferred_walls_by_uid"].get(next(iter(template.poses))) or [])
     candidates = [(center, rotation, (_back_wall_name(rotation),))
@@ -676,6 +693,11 @@ def _violation(ctx: _Room, parent: _Partial, prepared: tuple, template: _Templat
     for uid in poses.keys() & ctx.supports.keys():
         screen = asset_polygon([poses[uid][0], poses[uid][1], 1.0], poses[uid][2], *ctx.dims(uid))
         total += sum(0.1 for window in ctx.windows if screen.intersects(window))
+    for uid in poses.keys() & ctx.mounted.keys():  # a wall TV has no footprint but must clear doors and windows
+        screen = asset_polygon([*poses[uid][:2], 0.0], poses[uid][2], *ctx.dims(uid))
+        total += sum(screen.intersection(blocker).area + 0.01 for blocker in (*ctx.doors, *ctx.windows) if screen.intersects(blocker))
+        if strict and total:
+            return total, floors, own
     for band in own:
         if not ctx.cover.covers(band):
             total += band.difference(ctx.polygon).area + 0.01
@@ -733,9 +755,9 @@ def _preference(ctx: _Room, parent: _Partial, group: _Group, template: _Template
     if view and view["viewer"] in poses:
         eye, yaw = _eye(ctx, poses[view["viewer"]])
         hit = _ray_hit(ctx, *eye, yaw)
-        if hit is not None:  # the media group may still pull MEDIA_PULL_M closer
+        if hit is not None:  # the media group may still pull MEDIA_PULL_M closer, except a wall TV
             distance = math.dist(eye, hit) - view["inset"]
-            cost += max(0.0, view["low"] - distance, distance - MEDIA_PULL_M - view["high"])
+            cost += max(0.0, view["low"] - distance, distance - (0.0 if ctx.mounted else MEDIA_PULL_M) - view["high"])
     if group.kind == "media" and view and view["viewer"] in parent.layout:
         viewer = parent.layout[view["viewer"]]
         x, y, yaw = poses[anchor]
@@ -780,19 +802,19 @@ def _preference(ctx: _Room, parent: _Partial, group: _Group, template: _Template
 
 
 def _blocks_view(ctx: _Room, uid: str) -> bool:
-    """Floor furniture taller than the TV's support, other than the viewer and a coffee table, hides the screen."""
+    """Floor furniture taller than the screen's bottom, other than the viewer and a coffee table, hides the screen."""
     view = ctx.view
-    if not view or not view["support"] or uid == view["viewer"]:
+    if not view or view["screen_z"] is None or uid == view["viewer"]:
         return False
     category = normalize_category(ctx.assets[uid].get("category"))
     return (not matches_category_keywords(category, uid, COFFEE_TABLE_ROLE_KEYWORDS)
-            and float(ctx.assets[uid].get("height") or 0) > float(ctx.assets[view["support"]].get("height") or 0))
+            and float(ctx.assets[uid].get("height") or 0) > view["screen_z"])
 
 
 def _sightline(ctx: _Room, layout: Record) -> Polygon | None:
     """The floor strip as wide as the TV, from the viewer's front edge to the screen, once both are placed."""
     view = ctx.view
-    if not view or not view["support"] or view["viewer"] not in layout or view["tv"] not in layout:
+    if not view or view["screen_z"] is None or view["viewer"] not in layout or view["tv"] not in layout:
         return None
     ends = []
     for uid, reach in ((view["viewer"], ctx.dims(view["viewer"])[1] / 2), (view["tv"], ctx.dims(view["tv"])[1] / 2)):
@@ -820,6 +842,8 @@ def _placement(ctx: _Room, uid: str, x: float, y: float, yaw: float) -> Record:
         entry["on_top_of"] = ctx.supports[uid]
     elif placement_mode_for_asset(asset) == "ceiling_mounted":
         entry["position"][2] = ceiling_mount_z(asset.get("height"))
+    elif placement_mode_for_asset(asset) == "wall_mounted":
+        entry["position"][2] = ctx.mount_z(uid)
     return entry
 
 

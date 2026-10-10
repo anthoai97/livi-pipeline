@@ -65,7 +65,7 @@ def _counts(response: types.GenerateContentResponse | None) -> dict[str, int]:
 
 
 def stage_models(value: str) -> dict[str, tuple[str, types.ThinkingLevel]]:
-    """Parse LLM_STAGE_MODELS, such as "select=gemini-3.8-flash:low,correct=gemini-3.5-flash-lite:minimal",
+    """Parse LLM_STAGE_MODELS, such as "select=gemini-3.8-flash:low,finish=gemini-3.5-flash-lite:minimal",
     into the model and thinking level per stage. The level defaults to low."""
     models = {}
     for entry in filter(None, (part.strip() for part in value.split(","))):
@@ -84,8 +84,7 @@ class GeminiModel:
     """ModelClient backed by google-genai. Tests pass a fake `client`.
 
     Stages listed in LLM_STAGE_MODELS use their own model and thinking level; the
-    rest use LLM_DESIGN_MODEL at low thinking. A call can pass `model_key` to use
-    another entry, such as `correct_escalate` or `arrange`.
+    rest use LLM_DESIGN_MODEL at low thinking.
 
     A call that has not answered after MODEL_HEDGE_AFTER_S (0 turns this off) gets
     a duplicate; the first answer wins and the other call is cancelled. Both calls
@@ -101,10 +100,9 @@ class GeminiModel:
             os.environ.get("MODEL_HEDGE_AFTER_S", MODEL_HEDGE_AFTER_S))
 
     async def generate(
-        self, ctx: StageContext, schema: type[M], contents: str | list[str | bytes], *, system: str | None = None,
-        model_key: str | None = None
+        self, ctx: StageContext, schema: type[M], contents: str | list[str | bytes], *, system: str | None = None
     ) -> M:
-        model, level = self.stages.get(model_key or ctx.stage, (self.model, types.ThinkingLevel.LOW))
+        model, level = self.stages.get(ctx.stage, (self.model, types.ThinkingLevel.LOW))
         if not isinstance(contents, str):  # bytes are PNG images, sent as inline image parts
             contents = [types.Part.from_bytes(data=part, mime_type="image/png") if isinstance(part, bytes) else part
                         for part in contents]

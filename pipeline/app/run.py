@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -40,16 +40,13 @@ class ModelClient(Protocol):
     """The structured-output model that stages call through StageContext.generate.
 
     `client` is the underlying genai client; the retrieve stage uses it for query
-    embeddings (`search_assets.embed_query`). `stages` maps a stage, or a model key
-    such as `correct_escalate`, to its model (LLM_STAGE_MODELS).
+    embeddings (`search_assets.embed_query`).
     """
 
     client: genai.Client
-    stages: Mapping[str, Any]
 
     async def generate(
-        self, ctx: StageContext, schema: type[M], contents: str | list[str | bytes], *, system: str | None = None,
-        model_key: str | None = None
+        self, ctx: StageContext, schema: type[M], contents: str | list[str | bytes], *, system: str | None = None
     ) -> M: ...
 
 
@@ -57,10 +54,9 @@ class ModelClient(Protocol):
 class StageContext:
     """What a stage function gets besides its state.
 
-    - `generate(schema, contents, system=..., model_key=...)`: one bounded
-      structured model call, recorded under this stage and variant. `contents`
-      is a prompt, or a list of text parts and PNG image bytes. `model_key`
-      picks the model by that key instead of the stage name.
+    - `generate(schema, contents, system=...)`: one bounded structured model
+      call, recorded under this stage and variant. `contents` is a prompt, or a
+      list of text parts and PNG image bytes.
     - `run.connection`: the request's sync psycopg connection (dict rows) for
       `search_assets`. Run blocking calls with `asyncio.to_thread`.
     - `run.model.client`: the genai client, for query embeddings.
@@ -79,9 +75,8 @@ class StageContext:
     variant_index: int | None
     data: dict = field(default_factory=dict)
 
-    async def generate(self, schema: type[M], contents: str | list[str | bytes], *, system: str | None = None,
-                       model_key: str | None = None) -> M:
-        return await self.run.model.generate(self, schema, contents, system=system, model_key=model_key)
+    async def generate(self, schema: type[M], contents: str | list[str | bytes], *, system: str | None = None) -> M:
+        return await self.run.model.generate(self, schema, contents, system=system)
 
     async def ask(self, use: str, state: Any, questions: dict[str, str]) -> dict[str, float] | None:
         if self.run.jev is None:

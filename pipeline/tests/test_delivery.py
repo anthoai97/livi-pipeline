@@ -36,7 +36,7 @@ def test_real_stage_data_and_preview_delivery(tmp_path, monkeypatch):
 
     monkeypatch.setattr(graph, "render_plan", in_worker)
     events, record = run_pipeline(tmp_path, StageGenai({
-        "IntentPacket": intent_packet(), "Selection": selection(), "Correction": FIXED,
+        "IntentPacket": intent_packet(), "Selection": selection(), "Arrangement": FIXED,
     }))
     completed = of_type(events, "node_complete")
     expected = {
@@ -44,9 +44,8 @@ def test_real_stage_data_and_preview_delivery(tmp_path, monkeypatch):
         "extract_room": {"room_area", "wall_height", "doors", "windows", "floor_area_sqm", "usable_area_sqm",
                          "protected_paths", "fit", "fit_message"},
         "rag_scope_assets": {"slots", "candidates", "gaps", "preview"},
-        "layout_initial": {"placed", "findings", "blocking", "swaps", "drops"},
-        "layout_fix": {"placed", "findings", "blocking", "improved"},
-        "render_scene": {"valid", "errors"},
+        "layout_initial": {"placed", "findings", "blocking", "swaps", "drops", "layout_options"},
+        "render_scene": {"valid", "errors", "dropped", "layout_pick", "review"},
     }
     for event in completed:
         keys = expected.get(event["node"])
@@ -54,7 +53,6 @@ def test_real_stage_data_and_preview_delivery(tmp_path, monkeypatch):
             keys = ({"ranked_slots", "shared_products"} if event["variant_index"] is None else
                     {"turn", "valid", "errors", "fit_step", "total_cost", "items"})
         assert keys <= event["data"].keys()
-    assert len([event for event in completed if event["node"] == "layout_fix"]) == 6
     retrieval = next(event["data"] for event in completed if event["node"] == "rag_scope_assets")
     assert retrieval["candidates"] == sum(slot["candidates"] for slot in record["slots"])
     assert len(retrieval["preview"]) <= retrieval["slots"]
@@ -67,7 +65,7 @@ def test_real_stage_data_and_preview_delivery(tmp_path, monkeypatch):
             assert data["total_cost"] == ready[0]["total_cost"]
             assert len(data["items"]) <= retrieval["slots"]
         if event["node"] == "render_scene":
-            assert data == {"valid": True, "errors": 0}
+            assert (data["valid"], data["errors"], data["dropped"], data["layout_pick"]) == (True, 0, 0, "A")
     app = create_app(runs_dir=tmp_path)
 
     async def fetch():

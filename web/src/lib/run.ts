@@ -68,7 +68,6 @@ function applyNode(nodes: Nodes, event: Extract<PipelineEvent, { type: "node_sta
   if (event.type === "node_start") {
     return { ...nodes, [event.node]: { ...previous, status: "working", runs: (previous?.runs ?? 0) + 1 } };
   }
-  // A correction that does not improve keeps the earlier counts, which `layout_fix` data repeats.
   return {
     ...nodes,
     [event.node]: { runs: previous?.runs ?? 1, status: "done", elapsed: event.elapsed, doneAt: Date.now(), data: event.data },
@@ -179,7 +178,6 @@ const STEP_OF: Record<NodeName, number> = {
   rag_scope_assets: 2,
   select_asset_intent: 2,
   layout_initial: 3,
-  layout_fix: 3,
   render_scene: 4,
 };
 

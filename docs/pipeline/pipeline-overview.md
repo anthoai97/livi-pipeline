@@ -341,19 +341,27 @@ displays sit on their supports. It is then analyzed into findings by severity:
 `variant_stages.finish` gives every design a final review, then checks and
 delivers it:
 
+Comfort and taste live in `DESIGN_RULES` as plain text, so a new rule is one
+line and needs no code. Code keeps only the hard geometry checks (overlaps,
+inside the room, doors, walkways, TV and stand), and rejects any adjustment that
+breaks them.
+
 1. **Review.** One model call (stage `finish`, low thinking unless
    `LLM_STAGE_MODELS` sets it) gets the request, the requested items and style
    hints, the layout rules for the room type with their definitions, the
    coordinate system, the room boundary, doors, windows, and protected paths,
    each piece's key, category, size, and mount type, and each tied layout drawn
    top-down as variant A, B, C, or D with its poses. Acting as an interior
-   designer, the model picks the layout that reads best as a room (clear zones,
-   a TV whose back does not face another zone, a bed against a wall with access,
-   nothing floating mid-room, open walkways), writes two or three sentences on
+   designer, the model picks the layout that reads best as a room against the
+   design rules (`DESIGN_RULES` in `app/rules/layout_rules.py`: shared rules such
+   as clear zones, a TV whose back does not face another zone, nothing tall in
+   front of a window, a floor lamp at the seat it lights, plus rules per room
+   type), writes two or three sentences on
    what is wrong with it, and returns new poses that fix those problems. With
    one layout, it still reviews and adjusts that one.
 2. **Adjust.** Code rejects poses for unknown items, with non-finite values, or
-   with a turn that is not a whole number of quarter turns. Moves of any length
+   with a rotation that is neither a whole number of quarter turns from the
+   current one nor aligned with the room axes. Moves of any length
    are allowed. The rest are applied, moving supported items with their
    supports, and kept only if the issue score does not get worse; otherwise the
    picked layout stays as it is. A failed call or an unknown label keeps the

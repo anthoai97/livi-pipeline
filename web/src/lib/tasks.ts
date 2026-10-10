@@ -89,15 +89,12 @@ export function designTask(variant: VariantProgress, index: number): Task {
     return { ...base, status: "done", detail: `${plural(selected_assets.length, "piece")}, ${money(total_cost)}` };
   }
   if (variant.failed) return { ...base, status: "failed", detail: variant.failed.message };
-  const { select_asset_intent: selecting, layout_initial: placed, layout_fix: fixing } = variant.nodes;
+  const { select_asset_intent: selecting, layout_initial: placed, render_scene: reviewing } = variant.nodes;
   if (placed) {
     if (placed.status === "working") return { ...base, status: "working", detail: "Placing every piece in the room" };
-    if (fixing?.status === "working") {
-      return { ...base, status: "working", detail: `Adjusting furniture positions${fixing.runs > 1 ? `, pass ${fixing.runs}` : ""}` };
-    }
+    if (reviewing?.status === "working") return { ...base, status: "working", detail: "Reviewing the layout" };
     const initial = nodeData(variant.nodes, "layout_initial");
-    const repair = nodeData(variant.nodes, "layout_fix");
-    const blocking = repair?.blocking ?? initial?.blocking;
+    const blocking = initial?.blocking;
     const changes = [
       initial?.swaps ? `${plural(initial.swaps, "product swap")}` : "",
       initial?.drops ? `${plural(initial.drops, "piece")} removed` : "",
@@ -107,7 +104,7 @@ export function designTask(variant: VariantProgress, index: number): Task {
     return {
       ...base,
       status: "working",
-      detail: `${blocking === undefined ? "Checking layout issues" : `${plural(blocking, "blocking layout issue")} remaining`}${repair ? (repair.improved ? "; spacing improved" : "; keeping the previous layout") : ""}`,
+      detail: blocking === undefined ? "Checking layout issues" : `${plural(blocking, "blocking layout issue")} remaining`,
     };
   }
   if (selecting) {

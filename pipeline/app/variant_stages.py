@@ -7,27 +7,24 @@ by all variants, so copy a record before changing it. `state["pool"]` holds this
 variant's candidates per slot id, dealt by the shared `rank` stage defined here.
 `state["variant_index"]` and `state["direction"]` identify the variant.
 
-The graph owns the loops and their bounds (app.graph): it counts
-`selection_turns`, `correction_proposals`, and `reselections`. It repeats select
-until `selection_validation["valid"]` or 4 turns in all, then places the last
-selection, which select clears of the products that fail it; repeats correct
-while `blocking_findings` is non-empty and the last proposal improved (no
-`correction_stalled`), up to 3 proposals per layout; after a failed validate
-goes back to select once; and after the last failed validate runs drop, which
-removes the failing items and delivers the rest. Failed checks never fail a
-variant. A stage that raises fails only its own variant (reason
-`model_call_failed` for ModelCallError, otherwise `variant_error`). Correct
-catches its own ModelCallError instead: a layout already exists, so it keeps it
-and goes on. Place does the same for its layout pick, and for any other error in it.
+The graph owns the loop and its bound (app.graph): it counts `selection_turns`
+and repeats select until `selection_validation["valid"]` or 4 turns in all, then
+places the last selection, which select clears of the products that fail it.
+Finish then reviews the placed layout, removes the items the final check fails
+on, and delivers the rest. Failed checks never fail a variant. A stage that
+raises fails only its own variant (reason `model_call_failed` for
+ModelCallError, otherwise `variant_error`). Finish catches every error in its
+review instead: a layout already exists, so it keeps the solver's best and goes on.
 
 `ctx` is the same as for shared stages (see app.shared_stages); model calls made
 through `ctx.generate` and Jev calls made through `ctx.ask` are recorded under
 this stage and variant.
 
-Prompts port the legacy fresh-design text (livinit_pipeline
-src/nodes/asset_selection/agent.py, src/nodes/layout_fix.py). Tool-call wording
-becomes one JSON response, and the revision, preview-image, asset-feedback, and
-owned-asset branches are dropped. Placement is the code solver, not a prompt.
+The selection prompt ports the legacy fresh-design text (livinit_pipeline
+src/nodes/asset_selection/agent.py). Tool-call wording becomes one JSON
+response, and the revision, preview-image, asset-feedback, and owned-asset
+branches are dropped. Placement is the code solver, not a prompt; the final
+review prompt reuses the ported layout rules (app.rules.layout_rules).
 """
 
 from __future__ import annotations
@@ -46,20 +43,10 @@ from app import contracts
 from app.preview import png_bytes, render_plan
 from app.rules.door_geometry import format_door_for_prompt
 from app.rules.layout.analysis import analyze_layout, final_layout_check, findings_by_level
-from app.rules.layout.cleanup import (
-    clear_protected_paths,
-    run_deterministic_living_dining_cleanup,
-    run_deterministic_p0_cleanup,
-    satisfy_sofa_table_gaps,
-)
 from app.rules.layout.comfort import comfort_placement_facts
-from app.rules.layout.constants import ISSUE_KEYS_BY_TIER
-from app.rules.layout.dining import dining_chair_table_facts, dining_placement_facts
-from app.rules.layout.formatting import format_issues, format_layout
 from app.rules.layout.metrics import layout_issue_score
 from app.rules.layout.normalization import move_asset_with_supports, normalize_layout
 from app.rules.layout.solver import solve_layout
-from app.rules.layout.validation_geometry import overlap_separation_facts, wall_mount_placement_facts
 from app.rules.layout_rules import (
     LAYOUT_SYSTEM_INSTRUCTION,
     build_rules_block,
@@ -75,7 +62,7 @@ from app.rules.selection.catalog import _asset_matches_brand_preferences, _price
 from app.rules.selection.constants import BUDGET_EXCLUDED_CATEGORIES, BUDGET_FLEX_PCT, FIT_ANCHOR_SEATING
 from app.rules.selection.fit import fit_step_guidance
 from app.rules.selection.validation import is_decor_plant, requires_spacious_perimeter_storage, validate_selection
-from app.run import ModelCallError, StageContext, describe
+from app.run import StageContext, describe
 from app.shared_stages import KEEP, LIMIT_KEYS, RANKED_KEEP
 
 if TYPE_CHECKING:
@@ -382,11 +369,9 @@ def _selection_intent(intent: Record, slots: list[Record]) -> Record:
     }
 
 
-def _selection_prompt(
-    state: VariantState, intent: Record, fit_step: str | None, placement_feedback: str | None, reuse_rate: float
-) -> str:
+def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None, reuse_rate: float) -> str:
     """Legacy _build_selection_prompt for a fresh design, plus the reuse limit, slot gaps,
-    placement feedback after a failed layout, and the previous turn's feedback."""
+    and the previous turn's feedback."""
     shared = state["shared"]
     request, room = shared["request"], shared["room"]
     room_width, room_depth = request.room_area
@@ -602,8 +587,6 @@ OUTPUT JSON:
             + "\n".join(f'- {slot["label"]} ({slot["category"]})' for slot in gaps)
             + "\nName each one in gaps."
         )
-    if placement_feedback:
-        prompt += f"\n\n{placement_feedback}"
     previous = state.get("selection_validation")
     if previous and not previous.get("valid"):
         prompt += (
@@ -639,31 +622,15 @@ def _named_items(findings: list[Record], keys: set[str]) -> list[str]:
     return sorted(named)
 
 
-def _placement_feedback(state: VariantState) -> str:
-    """Reselection text after a failed layout: the placed selection, the final check
-    errors, and the items the remaining blocking findings name."""
-    instances = {_key(asset): asset for asset in state["instances"]}
-    named = list(dict.fromkeys(f"{instances[key]['asset_id']} ({instances[key]['category']})"
-                               for key in _named_items(state.get("blocking_findings", []), set(instances))))
-    return (
-        "PREVIOUS SELECTION PASSED VALIDATION, BUT ITS LAYOUT FAILED THE FINAL CHECK:\n"
-        f"{json.dumps([asset['uid'] for asset in state['selection']['selected_assets']])}\n"
-        f"LAYOUT ERRORS:\n{json.dumps(state.get('validation_errors', []))}\n"
-        f"Items named in the remaining blocking findings: {', '.join(named) or 'none'}.\n"
-        "Replace these items with smaller products, or select fewer items, so the room can be laid out. "
-        "Return the complete corrected selection."
-    )
-
-
 def _next_fit_step(state: VariantState) -> str | None:
     """Fit step for this turn: compact from the start when the room fit estimate warns,
-    compact after the first fit failure or failed layout, capped counts after the next.
-    A tabletop item too large for its supports is not a fit failure here (`support_fit_failed`)."""
+    compact after the first fit failure, capped counts after the next. A tabletop
+    item too large for its supports is not a fit failure here (`support_fit_failed`)."""
     step = state.get("fit_step")
     previous = state.get("selection_validation")
     if previous is None:
         return "compact" if state["shared"]["room"]["fit_warning"] else None
-    if previous.get("fit_failed") or (state.get("validation_errors") and "placement_feedback" not in state):
+    if previous.get("fit_failed"):
         return "capped" if step else "compact"
     return step
 
@@ -807,14 +774,13 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     """Run one selection turn: one model call, the Jev check, then the ported selection validator.
 
     Reads: `shared`, `pool` (this variant's candidates), `direction`,
-    `selection_turns` (turns already made), `selection` and
-    `selection_validation` from the previous turn as feedback, and after a
-    failed layout `validation_errors`, `blocking_findings`, and `instances`.
+    `selection_turns` (turns already made), and `selection` and
+    `selection_validation` from the previous turn as feedback.
     Returns: `selection` (the model's `selected_assets`, one entry per unit, and
     `gaps`), `selection_validation` (the legacy validator report: `valid: bool`,
-    `errors: list[str]`, ...), `instances`, `fit_step`, and after a failed
-    layout `placement_feedback`. `fit_satisfaction` comes from slot membership
-    and the constraint audit from `_constraint_audit`. The selection also fails
+    `errors: list[str]`, ...), `instances`, and `fit_step`. `fit_satisfaction`
+    comes from slot membership and the constraint audit from
+    `_constraint_audit`. The selection also fails
     when more than `ctx.run.product_reuse_rate` of its distinct products are
     marked `shared`. A selection that fails only fit estimates (the
     over-crowded footprint and the layout preflight size checks) is checked
@@ -834,12 +800,9 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     turn = state.get("selection_turns", 0) + 1
     if fit_step != state.get("fit_step"):
         ctx.run.note(f"selection turn {turn}: fit step {fit_step}", ctx.variant_index)
-    placement_feedback = state.get("placement_feedback")
-    if placement_feedback is None and state.get("validation_errors"):
-        placement_feedback = _placement_feedback(state)
     intent = _selection_intent(shared["intent"], shared["slots"])
     reuse_rate = ctx.run.product_reuse_rate
-    response = await ctx.generate(Selection, _selection_prompt(state, intent, fit_step, placement_feedback, reuse_rate))
+    response = await ctx.generate(Selection, _selection_prompt(state, intent, fit_step, reuse_rate))
 
     selected = [asset.model_dump() for asset in response.selected_assets]
     validation, audit = await _checked(state, ctx, selected, intent, fit_step, reuse_rate)
@@ -873,8 +836,6 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
         "instances": instances,
         "fit_step": fit_step,
     }
-    if placement_feedback is not None:
-        update["placement_feedback"] = placement_feedback
     ctx.data.update(
         turn=turn, valid=validation["valid"], errors=len(validation["errors"]), fit_step=fit_step,
         total_cost=float(validation["metrics"]["total_cost"]),
@@ -1059,51 +1020,18 @@ def _validated(state: VariantState, selected: list[Record], intent: Record, fit_
     return validation
 
 
-# --- place, repair, and correct ---------------------------------------------
-
-
-class Pose(BaseModel):
-    uid: str
-    x: float
-    y: float
-    rotation_z: float
-    on_top_of: str | None = Field(
-        default=None,
-        description=(
-            "Supporting parent UID. Omit this field to preserve the current support relationship; "
-            "use an empty string only to remove it."
-        ),
-    )
-
-
-class Correction(BaseModel):
-    poses: list[Pose]
+# --- place -------------------------------------------------------------------
 
 
 def _key(asset: Record) -> str:
     return str(asset.get("instance_key") or asset.get("uid") or "")
 
 
-def _pose_rows(layout: Record) -> list[Record]:
-    return [
-        {"uid": uid, "x": layout[uid]["position"][0], "y": layout[uid]["position"][1],
-         "rotation_z": layout[uid]["rotation"][2], "on_top_of": str(layout[uid].get("on_top_of") or "")}
-        for uid in sorted(layout)
-    ]
-
-
-def _apply_poses(layout: Record, poses: list[Pose], assets: list[Record]) -> Record:
+def _apply_poses(layout: Record, poses: list[Adjustment], assets: list[Record]) -> Record:
     """Apply model poses to a layout. Supported items move with their support; unmentioned items keep their pose."""
     for pose in poses:
-        if pose.uid not in layout or not all(math.isfinite(value) for value in (pose.x, pose.y, pose.rotation_z)):
-            continue
         layout = move_asset_with_supports(layout, pose.uid, pose.x, pose.y, assets)
-        placement = {**layout[pose.uid], "rotation": [0.0, 0.0, pose.rotation_z]}
-        if pose.on_top_of == "":
-            placement.pop("on_top_of", None)
-        elif pose.on_top_of in layout and pose.on_top_of != pose.uid:
-            placement["on_top_of"] = pose.on_top_of
-        layout = {**layout, pose.uid: placement}
+        layout = {**layout, pose.uid: {**layout[pose.uid], "rotation": [0.0, 0.0, pose.rotation_z]}}
     return layout
 
 
@@ -1119,14 +1047,6 @@ def _opening_lines(room: Record) -> list[str]:
         for index, window in enumerate(room["room_windows"])
     ]
     return lines
-
-
-def _path_fit_facts(state: VariantState) -> str:
-    preflight = state["selection_validation"]["metrics"].get("layout_preflight") or {}
-    return json.dumps({
-        "protected_path_zones": preflight.get("protected_path_zones", []),
-        "clusters": preflight.get("clusters", []),
-    })
 
 
 def _measure(state: VariantState, layout: Record) -> VariantState:
@@ -1165,12 +1085,13 @@ MAX_DROPS = 2
 
 
 async def place(state: VariantState, ctx: StageContext) -> VariantState:
-    """Place every selected instance with the code solver (app.rules.layout.solver), then let a model pick among ties.
+    """Place every selected instance with the code solver (app.rules.layout.solver). No model call.
 
     Reads: `shared`, `instances`, `selection_validation`; for a swap also
     `selection`, `pool`, and `fit_step`.
     Returns: `layout`, `issues`, `findings`, `blocking_findings` (P0, P1, and
-    critical P2), and `non_blocking_findings`; after a kept swap also
+    critical P2), `non_blocking_findings`, and `layout_options` (`_solve`'s
+    tied layouts, for finish to pick from); after a kept swap also
     `selection`, `selection_validation`, and `instances`.
 
     Runs in a worker thread: while the layout has unplaceable items or blocking
@@ -1181,21 +1102,11 @@ async def place(state: VariantState, ctx: StageContext) -> VariantState:
     chair if the selection stays valid, and the solver runs again. A swap or
     drop is kept only when the layout scores better. Notes each solve, swap, and
     drop.
-
-    When other solver layouts tie the result's layout_issue_score, `_arrange`
-    makes one model call (model key `arrange`) to pick one and nudge it. A
-    failed call, or any other error in the pick, keeps the solver's best layout
-    and is noted; the pick never fails the variant.
     """
     update, options = await asyncio.to_thread(_solve, state, ctx)
-    ctx.data["layout_options"] = len(options)
-    if len(options) > 1:
-        try:
-            update = {**update, **await _arrange({**state, **update}, ctx, options)}
-        except Exception as exc:  # CancelledError is not an Exception, so cancellation still propagates.
-            ctx.run.note(f"layout pick failed, kept the solver's best: {describe(exc)}", ctx.variant_index)
-    ctx.data.update(placed=len(update["layout"]), findings=len(update["findings"]), blocking=len(update["blocking_findings"]))
-    return update
+    ctx.data.update(placed=len(update["layout"]), findings=len(update["findings"]),
+                    blocking=len(update["blocking_findings"]), layout_options=len(options))
+    return {**update, "layout_options": options}
 
 
 def _solve(state: VariantState, ctx: StageContext) -> tuple[VariantState, list[VariantState]]:
@@ -1203,7 +1114,7 @@ def _solve(state: VariantState, ctx: StageContext) -> tuple[VariantState, list[V
 
     Also returns the layouts to pick from, measured: the result first, then each
     alternative of its solve with the same layout_issue_score and no more
-    unplaceable items.
+    unplaceable items. Each option holds only `layout` and its findings.
     """
     room, intent = state["shared"]["room"], state["shared"]["intent"]
 
@@ -1235,7 +1146,7 @@ def _solve(state: VariantState, ctx: StageContext) -> tuple[VariantState, list[V
             update, report = {**update, **selection, **trial}, trial_report
             ctx.data["swaps" if change is _swap else "drops"] += 1
     current, best = {**state, **update}, layout_issue_score(update["issues"])
-    options = [update]
+    options = [{key: update[key] for key in ("layout", "issues", "findings", "blocking_findings", "non_blocking_findings")}]
     for alternative in report["alternatives"]:
         if len(alternative["unplaceable"]) <= len(report["unplaceable"]):
             option = _measure(current, alternative["layout"])
@@ -1305,7 +1216,7 @@ def _drop_chair(state: VariantState, keys: list[str], reuse_rate: float) -> tupl
     return update, f"dropped dining chair {chairs[-1]} ({len(chairs)} -> {len(chairs) - 1} chairs)"
 
 
-ARRANGE_MAX_MOVE_M = 0.5
+# --- finish ------------------------------------------------------------------
 
 
 class Adjustment(BaseModel):
@@ -1317,8 +1228,10 @@ class Adjustment(BaseModel):
 
 class Arrangement(BaseModel):
     choice: str = Field(description="Label of the chosen variant, such as A.")
-    reason: str = Field(description="One sentence on why it reads best as a room.")
-    adjustments: list[Adjustment] = Field(description="Small moves of the chosen variant's pieces; empty when none help.")
+    review: str = Field(description="Two or three sentences on what is wrong with the chosen variant as a room, "
+                                    "or that it works.")
+    adjustments: list[Adjustment] = Field(description="New poses of the chosen variant's pieces that fix the review's "
+                                                      "problems; empty when none help.")
 
 
 def _plan_png(state: VariantState, layout: Record, label: str) -> bytes:
@@ -1331,14 +1244,16 @@ def _plan_png(state: VariantState, layout: Record, label: str) -> bytes:
 
 
 def _arrangement_prompt(state: VariantState, options: list[VariantState], images: list[bytes]) -> list[str | bytes]:
-    """The pick prompt: the room, request, pieces, and each option's poses, then each option's plan image."""
+    """The final review prompt: the request and brief, the layout rules, the room, the pieces, and each option's poses,
+    then each option's plan image."""
     shared = state["shared"]
-    request, room = shared["request"], shared["room"]
+    request, room, intent = shared["request"], shared["room"], shared["intent"]
     room_width, room_depth = request.room_area
     labels = ascii_uppercase[:len(options)]
+    requested = [f"{item['label']} x{item['count']}" for item in intent.get("requested_items") or []]
     pieces = [
         f"- {_key(a)} ({normalize_category(a.get('category'))}), W×D×H={float(a.get('width') or 0):.2f}×"
-        f"{float(a.get('depth') or 0):.2f}×{float(a.get('height') or 0):.2f}m"
+        f"{float(a.get('depth') or 0):.2f}×{float(a.get('height') or 0):.2f}m, mount_type={a.get('mount_type') or 'unknown'}"
         for a in state["instances"]
     ]
     poses = [
@@ -1346,24 +1261,43 @@ def _arrangement_prompt(state: VariantState, options: list[VariantState], images
                                                  round(pose["rotation"][2], 3)] for key, pose in sorted(option["layout"].items())})
         for label, option in zip(labels, options, strict=True)
     ]
-    text = f"""You are an interior designer. The layout solver arranged this room {len(options)} ways with the same pieces, and every arrangement passes the layout checks equally well. Choose the variant that reads best as a room, then suggest small fixes to it.
+    task = (
+        f"The layout solver arranged this room {len(options)} ways with the same pieces, and every arrangement passes "
+        "the layout checks equally well. Choose the variant that reads best as a room, then review it."
+        if len(options) > 1 else
+        "The layout solver arranged this room once, as variant A. Choose A and review it."
+    )
+    text = f"""You are an interior designer giving a room design its final review. {task}
 
 Each image is one variant drawn top-down and titled with its label: +x right, +y up, 1 m grid. Walls are dark, doors brown with their swing, windows blue. Each piece is its footprint labeled with its instance key; the line ending in a dot points to its front. Blue: floor furniture; green: items on a support; orange: wall-mounted; tan: rugs; grey outline: ceiling items.
 
-Judge each variant as a room:
+Review the chosen variant as a room, against the request and the layout rules below:
 - Clear zones: each group (bed, sitting, dining, work) reads as one area, and zones do not crowd each other.
 - A TV faces its viewers, and its back does not face another zone.
 - The bed's headboard is against a wall, with access from its sides and foot.
 - Large pieces stand against a wall or anchor a zone; nothing floats in the middle of the room without a purpose.
 - Walkways stay open from the door to each zone and between zones.
+Write two or three sentences on what is wrong with it, or say that it works.
 
-Adjustments refine the chosen variant only. Move a piece at most {ARRANGE_MAX_MOVE_M} m, and turn it only by quarter turns (rotation_z in radians: 0 faces +x, 1.571 faces +y, 3.142 faces -x, 4.712 faces -y). Items on a support move with it. List only pieces that should move, and return an empty list when the variant already reads well. The server rejects larger moves and reverts adjustments that make the layout checks worse.
+Then return adjustments that fix the problems you name. Give each piece that should move its new center x, y and its rotation_z. Move it as far as the fix needs, and turn it only by quarter turns (rotation_z in radians: 0 faces +x, 1.571 faces +y, 3.142 faces -x, 4.712 faces -y). Items on a support move with it. List only pieces that should move, and return an empty list when nothing needs to change. The server reverts the adjustments when they make the layout checks worse.
+
+REQUEST: {request.user_intent}
+REQUESTED ITEMS: {", ".join(requested) or "none"}
+STYLE HINTS: {", ".join(intent.get("style_hints") or []) or "none"}
+
+{coordinate_system_block(room_width, room_depth)}
+
+{build_rules_block(include_definitions=True, room_type=room["room_type"])}
 
 ROOM: {room["room_type"].replace("_", " ")}, {room_width:.2f} m x {room_depth:.2f} m
+ROOM BOUNDARY VERTICES:
+{json.dumps(room["room_vertices"])}
+
 DOORS AND WINDOWS:
 {chr(10).join(_opening_lines(room)) or "None"}
 
-REQUEST: {request.user_intent}
+PROTECTED CIRCULATION PATHS:
+{json.dumps(room["protected_paths"]) if room["protected_paths"] else "None"}
 
 PIECES:
 {chr(10).join(pieces)}
@@ -1371,267 +1305,91 @@ PIECES:
 POSES (instance key: [x, y, rotation_z]):
 {chr(10).join(poses)}
 
-Return JSON: {{"choice": "A", "reason": "one sentence", "adjustments": [{{"uid": "instance key", "x": number, "y": number, "rotation_z": number}}]}}"""
+Return JSON: {{"choice": "A", "review": "two or three sentences", "adjustments": [{{"uid": "instance key", "x": number, "y": number, "rotation_z": number}}]}}"""
     parts: list[str | bytes] = [text]
     for label, image in zip(labels, images, strict=True):
         parts += [f"variant {label}:", image]
     return parts
 
 
-def _small_move(pose: Record, adjustment: Adjustment) -> bool:
-    """At most ARRANGE_MAX_MOVE_M from the current position, turned by whole quarter turns."""
-    if not all(math.isfinite(value) for value in (adjustment.x, adjustment.y, adjustment.rotation_z)):
-        return False
-    turns = (adjustment.rotation_z - float(pose["rotation"][2])) / (math.pi / 2)
-    return (math.dist(pose["position"][:2], (adjustment.x, adjustment.y)) <= ARRANGE_MAX_MOVE_M + 1e-6
-            and abs(turns - round(turns)) < 0.02)
-
-
 async def _arrange(state: VariantState, ctx: StageContext, options: list[VariantState]) -> VariantState:
-    """Pick one of the tied `options` (labeled A, B, ...) with one model call, then apply its small adjustments.
+    """Pick one of the `options` (labeled A, B, ...), review it, and apply its adjustments, with one model call.
 
-    The call gets each option's plan image and `_arrangement_prompt`; an unknown
-    label keeps A. Adjustments to unknown items, moves over ARRANGE_MAX_MOVE_M,
-    and turns that are not whole quarter turns are rejected; the rest are kept
-    when layout_issue_score does not get worse. Returns the chosen option,
-    measured; notes the pick, its reason, and the adjustments.
+    The call gets `_arrangement_prompt` with each option's plan image, under
+    LAYOUT_SYSTEM_INSTRUCTION. An unknown label keeps A as it is. Adjustments
+    to unknown items, with non-finite values, or with a rotation that is neither
+    a whole quarter turn from the current one nor aligned with the room axes
+    (floor lamps start off-axis) are rejected; the rest are kept when layout_issue_score does
+    not get worse. Returns the chosen option, measured; notes the pick, the
+    review, and the adjustments. Sets `layout_pick` and `review` in `ctx.data`.
     """
     labels = ascii_uppercase[:len(options)]
     images = await asyncio.to_thread(lambda: [_plan_png(state, option["layout"], label)
                                               for label, option in zip(labels, options, strict=True)])
-    response = await ctx.generate(Arrangement, _arrangement_prompt(state, options, images), model_key="arrange")
+    response = await ctx.generate(Arrangement, _arrangement_prompt(state, options, images), system=LAYOUT_SYSTEM_INSTRUCTION)
     label = response.choice.strip().upper()
-    text = f"layout pick: {label} of {len(options)}: {response.reason.strip()}"
     if label not in labels:
-        label, text = "A", f"layout pick: unknown choice {response.choice!r}, kept A of {len(options)}"
+        ctx.run.note(f"final review: unknown choice {response.choice!r}, kept A of {len(options)}", ctx.variant_index)
+        return options[0]
     chosen = options[labels.index(label)]
     layout = chosen["layout"]
-    small = [adjustment for adjustment in response.adjustments
-             if adjustment.uid in layout and _small_move(layout[adjustment.uid], adjustment)]
-    rejected = [adjustment.uid for adjustment in response.adjustments if adjustment not in small]
-    if small:
-        poses = [Pose(**adjustment.model_dump()) for adjustment in small]
-        trial = await asyncio.to_thread(lambda: _measure(state, _apply_poses(layout, poses, state["instances"])))
+
+    def allowed(adjustment: Adjustment) -> bool:
+        """A placed item and finite values, turned by whole quarter turns or set square to the room."""
+        values = (adjustment.x, adjustment.y, adjustment.rotation_z)
+        if adjustment.uid not in layout or not all(math.isfinite(value) for value in values):
+            return False
+        return any(abs(turns - round(turns)) < 0.02 for turns in (
+            (adjustment.rotation_z - float(layout[adjustment.uid]["rotation"][2])) / (math.pi / 2),
+            adjustment.rotation_z / (math.pi / 2)))
+
+    adjustments = [adjustment for adjustment in response.adjustments if allowed(adjustment)]
+    rejected = [adjustment.uid for adjustment in response.adjustments if not allowed(adjustment)]
+    review = response.review.strip()
+    text = f"final review: {label} of {len(options)}: {review}"
+    if adjustments:
+        trial = await asyncio.to_thread(lambda: _measure(state, _apply_poses(layout, adjustments, state["instances"])))
         before, after = layout_issue_score(chosen["issues"]), layout_issue_score(trial["issues"])
         kept = after <= before
-        text += (f"; adjusted {', '.join(adjustment.uid for adjustment in small)}: {'kept' if kept else 'reverted'}, "
+        text += (f"; adjusted {', '.join(adjustment.uid for adjustment in adjustments)}: {'kept' if kept else 'reverted'}, "
                  f"score {list(before)} -> {list(after)}")
         chosen = trial if kept else chosen
     if rejected:
-        text += f"; rejected too large or unknown: {', '.join(rejected)}"
+        text += f"; rejected unknown, non-finite, or off-axis: {', '.join(rejected)}"
     ctx.run.note(text, ctx.variant_index)
-    ctx.data["layout_pick"] = label
+    ctx.data.update(layout_pick=label, review=review)
     return chosen
 
 
-async def repair(state: VariantState, ctx: StageContext) -> VariantState:
-    """Apply the ported code fixes in order, keeping each only if layout_issue_score improves. No model call.
+async def finish(state: VariantState, ctx: StageContext) -> VariantState:
+    """Review the layout with one model call, run the final check, and deliver. Never fails the variant.
 
-    Reads: `shared`, `instances`, `layout`, `issues`.
-    Returns: `layout`, `issues`, `findings`, `blocking_findings`, and
-    `non_blocking_findings` after the kept fixes. The steps are the legacy P0
-    cleanup, the living and dining cleanup, protected-path clearing, and the
-    sofa-to-table gap fix. Notes each step's status.
+    Reads: `shared`, `instances`, `selection_validation`, and `layout_options`
+    (place's tied layouts, the solver's best first).
+    Returns: `instances`, `layout` and its findings, `render_manifest`
+    (`contracts.render_manifest(request, instances)`), `selected_assets`
+    (`contracts.selected_asset` per instance), and `total_cost` (purchasable
+    prices only).
+
+    `_arrange` picks one option, reviews it, and adjusts it (stage model
+    `finish`). A failed call, or any other error in the review, keeps the
+    solver's best layout and is noted. Then final_layout_check runs: each
+    selected instance placed exactly once, no blocking finding. When it fails,
+    `_drop_items` removes the items it fails on, and the rest is delivered,
+    even when blocking findings that name no item remain. Notes the removals.
     """
-    room, instances = state["shared"]["room"], state["instances"]
-    room_area, boundary = tuple(room["room_area"]), room["room_vertices"]
-    openings = {"room_doors": room["room_doors"], "room_windows": room["room_windows"], "protected_paths": room["protected_paths"]}
-    steps = (
-        ("p0 cleanup", lambda layout: run_deterministic_p0_cleanup(layout, instances, room_area, boundary, **openings)),
-        ("living/dining cleanup", lambda layout: run_deterministic_living_dining_cleanup(layout, instances, room_area, boundary, **openings)),
-        ("path clearing", lambda layout: clear_protected_paths(layout, instances, room_area, boundary, **openings, room_type=room["room_type"])),
-        ("sofa-table gap", lambda layout: satisfy_sofa_table_gaps(layout, instances, room_area, boundary, **openings, room_type=room["room_type"])),
-    )
-    current: VariantState = {key: state[key] for key in ("layout", "issues", "findings", "blocking_findings", "non_blocking_findings")}
-    statuses = []
-    for name, step in steps:
-        layout, report = step(current["layout"])
-        candidate = _measure(state, layout)
-        kept = layout_issue_score(candidate["issues"]) < layout_issue_score(current["issues"])
-        if kept:
-            current = candidate
-        statuses.append(f"{name} {report['status']}{', kept' if kept else ''}")
-    ctx.run.note("repair: " + "; ".join(statuses), ctx.variant_index)
-    ctx.data.update(placed=len(current["layout"]), findings=len(current["findings"]),
-                    blocking=len(current["blocking_findings"]),
-                    improved=layout_issue_score(current["issues"]) < layout_issue_score(state["issues"]))
-    return current
-
-
-def _correction_prompt(state: VariantState) -> str:
-    """Legacy layout_fix prompt for a fresh design, answered with poses instead of edit tools."""
-    shared = state["shared"]
-    request, room = shared["request"], shared["room"]
-    room_width, room_depth = request.room_area
-    room_area = (room_width, room_depth)
-    room_type = room["room_type"]
-    layout, assets, issues = state["layout"], state["instances"], state["issues"]
-    tiers = tuple(tier for tier, keys in ISSUE_KEYS_BY_TIER.items() if any(issues.get(key) for key in keys)) or ("P0", "P1", "P2")
-    asset_lines = [
-        f"- {_key(a)} ({a.get('category', 'unknown')}), W×D×H={float(a.get('width') or 0):.2f}×"
-        f"{float(a.get('depth') or 0):.2f}×{float(a.get('height') or 0):.2f}m"
-        f", mount_type={a.get('mount_type') or 'unknown'}, features={json.dumps(a.get('features') or [])}"
-        for a in assets
-    ]
-    proposal = state.get("correction_proposals", 0) + 1
-    return f"""Solve the measurable placement violations by reasoning about the complete room layout.
-
-This is not an iteration edit.
-ORIGINAL DESIGN REQUEST:
-{request.user_intent}
-
-Preserve the requested functions throughout repair. When changing a group's
-zone or facing axis, choose the TV/support poses with its intended viewers (sitting,
-bed or both). Do not require a bed-only TV to face the sofa. Keep the console front accessible and chair backs outside the
-viewing line; collision-free footprints alone do not prove either condition.
-
-{coordinate_system_block(room_width, room_depth)}
-
-ROOM BOUNDARY VERTICES:
-{json.dumps(room["room_vertices"])}
-
-{build_rules_block(tiers=tiers, include_definitions=True, room_type=room_type)}
-
-DOORS:
-{chr(10).join(format_door_for_prompt(i, door, boundary=room["room_vertices"], room_area=room_area) for i, door in enumerate(room["room_doors"])) or "None"}
-
-OPENINGS:
-{chr(10).join(_opening_lines(room)) or "None"}
-
-WINDOW GEOMETRY:
-{json.dumps(room["room_windows"]) if room["room_windows"] else "None"}
-
-PROTECTED CIRCULATION PATHS:
-{json.dumps(room["protected_paths"]) if room["protected_paths"] else "None"}
-
-SELECTION-STAGE PHYSICAL FIT FACTS:
-{_path_fit_facts(state)}
-These are exact feasibility facts, not a design recommendation. For a living-seating cluster, `as_dimensioned` means the listed arrangement width runs across the named zone and its depth runs along that zone; `quarter_turn` swaps those axes. Use these facts to size a complete sofa/table/accent-seat group within a zone. Choose its facing axis together with the selected TV/support at a usable wall or intentional Studio divider serving its requested viewers; a feasible seating footprint alone does not establish a usable media arrangement.
-
-ACTIVE ASSETS ({len(layout)}):
-{chr(10).join(asset_lines) or "None"}
-
-CURRENT NORMALIZED FULL-CANDIDATE ROWS:
-{json.dumps(_pose_rows(layout))}
-
-CURRENT ASSET BOUNDS:
-{format_layout(layout, assets)}
-
-MEDIA COMFORT FACTS (product heuristics; preserve every requested viewing target):
-{json.dumps(comfort_placement_facts(assets, room_type))}
-
-DINING PLACEMENT FACTS (table-local axes; chair fronts face the occupied edge):
-{json.dumps(dining_placement_facts(assets))}
-CURRENT CHAIR/TABLE GEOMETRY (negative signed gap means penetration):
-{json.dumps(dining_chair_table_facts(layout, assets))}
-These translations hold the table and chair yaw fixed; they solve only the edge gap.
-Check tabletop aim, occupied edge width and all pull-out/room constraints before choosing them.
-Center offsets include half the chair depth. Front/back edges run along table width;
-left/right edges run along table depth. Rotate these local axes with the table.
-When separating overlapping chairs from a table, reserve their full pull-out envelope
-at the same time. If it hits a wall, doorway, bed-access strip or furniture, move/rotate
-the complete editable dining group into a usable span. Do not trade overlaps for blocked
-chair pull-out or move frozen furniture. Envelopes alone do not certify scene clearance.
-Chair findings identify their table/group_members, blockers and clearance_shortfall_m.
-Repair coupled conflicts together: check both chair backs after moving a table or console,
-and use adjacent occupied edges for two diners when opposing edges cannot clear.
-Avoid alternating a chair between the same two known blockers. For equal issue counts,
-the solver retains lower overlap penetration, then lower total access shortfall and worst/total viewer-distance
-excess; partial progress does not make a hard failure valid.
-Bed/dining access findings include center_bounds_for_room_bbox: allowed center
-intervals for the item AND its service band at its current yaw, using
-the room bounding box. A center outside those intervals cannot have usable access.
-Irregular boundaries, doors and other groups still need their separate checks.
-For no_usable_side, inspect both side records: a tiny headboard overrun can invalidate
-both full side strips even when there is no furniture blocker. Correct that boundary
-offset before rearranging other groups; only one usable bed side is required.
-
-EXACT VALIDATION FINDINGS:
-{format_issues(issues)}
-
-EXACT OVERLAP SEPARATIONS (world XY; each option separates only the named pair):
-{json.dumps(overlap_separation_facts(layout, assets, issues.get("overlaps", [])))}
-Choose an editable side and direction that also preserves all service regions.
-
-WALL-MOUNT SPANS AT CURRENT HEIGHT (actual wall segments; empty center intervals cannot fit this item):
-{json.dumps(wall_mount_placement_facts(layout, assets, room["room_vertices"], room["room_doors"], room["room_windows"], room_area))}
-Choose a fitting interval on another wall when the current span is narrower than the item.
-Keep the asset's full height inside the room; these spans do not certify furniture/artwork collisions.
-
-CONTROLLED-EDIT PROTOCOL:
-- Preserve mounting requirements: wall_secured items remain floor-standing against a wall; wall_mounted and ceiling_mounted items remain on their mounting surface. Unknown mount_type provides no additional constraint.
-- This is repair proposal {proposal}. Return the poses of every asset that must move as one proposal. Every pose must include uid, x, y, rotation_z, and on_top_of. Do not retranscribe unchanged assets.
-- A relational gap correction must also keep each resulting footprint inside the
-  room and preserve its valid wall gap. If moving the anchor would cross its wall,
-  move the editable neighboring table instead; do not fix one gap by creating a
-  boundary violation.
-- The server applies the poses to the normalized current draft. Every unmentioned asset keeps its exact pose and support relationship.
-- Before the first candidate, make a relational zone plan: use protected paths and openings to divide the usable floor into connected zones, assign each complete functional group to one zone, choose its anchor/facing axis, and only then calculate coordinates.
-- A protected path that spans the room is a divider, not spare floor. Do not split a conversation, dining, or work group across it. A media focal wall may be across the path from seating when every physical asset stays outside the path; never put a coffee table or chair in the path merely to align seating with media. If an inseparable group does not fit on one side in its current orientation, rotate or re-anchor the whole group.
-- The server includes supported children in their parent's translation, canonicalizes rotations, support relationships, rugs, wall mounts, and z values, but does not silently relocate floor furniture for window or service-item preferences.
-- Apply world-axis translation intervals exactly; do not re-estimate clearances from nominal width/depth after rotation.
-- When a protected-path blocker belongs to a functional group, move the sofa, table, and conversation chairs together, or rotate/re-anchor that group before clearing the path. Moving only the blocker is acceptable only when it preserves every measured relationship.
-- A separate best candidate is retained server-side, so explore coordinated/global corrections when a local nudge cannot satisfy competing constraints.
-- You may reposition or rotate any number of assets and may make moves larger than 1m when the whole-room solution requires it.
-- Optimize lexicographically: hard geometry first, then critical functional issues, then remaining functional issues.
-- Solving terminates when P0, P1, and critical P2 findings are clear. Noncritical P2 findings are optimization guidance and must not trigger unrelated movement after the blocking findings are clear.
-- Use numeric issue measurements and normalized coordinates as authoritative facts.
-- Prioritize the exact remaining blocking findings. When a measured translation or gap correction can resolve a blocker without creating another, apply that correction before changing the group's zone or orientation. Re-anchor the group only when local corrections conflict with other blocking findings.
-- Poses describe the chosen edit only.
-
-Submit the controlled edit now as JSON: {{"poses": [{{"uid": "...", "x": number, "y": number, "rotation_z": number, "on_top_of": ""}}]}}"""
-
-
-async def correct(state: VariantState, ctx: StageContext) -> VariantState:
-    """Make one correction proposal for the findings left after repair: apply, normalize, analyze.
-
-    Reads: `shared`, `selection`, `layout`, `issues`, `correction_proposals`
-    (proposals already made).
-    Returns the candidate's `layout` and findings when it improves the score
-    (fewest physical findings, then critical function, then the rest). A proposal
-    that does not improve, or a failed model call (noted, keeping the best layout),
-    sets `correction_escalated` when LLM_STAGE_MODELS has a `correct_escalate`
-    model and this layout has not escalated yet, so the next proposals use that
-    model; otherwise it sets `correction_stalled`, which ends correction.
-    """
-    escalated = state.get("correction_escalated", False)
-    ctx.data.update(placed=len(state["layout"]), findings=len(state["findings"]),
-                    blocking=len(state["blocking_findings"]), improved=False)
+    options = state["layout_options"]
+    ctx.data.update(layout_pick=None, review=None)
     try:
-        response = await ctx.generate(Correction, _correction_prompt(state), system=LAYOUT_SYSTEM_INSTRUCTION,
-                                      model_key="correct_escalate" if escalated else None)
-    except ModelCallError as exc:
-        ctx.run.note(f"correction call failed, kept the best layout: {describe(exc)}", ctx.variant_index)
-        response = None
-    if response is not None:
-        candidate = _measure(state, _apply_poses(state["layout"], response.poses, state["instances"]))
-        if layout_issue_score(candidate["issues"]) < layout_issue_score(state["issues"]):
-            ctx.data.update(placed=len(candidate["layout"]), findings=len(candidate["findings"]),
-                            blocking=len(candidate["blocking_findings"]), improved=True)
-            return candidate
-    if not escalated and "correct_escalate" in ctx.run.model.stages:
-        ctx.run.note(f"correction escalated to {ctx.run.model.stages['correct_escalate'][0]}", ctx.variant_index)
-        return {"correction_escalated": True}
-    return {"correction_stalled": True}
-
-
-# --- validate ----------------------------------------------------------------
-
-
-async def validate(state: VariantState, ctx: StageContext) -> VariantState:
-    """Final check: each selected instance placed exactly once, no blocking finding.
-
-    Reads: `shared`, `selection`, `layout`, `blocking_findings`.
-    Returns on pass: `render_manifest` (`contracts.render_manifest(request, instances)`),
-    `selected_assets` (`contracts.selected_asset` per instance), and `total_cost`
-    (purchasable prices only). Returns on fail: `validation_errors` and no
-    `render_manifest`.
-    """
-    shared = state["shared"]
-    room, layout, assets = shared["room"], state["layout"], state["instances"]
+        chosen = await _arrange(state, ctx, options)
+    except Exception as exc:  # CancelledError is not an Exception, so cancellation still propagates.
+        ctx.run.note(f"final review failed, kept the solver's best: {describe(exc)}", ctx.variant_index)
+        chosen = options[0]
+    current: VariantState = {"instances": state["instances"], **chosen}
+    room = state["shared"]["room"]
     check = final_layout_check(
-        layout,
-        assets,
+        current["layout"],
+        current["instances"],
         room_type=room["room_type"],
         room_area=room["room_area"],
         room_vertices=room["room_vertices"],
@@ -1639,10 +1397,15 @@ async def validate(state: VariantState, ctx: StageContext) -> VariantState:
         room_windows=room["room_windows"],
         protected_paths=room["protected_paths"],
     )
-    ctx.data.update(valid=check["valid"], errors=len(check["errors"]))
+    left: list[Record] = []
+    removed: list[str] = []
     if not check["valid"]:
-        return {"validation_errors": check["errors"]}
-    return _delivery(shared, layout, assets)
+        current, removed = await asyncio.to_thread(_drop_items, {**state, **current})
+        left = current["blocking_findings"]
+        ctx.run.note(f"dropped {', '.join(removed) or 'nothing'} for the final check"
+                     + (f"; delivered with {len(left)} blocking findings that name no item" if left else ""), ctx.variant_index)
+    ctx.data.update(valid=not left, errors=len(left), dropped=len(removed))
+    return {**current, **_delivery(state["shared"], current["layout"], current["instances"])}
 
 
 def _delivery(shared: Shared, layout: Record, assets: list[Record]) -> VariantState:
@@ -1667,28 +1430,16 @@ def _delivery(shared: Shared, layout: Record, assets: list[Record]) -> VariantSt
     }
 
 
-async def drop(state: VariantState, ctx: StageContext) -> VariantState:
-    """Remove the items the final check fails on, then deliver the rest. No model call.
+def _drop_items(state: VariantState) -> tuple[VariantState, list[str]]:
+    """Remove the items the final check fails on (finish runs this in a worker thread).
 
-    Runs after the last failed validate, when no reselection is left. Reads:
-    `shared`, `instances`, `layout`, and its findings. First removes the
+    Reads `shared`, `instances`, `layout`, and its findings. First removes the
     instances the layout is missing. Then, while blocking findings remain and
     name an item, removes one named item a round: non-anchor items first, then
     the removal that leaves the best layout_issue_score, then the smallest
-    footprint. Items resting on a removed item go with it. Returns `instances`,
-    the layout and its findings, and what validate returns on pass, even when
-    blocking findings that name no item remain. Notes the removals.
+    footprint. Items resting on a removed item go with it. Returns the update
+    (`instances`, `layout`, and its findings) and the removed instance keys.
     """
-    current, removed = await asyncio.to_thread(_drop_items, state)
-    left = current["blocking_findings"]
-    ctx.run.note(f"dropped {', '.join(removed) or 'nothing'} for the final check"
-                 + (f"; delivered with {len(left)} blocking findings that name no item" if left else ""), ctx.variant_index)
-    ctx.data.update(valid=not left, errors=len(left), dropped=len(removed))
-    return {**current, **_delivery(state["shared"], current["layout"], current["instances"])}
-
-
-def _drop_items(state: VariantState) -> tuple[VariantState, list[str]]:
-    """`drop` in a worker thread: the layout after the removals, and the removed instance keys."""
     anchors = set().union(*_ANCHOR_CATEGORIES.get(state["shared"]["room"]["room_type"], (FIT_ANCHOR_SEATING,)))
     current: VariantState = {key: state[key] for key in ("instances", "layout", "issues", "findings", "blocking_findings",
                                                           "non_blocking_findings")}

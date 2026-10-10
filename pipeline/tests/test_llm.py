@@ -89,24 +89,20 @@ def test_stage_models_route_each_listed_stage_to_its_model_and_thinking_level():
         return httpx.Response(200, json={"candidates": [{"content": {"role": "model", "parts": [{"text": '{"note": "ok"}'}]}}]})
 
     model = GeminiModel(gemini_client("test-key", httpx.MockTransport(handler)), "gemini-3.8-flash",
-                        stages="place=gemini-3.5-flash-lite:minimal, correct=gemini-3.1-flash-lite, correct_escalate=gemini-3.8-flash:medium")
+                        stages="interpret=gemini-3.5-flash-lite:minimal, finish=gemini-3.1-flash-lite")
     run = RunContext("test", REQUEST, model, 3)
 
     async def main() -> None:
-        for stage in ("select", "place", "correct"):
+        for stage in ("select", "interpret", "finish"):
             await StageContext(run, stage, 0).generate(Plan, "go")
-        await StageContext(run, "correct", 0).generate(Plan, "go", model_key="correct_escalate")
 
     asyncio.run(main())
     assert [(path.rsplit("/", 1)[-1], config["thinking_level"]) for path, config in sent] == [
         ("gemini-3.8-flash:generateContent", "LOW"),
         ("gemini-3.5-flash-lite:generateContent", "MINIMAL"),
         ("gemini-3.1-flash-lite:generateContent", "LOW"),
-        ("gemini-3.8-flash:generateContent", "MEDIUM"),
     ]
-    assert [call["model"] for call in run.model_calls] == [
-        "gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash"]
-    assert [call["stage"] for call in run.model_calls][-1] == "correct"
+    assert [call["model"] for call in run.model_calls] == ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
 
 
 @pytest.mark.parametrize("value", ["place", "place=", "place=gemini-3.5-flash-lite:fast"])

@@ -20,7 +20,7 @@ events. The service reads these variables from the repository `.env`:
 | `GEMINI_API_KEY` | Gemini model calls and query embeddings. |
 | `LOCAL_CONNECTION_STRING` | Postgres with the prepared catalog and embeddings. |
 | `LLM_DESIGN_MODEL` | Model for the design stages. Defaults to `gemini-3.8-flash`. |
-| `LLM_STAGE_MODELS` | Optional model and thinking level per stage, such as `select=gemini-3.5-flash-lite:minimal,correct=gemini-3.5-flash-lite:minimal`. Stages: `interpret`, `select`, `correct`. `correct_escalate` sets the model correction switches to after a proposal does not improve; without it, correction stops there. `arrange` sets the model that picks among tied solver layouts in `place`. Unlisted stages use `LLM_DESIGN_MODEL` at `low`; for `arrange` that keeps the call at 2-6 s, while `medium` takes 7-54 s. |
+| `LLM_STAGE_MODELS` | Optional model and thinking level per stage, such as `select=gemini-3.5-flash-lite:minimal,finish=gemini-3.8-flash:low`. Stages: `interpret`, `select`, `finish` (the final layout review). Unlisted stages use `LLM_DESIGN_MODEL` at `low`. |
 | `MODEL_HEDGE_AFTER_S` | Seconds before a slow model call gets a duplicate; the first answer wins and the other call is cancelled. Defaults to `8`; `0` turns it off. |
 | `JEV_API_KEY` | Jev (typesafe-sdk) yes/no questions. |
 | `JEV_MODEL` | Jev model. Defaults to the pinned `jev-1.13.0`. |
@@ -46,11 +46,10 @@ Every `node_complete` event includes `data` with facts from that stage:
 | retrieve | Slot and candidate counts, gap labels, and `preview` with the top product per nonempty slot |
 | rank | `ranked_slots`, `shared_products` (distinct products held by multiple variants, including small shared slots) |
 | select | `turn`, `valid`, error count, `fit_step`, `total_cost`, and unique selected `items`, capped at the slot count |
-| place | `placed`, finding and blocking counts, kept `swaps` and `drops` |
-| repair, correct | `placed`, finding and blocking counts, `improved` |
-| validate | `valid`, error count |
+| place | `placed`, finding and blocking counts, kept `swaps` and `drops`, `layout_options` (tied layouts offered to the review) |
+| finish | `valid` and `errors` (blocking findings left), `dropped` item count, `layout_pick` (A to D, or null when the review failed), `review` (text, or null) |
 
-After validation passes, `app/preview.py` draws the layout in a worker thread.
+After finish builds the delivery, `app/preview.py` draws the layout in a worker thread.
 The PNG is saved to `<runs_dir>/<run_id>/variant_<index>.png`, where `runs_dir`
 defaults to `pipeline/.data/runs`. The ready variant includes
 `preview_url: "/runs/<run_id>/previews/<index>.png"`. A render or image write

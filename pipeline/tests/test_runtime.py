@@ -15,7 +15,7 @@ from google.genai import types
 from pydantic import BaseModel
 
 from app import contracts
-from app.graph import MAX_CORRECTION_PROPOSALS, MAX_RESELECTIONS, MAX_SELECTION_TURNS, Stages
+from app.graph import MAX_SELECTION_TURNS, Stages
 from app.jev import Jev
 from app.llm import GeminiModel, gemini_client
 from app.main import create_app
@@ -152,27 +152,15 @@ async def place(state, ctx):
     return {"layout": {"sofa_1": {}}, "findings": [{"level": "P0"}], "blocking_findings": [{"level": "P0"}]}
 
 
-async def repair(state, ctx):
-    return {}
-
-
-async def correct(state, ctx):
-    await ctx.generate(Plan, "correct")
-    return {"findings": [], "blocking_findings": []}
-
-
-async def validate(state, ctx):
-    if state["blocking_findings"]:
-        return {"validation_errors": ["blocking findings remain"]}
+async def finish(state, ctx):
+    await ctx.generate(Plan, "finish")
     return {
+        "findings": [],
+        "blocking_findings": [],
         "render_manifest": contracts.render_manifest(state["shared"]["request"], [INSTANCE]),
         "selected_assets": [contracts.selected_asset(INSTANCE)],
         "total_cost": 1200.0,
     }
-
-
-async def drop(state, ctx):
-    return await validate({**state, "blocking_findings": []}, ctx)
 
 
 STAGES = Stages(
@@ -182,10 +170,7 @@ STAGES = Stages(
     rank=rank,
     select=select,
     place=place,
-    repair=repair,
-    correct=correct,
-    validate=validate,
-    drop=drop,
+    finish=finish,
     direction=lambda index, room_type: f"direction {index}",
 )
 
@@ -292,8 +277,8 @@ def test_streams_the_full_event_sequence(tmp_path):
     ]
     for index in range(3):
         nodes = [e["node"] for e in events if e["type"] == "node_complete" and e["variant_index"] == index]
-        # select, place, repair and correct, validate
-        assert nodes == ["select_asset_intent", "layout_initial", "layout_fix", "layout_fix", "render_scene"]
+        # select, place, finish
+        assert nodes == ["select_asset_intent", "layout_initial", "render_scene"]
     assert all(isinstance(e["elapsed"], float) for e in of_type(events, "node_complete"))
 
     ready = of_type(events, "variant_ready")
@@ -354,7 +339,7 @@ def test_run_record_lists_stages_model_calls_and_totals(tmp_path, monkeypatch):
     stages = [(s["stage"], s["variant_index"]) for s in record["stages"]]
     assert stages.count(("interpret", None)) == stages.count(("rank", None)) == 1
     for index in range(3):
-        for stage in ("select", "place", "repair", "correct", "validate"):
+        for stage in ("select", "place", "finish"):
             assert (stage, index) in stages
     assert all(s["outcome"] == "ok" and s["elapsed"] >= 0 for s in record["stages"])
 
@@ -427,41 +412,6 @@ def test_failed_variants_do_not_block_the_others(tmp_path):
         ("ready", None),
         ("ready", None),
     ]
-
-
-def test_failed_layout_reselects_once_and_each_layout_caps_its_corrections(tmp_path):
-    async def stuck_correct(state, ctx):
-        await ctx.generate(Plan, "correct")
-        return {"blocking_findings": [{"level": "P1"}]}
-
-    _, events, record = post(tmp_path, stages=replace(STAGES, correct=stuck_correct))
-
-    # After the reselected layout fails too, drop delivers it.
-    assert not of_type(events, "variant_failed") and len(of_type(events, "variant_ready")) == 3
-    for index in range(3):
-        runs = [s["stage"] for s in record["stages"] if s["variant_index"] == index]
-        assert runs.count("select") == runs.count("place") == runs.count("validate") == 1 + MAX_RESELECTIONS
-        assert runs.count("correct") == MAX_CORRECTION_PROPOSALS * (1 + MAX_RESELECTIONS)
-        assert runs[-1] == "drop" and runs.count("drop") == 1
-        notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
-        assert notes == ["reselection after the layout failed: blocking findings remain"]
-    assert len(events[-1]["data"]["variants"]) == 3
-
-
-def test_correction_stops_at_the_first_proposal_that_does_not_improve(tmp_path):
-    async def stalling_correct(state, ctx):
-        await ctx.generate(Plan, "correct")
-        if state.get("correction_proposals", 0) == 0:
-            return {"blocking_findings": [{"level": "P1"}]}  # improved, one finding left
-        return {"correction_stalled": True}
-
-    _, events, record = post(tmp_path, stages=replace(STAGES, correct=stalling_correct))
-
-    assert len(of_type(events, "variant_ready")) == 3
-    for index in range(3):
-        runs = [s["stage"] for s in record["stages"] if s["variant_index"] == index]
-        # Two proposals per layout, the second one stalled, for the layout and its one reselection.
-        assert runs.count("correct") == 2 * (1 + MAX_RESELECTIONS)
 
 
 def test_shared_stage_failure_sends_error(tmp_path):

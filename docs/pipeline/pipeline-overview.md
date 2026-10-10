@@ -20,13 +20,9 @@ POST /pipeline
                     direction, then deals them so variants get different products
      then in parallel, each:
        b. select    model picks products, code and Jev check them (up to 4 turns)
-       c. place     code solver places every item; a model picks among tied
-                    layouts
-       d. repair    code fixes layout problems (no model call)
-       e. correct   fallback: model fixes blocking findings that remain
-                    (up to 3 proposals)
-       f. validate  rules check the final layout, build the render manifest
-       a failed layout goes back to select once with the items to replace
+       c. place     code solver places every item and keeps its tied layouts
+       d. finish    model picks a layout, reviews and adjusts it; the final
+                    check removes failing items; build the render manifest
   -> complete event with every ready variant
 ```
 
@@ -275,8 +271,7 @@ record, and the design is still delivered.
 
 ### 4c. Place products
 
-`variant_stages.place` lays out the selection with code. A model call is made only
-to pick among tied layouts, as described at the end of this section.
+`variant_stages.place` lays out the selection with code, with no model call.
 The solver (`app.rules.layout.solver`) splits the selection into groups:
 
 - the bed with its nightstands
@@ -329,20 +324,11 @@ table or chair is still involved, it then removes one dining chair at a time,
 up to 2, when the selection stays valid. A request for an exact number of
 seats, or the room's minimum, keeps its chairs. Each swap or removal is kept
 only if the layout gets better, and the run record notes it. Findings that
-remain go to repair and correction.
+remain go to the final review (4d).
 
-The solver ends with up to 4 complete layouts. When other layouts tie the
-result's issue score, with no more unplaceable items, one model call (model key
-`arrange`) gets each one drawn top-down as variant A, B, C, or D, with the room,
-the request, and each piece's key, category, and size. The model judges them as
-an interior designer (clear zones, a TV whose back does not face another zone, a
-bed against a wall with access, nothing floating mid-room, open walkways), picks
-one with a one-sentence reason, and can suggest small adjustments. Code rejects
-a move over 0.5 m or a turn that is not a whole number of quarter turns, and
-keeps the rest only if the issue score does not get worse. A worse layout is
-never offered. With one layout there is no call. A failed call keeps the
-solver's layout, so the pick never fails a variant. The run record notes the
-pick, its reason, and the adjustments kept, reverted, or rejected.
+The solver ends with up to 4 complete layouts. Place keeps the result and the
+others that tie its issue score, with no more unplaceable items, for the final
+review. A worse layout is never offered.
 
 The layout is then normalized: wall items snap to walls, rugs fit the room, and
 displays sit on their supports. It is then analyzed into findings by severity:
@@ -355,55 +341,44 @@ displays sit on their supports. It is then analyzed into findings by severity:
   seating group.
 - **Other P2:** quality notes that do not block.
 
-### 4d. Repair the layout
+### 4d. Review, check, and send
 
-`variant_stages.repair` runs four code fixes in order, with no model call:
+`variant_stages.finish` gives every design a final review, then checks and
+delivers it:
 
-1. Move overlapping and out-of-room items to the nearest free spot.
-2. Arrange dining chairs and fix living and dining groups.
-3. Move items out of protected walking paths.
-4. Fix the gap between the sofa and the coffee table.
+1. **Review.** One model call (stage `finish`, low thinking unless
+   `LLM_STAGE_MODELS` sets it) gets the request, the requested items and style
+   hints, the layout rules for the room type with their definitions, the
+   coordinate system, the room boundary, doors, windows, and protected paths,
+   each piece's key, category, size, and mount type, and each tied layout drawn
+   top-down as variant A, B, C, or D with its poses. Acting as an interior
+   designer, the model picks the layout that reads best as a room (clear zones,
+   a TV whose back does not face another zone, a bed against a wall with access,
+   nothing floating mid-room, open walkways), writes two or three sentences on
+   what is wrong with it, and returns new poses that fix those problems. With
+   one layout, it still reviews and adjusts that one.
+2. **Adjust.** Code rejects poses for unknown items, with non-finite values, or
+   with a turn that is not a whole number of quarter turns. Moves of any length
+   are allowed. The rest are applied, moving supported items with their
+   supports, and kept only if the issue score does not get worse; otherwise the
+   picked layout stays as it is. A failed call or an unknown label keeps the
+   solver's best layout. The run record notes the pick, the review, and the
+   adjustments kept, reverted, or rejected. The `node_complete` data carries
+   `layout_pick` and `review`.
+3. **Check.** The final layout check runs: every selected unit is placed
+   exactly once and no blocking finding remains. When it fails, code removes the
+   items it fails on, one named item a round, non-anchor items first, choosing
+   the removal that leaves the fewest findings. Items resting on a removed item
+   go with it. For example, a chair stuck inside the dining table is removed and
+   the room keeps three chairs.
+4. **Send.** Finish builds the render manifest (model references and
+   placements), the selected-asset list, and the total cost. The graph then
+   renders a top-down preview in a worker thread and sends `variant_ready` with
+   its `preview_url`.
 
-A fix is kept only if it lowers the layout's issue score.
-
-### 4e. Correct the layout
-
-Correction is the fallback when solving and repair leave a problem. While
-blocking findings (P0, P1, or critical P2) remain, `variant_stages.correct`
-sends the findings left after repair and asks the model for new poses for the
-items involved. It applies them, moving supported items with their supports,
-and analyzes the result again.
-
-A proposal replaces the layout only if it scores better. Correction stops at the
-first proposal that does not improve, after 3 proposals, or when a model call
-fails. It then goes on to validation with the best layout so far.
-
-With a `correct_escalate` entry in `LLM_STAGE_MODELS`, the first proposal that
-does not improve, or a failed call, escalates instead of stopping: the
-remaining proposals for that layout use the escalation model. For example,
-correction can start on a lite model and switch to `gemini-3.8-flash` only for
-hard layouts. The run record notes each escalation.
-
-### 4f. Validate and send
-
-`variant_stages.validate` runs the final layout check: every selected unit is
-placed exactly once and no blocking finding remains.
-
-- **Pass:** it builds the render manifest (model references and placements),
-  the selected-asset list, and the total cost. The graph then renders a top-down
-  preview in a worker thread and sends `variant_ready` with its `preview_url`.
-- **Fail, first time:** the variant goes back to select once, if selection
-  turns remain. The prompt names the items in the remaining blocking findings
-  and asks for smaller products or fewer items. The fit step moves to the next
-  step, and the new layout gets its own 3 correction proposals.
-- **Fail again:** `variant_stages.drop` removes the items the check fails on,
-  then delivers the rest as on a pass. It removes one named item a round,
-  non-anchor items first, choosing the removal that leaves the fewest findings.
-  Items resting on a removed item go with it. For example, a chair stuck inside
-  the dining table is removed and the room keeps three chairs.
-
-Failed checks never fail a variant. A variant sends `variant_failed` only when a
-stage raises, such as a model call that used all its attempts.
+Failed checks and a failed review never fail a variant. A variant sends
+`variant_failed` only when a stage raises, such as a selection model call that
+used all its attempts.
 
 The viewer can show each variant as soon as its `variant_ready` event arrives.
 The preview uses product footprints without downloading images. The service
@@ -442,9 +417,8 @@ completion or cancellation cannot overwrite an accepted timing entry.
 | Limit | Value |
 |---|---|
 | Variants | 3 |
-| Selection turns per variant, across reselection | 4 |
-| Correction proposals per layout | 3 |
-| Reselections per variant | 1 |
+| Selection turns per variant | 4 |
+| Final review calls per variant | 1 |
 | Solver product swaps per layout | 2 |
 | Solver dining chairs removed per layout | 2 |
 | Model call timeout | 60 s, up to 3 attempts |

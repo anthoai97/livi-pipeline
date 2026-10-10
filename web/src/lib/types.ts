@@ -24,7 +24,7 @@ export interface PipelineRequest {
 }
 
 const nodeName = z.enum([
-  "interpret", "extract_room", "rag_scope_assets", "select_asset_intent", "layout_initial", "layout_fix", "render_scene",
+  "interpret", "extract_room", "rag_scope_assets", "select_asset_intent", "layout_initial", "render_scene",
 ]);
 export type NodeName = z.infer<typeof nodeName>;
 const count = z.number().int().nonnegative();
@@ -53,7 +53,6 @@ const nodeData = {
     fit_step: z.string().nullable().optional(), total_cost: z.number().optional(), items: z.array(product).optional(),
   }),
   layout_initial: z.object({ placed: count, findings: count, blocking: count, swaps: count, drops: count }),
-  layout_fix: z.object({ placed: count, findings: count, blocking: count, improved: z.boolean() }),
   render_scene: z.object({ valid: z.boolean(), errors: count }),
 };
 export type NodeData = { [N in NodeName]: z.infer<(typeof nodeData)[N]> };

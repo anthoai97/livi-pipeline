@@ -23,10 +23,7 @@ NODE_NAMES = {
     "rank": "select_asset_intent",
     "select": "select_asset_intent",
     "place": "layout_initial",
-    "repair": "layout_fix",
-    "correct": "layout_fix",
-    "validate": "render_scene",
-    "drop": "render_scene",
+    "finish": "render_scene",
 }
 NODES = list(dict.fromkeys(NODE_NAMES.values()))
 

@@ -59,10 +59,11 @@ def test_real_stage_data_and_preview_delivery(tmp_path, monkeypatch):
     ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
     assert len(ready) == 3
     assert all(preview["error"] is None and preview["elapsed"] >= 0 for preview in record["previews"])
+    ready_cost = {variant["variant_index"]: variant["total_cost"] for variant in ready}
     for event in completed:
         data = event["data"]
         if "items" in data:
-            assert data["total_cost"] == ready[0]["total_cost"]
+            assert data["total_cost"] == ready_cost[event["variant_index"]]
             assert len(data["items"]) <= retrieval["slots"]
         if event["node"] == "render_scene":
             assert (data["valid"], data["errors"], data["dropped"], data["layout_pick"]) == (True, 0, 0, "A")

@@ -20,7 +20,7 @@ Each phase is one issue. Implement them in order.
 | 2 | [#3](https://github.com/anthoai97/livi-pipeline/issues/3) | Build embedding storage, generation, image caching, retrieval, and catalog population. | [Embedding pipeline](3-embedding-pipeline.md) |
 | 3 | [#4](https://github.com/anthoai97/livi-pipeline/issues/4) | Build LangGraph stages, shared work, variant state, progress, cancellation, and bounded failures. | [LangGraph runtime](4-langgraph-runtime.md) |
 | 4 | [#5](https://github.com/anthoai97/livi-pipeline/issues/5) | Rebuild product selection and placement with Jev decisions, existing rules, and bounded corrections. | Detailed planning follows phase 3. |
-| 5 | [#6](https://github.com/anthoai97/livi-pipeline/issues/6) | Deliver three variants in parallel and connect results to the browser viewer. | [Browser delivery](6-browser-delivery.md) |
+| 5, complete | [#6](https://github.com/anthoai97/livi-pipeline/issues/6) | Deliver three variants in parallel and connect results to the browser viewer. | [Browser delivery](6-browser-delivery.md) |
 | 6 | [#7](https://github.com/anthoai97/livi-pipeline/issues/7) | Compare performance and validity, then replace initial generation with deployment rollback available. | Detailed planning follows phase 5. |
 
 The pipeline is Python end to end. Phase 2 uses Gemini Embedding 2 and pgvector.

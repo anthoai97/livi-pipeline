@@ -122,6 +122,11 @@ gets living-room behavior, without it.
 
 10. **Add variant directions** to `_ROOM_DIRECTIVES`, two strings.
 
+    Also add a `"home_office"` key to `DESIGN_RULES` in
+    `app/rules/layout_rules.py`: plain-text comfort rules the final review
+    applies, for example "The desk faces the room or a window, not a wall
+    corner." A room type without a key gets only the shared rules.
+
 11. **Write the layout rules text.** Add `elif room_type == "home_office":` to
     `build_rules_block`: what anchors the room, what is not required, and the
     access rules. Selection and the final review prompt (`:1290`) both read it.

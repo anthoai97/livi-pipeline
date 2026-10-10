@@ -1108,3 +1108,14 @@ def test_select_adds_a_requested_tv_that_stands_on_a_fitting_stand_or_hangs_on_t
     [tv] = [instance for instance in update["instances"] if instance["category"] == "tv"]
     assert tv["placement_mode"] == placement
     assert tv.get("paired_support_uid") == ("tv_stand_1" if placement == "tabletop" else None)
+
+
+def test_select_swaps_a_tv_too_wide_for_the_selected_stand_for_one_that_fits():
+    model_uids = [uid for uid, count in TURN["items"] for _ in range(count)] + ["stand", "tv_wide"]
+
+    update, notes = select_with_requested_tv(model_uids, [WIDE_TV, FITTING_TV])
+
+    assert update["selection_validation"]["valid"], update["selection_validation"]["errors"]
+    assert "selection turn 1: replaced TV tv_wide with tv_fits" in notes
+    [tv] = [instance for instance in update["instances"] if instance["category"] == "tv"]
+    assert tv["placement_mode"] == "tabletop" and tv["paired_support_uid"] == "tv_stand_1"

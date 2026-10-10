@@ -554,7 +554,7 @@ CONSTRAINTS:
 {perimeter_storage_guidance}- Physical layout preflight must pass: rugs must fit the room; every tabletop asset must fit an eligible selected support surface; desk/dining clusters must fit with their chairs; and tiny rooms must not receive extra seating or floor lamps.
 - {count_guidance_constraint}
 - Assets with is_decor_item=true are non-shoppable: their zero budget contribution is bookkeeping, not a retail price. is_placeholder=true identifies temporary furniture for layout evaluation; a verified wardrobe placeholder can satisfy clothing storage, but cannot be purchased or count as spending more budget. Other non-shoppable finishing accents remain optional apart from any fresh-design plant requirement stated above. Never describe these items as free products.
-- TVs are normal catalog assets and do not need a media support. A TV stands on a selected tv_stand/media_unit/media_console or console_table it fits (width <= support width - 0.07m and depth <= max(0.08m, support depth - 0.07m)); any other TV hangs on the wall. When the brief asks for a TV, or a media support is selected, and the selection has no TV, the server adds one from the catalog.
+- TVs are normal catalog assets and do not need a media support. A TV stands on a selected tv_stand/media_unit/media_console or console_table it fits (width <= support width - 0.07m and depth <= max(0.08m, support depth - 0.07m)); the server swaps a TV that fits no selected support for one that does when it can, and any other TV hangs on the wall. When the brief asks for a TV, or a media support is selected, and the selection has no TV, the server adds one from the catalog.
 - TVs are non-sellable: exclude TV prices from every budget total while still including the TV UID in selected_assets and the layout.
 - You MUST return the exact UID list as selected_assets (one entry per unit); the accepted response is the final result
 
@@ -783,8 +783,9 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     `errors: list[str]`, ...), `instances`, and `fit_step`. `fit_satisfaction`
     comes from slot membership and the constraint audit from
     `_constraint_audit`. Before validation, a selection with no TV gets one
-    (`_missing_tv`) when the brief asks for a TV or a media support is
-    selected. The selection also fails
+    when the brief asks for a TV or a media support is selected, and a TV
+    that fits no selected support is swapped for one that does (`_missing_tv`).
+    The selection also fails
     when more than `ctx.run.product_reuse_rate` of its distinct products are
     marked `shared`. A selection that fails only fit estimates (the
     over-crowded footprint and the layout preflight size checks) is checked
@@ -794,7 +795,7 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     selection replaces it only when it passes. On the last turn, a selection
     that still fails loses the products that fail it (`_drop_failing`), and the
     graph places it even when errors remain. Notes the fit step applied, an
-    added TV, the fit estimates the solver overruled, a budget repair, the
+    added or replaced TV, the fit estimates the solver overruled, a budget repair, the
     dropped products, and a failed turn's errors with `ctx.run.note(...)`.
     """
     from app.graph import MAX_SELECTION_TURNS  # the graph owns the turn bound; a module import would be circular
@@ -809,9 +810,10 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     response = await ctx.generate(Selection, _selection_prompt(state, intent, fit_step, reuse_rate))
 
     selected = [asset.model_dump() for asset in response.selected_assets]
-    if tv := _missing_tv(state, selected, intent, reuse_rate):
-        selected.append({"uid": tv, "functional_group": None})
-        ctx.run.note(f"selection turn {turn}: added TV {tv}", ctx.variant_index)
+    if change := _missing_tv(state, selected, intent, reuse_rate):
+        old, tv = change
+        selected = [asset for asset in selected if asset["uid"].strip() != old] + [{"uid": tv, "functional_group": None}]
+        ctx.run.note(f"selection turn {turn}: {f'replaced TV {old} with' if old else 'added TV'} {tv}", ctx.variant_index)
     validation, audit = await _checked(state, ctx, selected, intent, fit_step, reuse_rate)
     over_budget = not validation["valid"] and any(error.startswith("OVER BUDGET") for error in validation["errors"])
     if over_budget and (repaired := _budget_repair(state, selected, reuse_rate)):
@@ -908,24 +910,32 @@ def _drop_failing(state: VariantState, selected: list[Record], validation: Recor
     return (without(dropped), current, dropped) if dropped else None
 
 
-def _missing_tv(state: VariantState, selected: list[Record], intent: Record, reuse_rate: float) -> str | None:
-    """The TV to add to `selected` when it has none and the brief asks for one or a media support is selected.
+def _missing_tv(state: VariantState, selected: list[Record], intent: Record, reuse_rate: float) -> tuple[str | None, str] | None:
+    """The TV `selected` should have, as (the selected TV it replaces, or None to add it, the TV), or None.
 
-    The first TV in the variant's ranked order that fits a selected support, else the first TV, preferring
-    one that keeps the reuse limit. None when no TV is needed, the intent excludes TVs, or the pool has none.
+    A selection with no TV gets one when the brief asks for one or a media support is selected: the first TV
+    in the variant's ranked order that fits a selected support, else the first TV. A selected TV that fits no
+    selected support is replaced by the first one that does; without one, it stays and hangs on the wall.
+    TVs that keep the reuse limit come first. None when nothing changes or the intent excludes TVs.
     """
     products = _products(state["pool"], selected)
-    categories = {normalize_category(product.get("category")) for product in products.values()}
+    supports = list(products.values())
+    current = next((uid for uid, product in products.items() if normalize_category(product.get("category")) == "tv"), None)
+    categories = {normalize_category(product.get("category")) for product in supports}
     requested = any(item["canonical_category"] == "tv" for item in intent.get("requested_items") or [])
-    if "tv" in categories or "tv" in (intent.get("excluded_categories") or []) or not (requested or categories & TV_HOST_CATEGORIES):
+    if current is None and ("tv" in (intent.get("excluded_categories") or []) or not (requested or categories & TV_HOST_CATEGORIES)):
+        return None
+    if current and _tv_support_in_selection(products[current], supports):
         return None
     tvs = [{**catalog_asset(record), "uid": str(record["asset_id"])} for record in _candidates(state["pool"])
-           if normalize_category(record.get("category")) == "tv"]
-    shared = sum(bool(product.get("shared")) for product in products.values())
+           if normalize_category(record.get("category")) == "tv" and str(record["asset_id"]) != current]
+    shared = sum(bool(product.get("shared")) for product in supports)
     limit = math.floor(round(reuse_rate * (len(products) + 1), 9))
     tvs = [tv for tv in tvs if reuse_rate >= 1 or not tv.get("shared") or shared < limit] or tvs
-    supports = list(products.values())
-    return next((tv["uid"] for tv in tvs if _tv_support_in_selection(tv, supports)), tvs[0]["uid"] if tvs else None)
+    fitting = next((tv["uid"] for tv in tvs if _tv_support_in_selection(tv, supports)), None)
+    if current:
+        return (current, fitting) if fitting else None
+    return (None, fitting or tvs[0]["uid"]) if tvs else None
 
 
 def _budget_repair(state: VariantState, selected: list[Record], reuse_rate: float) -> tuple[list[Record], str] | None:

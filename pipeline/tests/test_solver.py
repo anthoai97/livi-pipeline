@@ -115,6 +115,26 @@ def test_studio_tv_stands_free_on_the_sofa_axis_when_the_far_wall_is_out_of_rang
     assert report["unplaceable"] == [] and blocking(layout, assets, room) == {}
 
 
+@pytest.mark.parametrize("stand", [True, False])
+def test_studio_wall_tv_hangs_facing_the_sofa_above_any_stand(stand):
+    # The 1.6 m TV is wider than the 1.5 m stand, so it is wall-mounted.
+    intent, room, assets = _golden_inputs({"room": "studio"})
+    assets = [{**asset, "width": 1.6, "placement_mode": "wall_mounted"} if asset["category"] == "tv" else asset
+              for asset in assets if stand or asset["category"] != "tv_stand"]
+
+    layout, report = solve_layout(assets, room, intent)
+
+    [viewing] = media_viewing_measurements(layout, assets, "studio")
+    assert viewing["viewer"] == "sofa_1" and viewing["viewer_faces_media"] and viewing["media_faces_viewer"]
+    tv = layout["tv_1"]
+    assert "on_top_of" not in tv and math.isclose(tv["position"][2] + 0.7 / 2, 1.1)  # screen center at seated eye level
+    if stand:
+        assert asset_polygon(tv["position"], tv["rotation"][2], 1.6, 0.08).intersects(
+            asset_polygon(layout["tv_stand_1"]["position"], layout["tv_stand_1"]["rotation"][2], 1.5, 0.4))
+        assert tv["position"][2] > 0.55
+    assert report["unplaceable"] == [] and blocking(layout, assets, room) == {}
+
+
 def test_studio_floor_lamp_stands_by_the_sofa_not_a_dining_chair():
     intent, room, assets = _golden_inputs({"room": "studio"})
     assets = [*assets, item("floor_lamp_1", "floor_lamp", 0.46, 0.3, 1.62)]

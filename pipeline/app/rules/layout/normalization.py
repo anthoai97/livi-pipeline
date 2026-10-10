@@ -33,6 +33,7 @@ from app.rules.layout.constants import (
     SIDE_TABLE_ROLE_KEYWORDS,
     SIDE_TABLE_SERVICE_MAX_FACING_DELTA_DEG,
     SIDE_TABLE_SERVICE_REACH_MAX_M,
+    WALL_TV_SUPPORT_GAP_M,
     WINDOW_SEATING_CLEARANCE_M,
 )
 from app.rules.layout.metrics import (
@@ -600,7 +601,11 @@ def _correct_z(
         elif floor_only:
             pos[2] = 0.0
         elif wall_mounted:
-            pos[2] = _wall_mount_z(asset)
+            # A wall TV hangs above the furniture under it, such as a support it does not stand on.
+            footprint = asset_polygon(pos, rot_z, width, depth)
+            below = max((float(item.asset.get("height") or 0) for item in floor_assets(result, assets, skip_rugs=True)
+                         if item.uid != uid and item.poly.distance(footprint) <= WALL_TV_SUPPORT_GAP_M), default=0.0)
+            pos[2] = _wall_mount_z(asset, below)
 
         normalized = {**placement, "position": pos}
         if parent_placement and not ceiling_mounted and not floor_only:

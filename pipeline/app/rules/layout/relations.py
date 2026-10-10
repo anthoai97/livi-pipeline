@@ -48,6 +48,8 @@ from app.rules.layout.constants import (
     TABLETOP_SUPPORT_INSET_M,
     TABLETOP_SUPPORT_TOLERANCE_M,
     TASK_CHAIR_ROLE_KEYWORDS,
+    WALL_TV_CENTER_Z,
+    WALL_TV_SUPPORT_GAP_M,
     WINDOW_SEATING_CLEARANCE_M,
 )
 from app.rules.layout.metrics import (
@@ -229,8 +231,12 @@ def _is_floor_only_layout_asset(asset: dict[str, Any], uid: str = "") -> bool:
         uid,
     )
 
-def _wall_mount_z(asset: dict[str, Any]) -> float:
+def _wall_mount_z(asset: dict[str, Any], below: float = 0.0) -> float:
+    """Bottom z of a wall-mounted asset. A TV centers its screen at seated eye level, above
+    the top of the furniture under it (`below`); its top stays under the ceiling."""
     height = float(asset.get("height", 0.0) or 0.0)
+    if _is_media_display_asset(asset):
+        return max(0.0, min(CEILING_HEIGHT_M - height, max(WALL_TV_CENTER_Z - height / 2, below + WALL_TV_SUPPORT_GAP_M)))
     return min(WALL_MOUNT_Z, max(0.0, CEILING_HEIGHT_M - height))
 
 def _is_near_cardinal(rotation_z: float) -> bool:

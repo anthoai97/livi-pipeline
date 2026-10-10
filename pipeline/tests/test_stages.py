@@ -616,7 +616,7 @@ def test_a_single_layout_still_gets_a_final_review(tmp_path, searches, monkeypat
     ([("planter_1", 3.6, 0.6)], "adjusted planter_1: kept, score [0, 0, 0] -> [0, 0, 0]", [3.6, 0.6]),  # a 3 m move is allowed
     ([("dining_chair_1", 2.535, 2.8)], "adjusted dining_chair_1: reverted, score [0, 0, 0] -> [1, ", [0.6, 0.6]),  # into the table
     ([("sofa_9", 1.0, 1.0, 0.0), ("planter_1", 0.7, 0.6, PLACEMENTS["planter_1"]["rotation"][2] + 0.5)],
-     "rejected unknown, non-finite, or not a quarter turn: sofa_9, planter_1", [0.6, 0.6]),
+     "rejected unknown, non-finite, or off-axis: sofa_9, planter_1", [0.6, 0.6]),
 ])
 def test_final_review_adjustments_are_kept_only_when_not_worse(tmp_path, searches, monkeypatch, moves, outcome, planter):
     solve_as(monkeypatch, PLACEMENTS, CORNER)
@@ -628,6 +628,19 @@ def test_final_review_adjustments_are_kept_only_when_not_worse(tmp_path, searche
     assert delivered(events, "dining_chair_1") == [PLACEMENTS["dining_chair_1"]["position"][:2]] * 3
     reviews = [note["text"] for note in record["notes"] if note["text"].startswith(f"final review: A of 2: {REVIEW}")]
     assert len(reviews) == 3 and all(outcome in note for note in reviews)
+
+
+def test_final_review_may_square_an_off_axis_piece_to_the_room(tmp_path, searches, monkeypatch):
+    # The solver leaves floor lamps off-axis; a room-aligned turn is not a quarter turn from that, but is allowed.
+    tilted = {**PLACEMENTS, "planter_1": {**PLACEMENTS["planter_1"], "rotation": [0.0, 0.0, 3.37]}}
+    solve_as(monkeypatch, tilted, {**tilted, "planter_1": {**tilted["planter_1"], "position": [3.6, 0.6, 0.0]}})
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(),
+                       "Arrangement": arrangement("A", ("planter_1", 0.7, 0.6, math.pi))})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    assert delivered(events, "planter_1") == [[0.7, 0.6]] * 3
+    assert sum("adjusted planter_1: kept" in note["text"] for note in record["notes"]) == 3
 
 
 @pytest.mark.parametrize(("answer", "note"), [

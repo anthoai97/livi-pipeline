@@ -1317,8 +1317,9 @@ async def _arrange(state: VariantState, ctx: StageContext, options: list[Variant
 
     The call gets `_arrangement_prompt` with each option's plan image, under
     LAYOUT_SYSTEM_INSTRUCTION. An unknown label keeps A as it is. Adjustments
-    to unknown items, with non-finite values, or with turns that are not whole
-    quarter turns are rejected; the rest are kept when layout_issue_score does
+    to unknown items, with non-finite values, or with a rotation that is neither
+    a whole quarter turn from the current one nor aligned with the room axes
+    (floor lamps start off-axis) are rejected; the rest are kept when layout_issue_score does
     not get worse. Returns the chosen option, measured; notes the pick, the
     review, and the adjustments. Sets `layout_pick` and `review` in `ctx.data`.
     """
@@ -1334,12 +1335,13 @@ async def _arrange(state: VariantState, ctx: StageContext, options: list[Variant
     layout = chosen["layout"]
 
     def allowed(adjustment: Adjustment) -> bool:
-        """A placed item and finite values, turned by whole quarter turns."""
+        """A placed item and finite values, turned by whole quarter turns or set square to the room."""
         values = (adjustment.x, adjustment.y, adjustment.rotation_z)
         if adjustment.uid not in layout or not all(math.isfinite(value) for value in values):
             return False
-        turns = (adjustment.rotation_z - float(layout[adjustment.uid]["rotation"][2])) / (math.pi / 2)
-        return abs(turns - round(turns)) < 0.02
+        return any(abs(turns - round(turns)) < 0.02 for turns in (
+            (adjustment.rotation_z - float(layout[adjustment.uid]["rotation"][2])) / (math.pi / 2),
+            adjustment.rotation_z / (math.pi / 2)))
 
     adjustments = [adjustment for adjustment in response.adjustments if allowed(adjustment)]
     rejected = [adjustment.uid for adjustment in response.adjustments if not allowed(adjustment)]
@@ -1353,7 +1355,7 @@ async def _arrange(state: VariantState, ctx: StageContext, options: list[Variant
                  f"score {list(before)} -> {list(after)}")
         chosen = trial if kept else chosen
     if rejected:
-        text += f"; rejected unknown, non-finite, or not a quarter turn: {', '.join(rejected)}"
+        text += f"; rejected unknown, non-finite, or off-axis: {', '.join(rejected)}"
     ctx.run.note(text, ctx.variant_index)
     ctx.data.update(layout_pick=label, review=review)
     return chosen

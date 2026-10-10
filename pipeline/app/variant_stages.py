@@ -834,20 +834,27 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
         selected = [asset for asset in selected if asset["uid"].strip() != old] + [{"uid": tv, "functional_group": None}]
         ctx.run.note(f"selection turn {turn}: {f'replaced TV {old} with' if old else 'added TV'} {tv}", ctx.variant_index)
     validation, audit = await _checked(state, ctx, selected, intent, fit_step, reuse_rate)
-    over_budget = not validation["valid"] and any(error.startswith("OVER BUDGET") for error in validation["errors"])
-    under_budget = validation["valid"] and validation["metrics"]["total_cost"] < shared["request"].budget * BUDGET_FLOOR_PCT
-    name = "budget repair" if over_budget else "budget fill"
-    if (over_budget or under_budget) and (repaired := _budget_repair(state, selected, reuse_rate)):
+    for _ in range(2):  # a repair that lands under the floor gets one fill
+        over_budget = not validation["valid"] and any(error.startswith("OVER BUDGET") for error in validation["errors"])
+        under_budget = validation["valid"] and validation["metrics"]["total_cost"] < shared["request"].budget * BUDGET_FLOOR_PCT
+        name = "budget repair" if over_budget else "budget fill"
+        if not (over_budget or under_budget):
+            break
+        if not (repaired := _budget_repair(state, selected, reuse_rate)):
+            if under_budget:
+                ctx.run.note(f"budget fill: no pricier product fits; ${validation['metrics']['total_cost']:.2f} stays",
+                             ctx.variant_index)
+            break
         swapped, swaps = repaired
         trial, trial_audit = await _checked(state, ctx, swapped, intent, fit_step, reuse_rate)
-        if trial["valid"]:
-            ctx.run.note(f"{name}: ${validation['metrics']['total_cost']:.2f} -> "
-                         f"${trial['metrics']['total_cost']:.2f} ({swaps})", ctx.variant_index)
-            selected, validation, audit = swapped, trial, trial_audit
-        else:
+        if not trial["valid"]:
             ctx.run.note(f"{name} rejected ({swaps}): {_errors_text(trial['errors'])}", ctx.variant_index)
-    elif under_budget:
-        ctx.run.note(f"budget fill: no pricier product fits; ${validation['metrics']['total_cost']:.2f} stays", ctx.variant_index)
+            break
+        ctx.run.note(f"{name}: ${validation['metrics']['total_cost']:.2f} -> "
+                     f"${trial['metrics']['total_cost']:.2f} ({swaps})", ctx.variant_index)
+        selected, validation, audit = swapped, trial, trial_audit
+        if name == "budget fill":
+            break
     if not validation["valid"] and turn >= MAX_SELECTION_TURNS and (
             trimmed := await asyncio.to_thread(_drop_failing, state, selected, validation, audit, intent, fit_step, reuse_rate)):
         selected, validation, dropped = trimmed

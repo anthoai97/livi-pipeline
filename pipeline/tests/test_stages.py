@@ -615,6 +615,9 @@ def test_a_single_layout_still_gets_a_final_review(tmp_path, searches, monkeypat
     ([("planter_1", 0.7, 0.6)], "adjusted planter_1: kept, score [0, 0, 0] -> [0, 0, 0]", [0.7, 0.6]),  # a tie keeps it
     ([("planter_1", 3.6, 0.6)], "adjusted planter_1: kept, score [0, 0, 0] -> [0, 0, 0]", [3.6, 0.6]),  # a 3 m move is allowed
     ([("dining_chair_1", 2.535, 2.8)], "adjusted dining_chair_1: reverted, score [0, 0, 0] -> [1, ", [0.6, 0.6]),  # into the table
+    ([("dining_chair_1", 2.535, 2.8), ("planter_1", 0.7, 0.6)],  # the bad move reverts the set, so each is checked alone
+     "reverted, score [0, 0, 0] -> [1, 1, 1]; one at a time: kept planter_1, reverted dining_chair_1, score [0, 0, 0] -> [0, 0, 0]",
+     [0.7, 0.6]),
     ([("sofa_9", 1.0, 1.0, 0.0), ("planter_1", 0.7, 0.6, PLACEMENTS["planter_1"]["rotation"][2] + 0.5)],
      "rejected unknown, non-finite, or off-axis: sofa_9, planter_1", [0.6, 0.6]),
 ])

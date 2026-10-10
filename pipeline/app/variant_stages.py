@@ -43,9 +43,15 @@ from app import contracts
 from app.preview import png_bytes, render_plan
 from app.rules.door_geometry import format_door_for_prompt
 from app.rules.layout.analysis import analyze_layout, final_layout_check, findings_by_level
-from app.rules.layout.comfort import comfort_placement_facts
+from app.rules.layout.comfort import comfort_placement_facts, media_viewing_measurements
 from app.rules.layout.metrics import layout_issue_score
 from app.rules.layout.normalization import move_asset_with_supports, normalize_layout
+from app.rules.layout.relations import (
+    _best_coffee_table_candidate,
+    _functional_group_assets,
+    _gather_floor_seating,
+    _nearest_floor_asset,
+)
 from app.rules.layout.solver import solve_layout
 from app.rules.layout_rules import (
     LAYOUT_SYSTEM_INSTRUCTION,
@@ -1244,9 +1250,59 @@ def _plan_png(state: VariantState, layout: Record, label: str) -> bytes:
     return png_bytes(render_plan({"request": state["shared"]["request"].model_dump()}, plan))
 
 
+# Finding fields whose numbers the final review sees: gaps, distances, and the limits they are checked against.
+FACT_FIELDS = ("gap", "distance", "clearance", "offset", "miss", "delta", "overlap", "pullout", "penetration", "overhang", "range",
+               "required")
+
+
+def _option_facts(state: VariantState, option: VariantState) -> list[str]:
+    """An option's findings, compact, then its measured gaps from the design rules, as prompt lines.
+
+    A finding is its level, issue key, kind, the instance keys it names, and its
+    FACT_FIELDS numbers. The gaps are edge to edge, as the checks measure them:
+    each sofa to its coffee table, each lounge chair to its nearest coffee table,
+    each floor lamp to its nearest seat, and each TV's viewing distance.
+    """
+    layout, assets = option["layout"], state["instances"]
+    lines = []
+    for finding in option["findings"]:
+        body = finding["finding"] if isinstance(finding["finding"], dict) else {"uid": finding["finding"]}
+        uids, numbers = [], []
+        for name, value in body.items():
+            for uid in value if isinstance(value, list) else [value]:
+                if isinstance(uid, str) and uid in layout and uid not in uids:
+                    uids.append(uid)
+            if not any(word in name for word in FACT_FIELDS) or isinstance(value, bool):
+                continue
+            if isinstance(value, int | float):
+                numbers.append(f"{name} {value:.2f}")
+            elif isinstance(value, list) and len(value) == 2 and all(isinstance(v, int | float) for v in value):
+                numbers.append(f"{name} {value[0]:.2f}-{value[1]:.2f}")
+        kind = body.get("kind") or body.get("reason")
+        lines.append(f"- {finding['level']} {finding['issue'].removesuffix('_violations')}{f' {kind}' if kind else ''}: "
+                     + ", ".join(uids) + (f"; {', '.join(numbers)}" if numbers else ""))
+    groups = _functional_group_assets(layout, assets)
+    gaps = []
+    for sofa in groups["sofas"]:
+        if table := _best_coffee_table_candidate(sofa.uid, sofa.asset, layout[sofa.uid], layout, assets):
+            gaps.append(f"{sofa.uid} to {table['table']} {table['gap']:.2f} m")
+    for chair in groups["lounge_chairs"]:
+        if nearest := _nearest_floor_asset(chair, groups["coffee_tables"]):
+            gaps.append(f"{chair.uid} to {nearest[0].uid} {nearest[1]:.2f} m")
+    seats = _gather_floor_seating(layout, assets)
+    for lamp in groups["floor_lamps"] if seats else []:
+        seat, gap = min(((uid, float(lamp.poly.distance(poly))) for uid, poly in seats), key=lambda entry: entry[1])
+        gaps.append(f"{lamp.uid} to {seat} {gap:.2f} m")
+    for row in media_viewing_measurements(layout, assets, state["shared"]["room"]["room_type"]):
+        low, high = row["preferred_distance_range_m"]
+        gaps.append(f"{row['media']} viewed from {row['viewer']} at {row['estimated_view_distance_m']:.2f} m "
+                    f"(preferred {low:.2f}-{high:.2f} m)")
+    return (lines or ["- no findings"]) + ([f"- gaps: {'; '.join(gaps)}"] if gaps else [])
+
+
 def _arrangement_prompt(state: VariantState, options: list[VariantState], images: list[bytes]) -> list[str | bytes]:
-    """The final review prompt: the request and brief, the layout rules, the room, the pieces, and each option's poses,
-    then each option's plan image."""
+    """The final review prompt: the request and brief, the layout rules, the room, the pieces, each option's poses
+    and `_option_facts`, then each option's plan image."""
     shared = state["shared"]
     request, room, intent = shared["request"], shared["room"], shared["intent"]
     room_width, room_depth = request.room_area
@@ -1262,6 +1318,8 @@ def _arrangement_prompt(state: VariantState, options: list[VariantState], images
                                                  round(pose["rotation"][2], 3)] for key, pose in sorted(option["layout"].items())})
         for label, option in zip(labels, options, strict=True)
     ]
+    facts = [line for label, option in zip(labels, options, strict=True)
+             for line in (f"variant {label}:", *_option_facts(state, option))]
     task = (
         f"The layout solver arranged this room {len(options)} ways with the same pieces, and every arrangement passes "
         "the layout checks equally well. Choose the variant that reads best as a room, then review it."
@@ -1276,7 +1334,7 @@ Review the chosen variant as a room, against the request, these design rules, an
 {design_rules_block(room["room_type"])}
 Write two or three sentences on what is wrong with it, or say that it works.
 
-Then return adjustments that fix the problems you name. Give each piece that should move its new center x, y and its rotation_z. Move it as far as the fix needs, and turn it only by quarter turns (rotation_z in radians: 0 faces +x, 1.571 faces +y, 3.142 faces -x, 4.712 faces -y). Items on a support move with it. List only pieces that should move, and return an empty list when nothing needs to change. The server reverts the adjustments when they make the layout checks worse.
+Then return adjustments that fix the problems you name. Give each piece that should move its new center x, y and its rotation_z. Move it as far as the fix needs, and turn it only by quarter turns (rotation_z in radians: 0 faces +x, 1.571 faces +y, 3.142 faces -x, 4.712 faces -y). Items on a support move with it. List only pieces that should move, and return an empty list when nothing needs to change. The server first applies all moves together; when that makes the layout checks worse, it checks each move on its own, in your order, and reverts each one that makes them worse. Each move must keep the clearances the findings below name, and should bring the measured gaps toward the design rules.
 
 REQUEST: {request.user_intent}
 REQUESTED ITEMS: {", ".join(requested) or "none"}
@@ -1302,6 +1360,9 @@ PIECES:
 POSES (instance key: [x, y, rotation_z]):
 {chr(10).join(poses)}
 
+MEASURED FACTS (the findings the layout checks still report, and edge-to-edge gaps in meters):
+{chr(10).join(facts)}
+
 Return JSON: {{"choice": "A", "review": "two or three sentences", "adjustments": [{{"uid": "instance key", "x": number, "y": number, "rotation_z": number}}]}}"""
     parts: list[str | bytes] = [text]
     for label, image in zip(labels, images, strict=True):
@@ -1316,9 +1377,11 @@ async def _arrange(state: VariantState, ctx: StageContext, options: list[Variant
     LAYOUT_SYSTEM_INSTRUCTION. An unknown label keeps A as it is. Adjustments
     to unknown items, with non-finite values, or with a rotation that is neither
     a whole quarter turn from the current one nor aligned with the room axes
-    (floor lamps start off-axis) are rejected; the rest are kept when layout_issue_score does
-    not get worse. Returns the chosen option, measured; notes the pick, the
-    review, and the adjustments. Sets `layout_pick` and `review` in `ctx.data`.
+    (floor lamps start off-axis) are rejected. The rest are kept together when
+    layout_issue_score does not get worse; otherwise each is applied in the
+    model's order on top of those kept, and kept when the score does not get
+    worse. Returns the chosen option, measured; notes the pick, the review, and
+    the adjustments kept and reverted. Sets `layout_pick` and `review` in `ctx.data`.
     """
     labels = ascii_uppercase[:len(options)]
     images = await asyncio.to_thread(lambda: [_plan_png(state, option["layout"], label)
@@ -1345,12 +1408,29 @@ async def _arrange(state: VariantState, ctx: StageContext, options: list[Variant
     review = response.review.strip()
     text = f"final review: {label} of {len(options)}: {review}"
     if adjustments:
-        trial = await asyncio.to_thread(lambda: _measure(state, _apply_poses(layout, adjustments, state["instances"])))
-        before, after = layout_issue_score(chosen["issues"]), layout_issue_score(trial["issues"])
-        kept = after <= before
-        text += (f"; adjusted {', '.join(adjustment.uid for adjustment in adjustments)}: {'kept' if kept else 'reverted'}, "
-                 f"score {list(before)} -> {list(after)}")
-        chosen = trial if kept else chosen
+        def adjust() -> tuple[VariantState, str]:
+            """Apply all adjustments, or when that scores worse, each in turn on top of those kept. Returns it and its note."""
+            before = layout_issue_score(chosen["issues"])
+            trial = _measure(state, _apply_poses(layout, adjustments, state["instances"]))
+            after = layout_issue_score(trial["issues"])
+            note = (f"; adjusted {', '.join(adjustment.uid for adjustment in adjustments)}: "
+                    f"{'kept' if after <= before else 'reverted'}, score {list(before)} -> {list(after)}")
+            if after <= before or len(adjustments) == 1:
+                return trial if after <= before else chosen, note
+            current, kept, reverted = chosen, [], []
+            for adjustment in adjustments:
+                trial = _measure(state, _apply_poses(current["layout"], [adjustment], state["instances"]))
+                if layout_issue_score(trial["issues"]) <= layout_issue_score(current["issues"]):
+                    current = trial
+                    kept.append(adjustment.uid)
+                else:
+                    reverted.append(adjustment.uid)
+            return current, (f"{note}; one at a time: kept {', '.join(kept) or 'none'}, "
+                             f"reverted {', '.join(reverted) or 'none'}, "
+                             f"score {list(before)} -> {list(layout_issue_score(current['issues']))}")
+
+        chosen, note = await asyncio.to_thread(adjust)
+        text += note
     if rejected:
         text += f"; rejected unknown, non-finite, or off-axis: {', '.join(rejected)}"
     ctx.run.note(text, ctx.variant_index)

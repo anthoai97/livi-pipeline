@@ -351,7 +351,10 @@ breaks them.
    hints, the layout rules for the room type with their definitions, the
    coordinate system, the room boundary, doors, windows, and protected paths,
    each piece's key, category, size, and mount type, and each tied layout drawn
-   top-down as variant A, B, C, or D with its poses. Acting as an interior
+   top-down as variant A, B, C, or D with its poses and measured facts: the
+   findings the checks still report (issue, items, gaps and limits), and
+   edge-to-edge gaps from sofa and lounge chairs to the coffee table, floor
+   lamps to their seat, and the TV viewing distance. Acting as an interior
    designer, the model picks the layout that reads best as a room against the
    design rules (`DESIGN_RULES` in `app/rules/layout_rules.py`: shared rules such
    as clear zones, a TV whose back does not face another zone, nothing tall in
@@ -362,9 +365,10 @@ breaks them.
 2. **Adjust.** Code rejects poses for unknown items, with non-finite values, or
    with a rotation that is neither a whole number of quarter turns from the
    current one nor aligned with the room axes. Moves of any length
-   are allowed. The rest are applied, moving supported items with their
-   supports, and kept only if the issue score does not get worse; otherwise the
-   picked layout stays as it is. A failed call or an unknown label keeps the
+   are allowed. The rest are applied together, moving supported items with
+   their supports, and kept if the issue score does not get worse. Otherwise
+   each move is applied in the model's order on top of the moves kept, and kept
+   if the score does not get worse. A failed call or an unknown label keeps the
    solver's best layout. The run record notes the pick, the review, and the
    adjustments kept, reverted, or rejected. The `node_complete` data carries
    `layout_pick` and `review`.

@@ -1065,6 +1065,19 @@ def test_empty_requested_slot_is_a_gap_and_required_slot_drops_request_limits(mo
     assert records["bed"]["note"] in notes and records["floor_mirror"]["note"] in notes
 
 
+def test_requested_coffee_table_still_searches_side_tables(monkeypatch):
+    packet = {"normalized_prompt": "a sofa and a wooden coffee table",
+              "requested_items": [item("sofa", "sofa"), item("wooden coffee table", "coffee_table")]}
+    rows = [product("coffee_1", "coffee_table", 1.1, 0.6), product("side_1", "side_table", 0.5, 0.5)]
+
+    slots, pool, _, _, _ = retrieve(monkeypatch, "living_room", packet,
+                                    lambda filters: [row for row in rows if row["category"] in filters["categories"]],
+                                    room_area=(5.0, 5.5))
+
+    assert pool["coffee_table"] == ["coffee_1"]
+    assert slots["surface"]["kind"] == "optional" and pool["surface"] == ["side_1"]
+
+
 # --- select: TVs ------------------------------------------------------------
 
 STAND = product("stand", "tv_stand", 1.5, 0.4, height_m=0.55)

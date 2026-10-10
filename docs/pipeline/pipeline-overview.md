@@ -305,12 +305,7 @@ layouts differ in their zone plan first: the wall the bed, sofa, TV, or desk
 backs onto (or a divider TV) and the room quarter that holds the dining table.
 So the final layouts are different rooms, not copies that differ in one shelf.
 
-Zones (bed, sofa, TV, dining, desk) also spread out. A zone costs a little more
-the closer it comes to a placed zone, up to 0.15 when they touch and nothing
-past 1.2 m, and up to 0.1 for the share of a 3 x 3 grid over the room that no
-zone covers. These costs only order positions that pass the checks; door, view,
-and TV distance costs outweigh them. A dining table in a dining room prefers the
-room center. In a studio or living room it prefers a wall (0.1 per metre away),
+A dining table in a dining room prefers the room center. In a studio or living room it prefers a wall (0.1 per metre away),
 so it takes its own part of the room instead of the middle.
 
 Lamps, tabletop items, and wall art are added last with the seed rules, and the

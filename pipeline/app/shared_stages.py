@@ -314,7 +314,8 @@ def plan_slots(intent: Record, room: Record, budget: float) -> list[Record]:
     """Plan one search slot per requested item, required item, optional role, and decor category.
 
     A required role that a requested item covers is filled by that item's slot,
-    and TVs search apart from their supports. Each slot has `id`, `kind`
+    and the role's other categories get an optional slot. TVs search apart
+    from their supports. Each slot has `id`, `kind`
     (requested, required, optional, decor), `label`, `category` (the requested
     canonical category, or None), `count`, `text`
     (search text), `categories` (prepared category values), `max_price`,
@@ -375,6 +376,9 @@ def plan_slots(intent: Record, room: Record, budget: float) -> list[Record]:
     for need in requirements["required"]:
         if need["decor_only"] or not set(need["categories"]) & requested_categories:
             add("required", need["role"], set(need["categories"]), count=need["count"], required=True, design_only=need["decor_only"])
+        else:
+            # The rest of a covered role stays a choice, such as side tables beside a requested coffee table.
+            add("optional", need["role"], set(need["categories"]) - requested_categories - excluded)
     for role, categories in requirements["optional_roles"].items():
         categories = set(categories) - requested_categories
         add("optional", role, categories - BUDGET_EXCLUDED_CATEGORIES)

@@ -46,6 +46,40 @@ Perform only the requested spatial task. Preserve unrelated assets and never add
 Follow the requested JSON schema or tool-call contract exactly, without prose outside that output."""
 
 
+# Design rules the final review applies as text: comfort and taste, not geometry the checks enforce.
+# Add a line here to teach the review a rule; add a room type key to give a new room its own rules.
+DESIGN_RULES = {
+    "all": (
+        "Clear zones: each group (bed, sitting, dining, work) reads as one area, and zones do not crowd each other.",
+        "A TV faces its viewers, and its back does not face another zone.",
+        "Large pieces stand against a wall or anchor a zone; nothing floats in the middle of the room without a purpose.",
+        "Walkways stay open from the door to each zone and between zones.",
+        "Nothing taller than a window sill (about 0.9 m), such as a bookcase, cabinet or wardrobe, stands in front of a window.",
+        "A floor lamp stands right at the end of the seat or bed it lights, within arm's reach, not across the room.",
+    ),
+    "living_room": (
+        f"Leave the roomy end of {SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[0]:.2f}-{SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[1]:.2f} m "
+        "between the sofa and the coffee table, and about 0.45 m between an accent chair and the coffee table.",
+        "Accent chairs face the coffee table and the TV or sofa, not a wall.",
+    ),
+    "bedroom": (
+        "The bed's headboard is against a wall, with access from its sides and foot.",
+    ),
+    "studio": (
+        "The bed's headboard is against a wall, with access from its sides and foot.",
+        "Sleeping, sitting and dining each take their own part of the room.",
+    ),
+    "dining_room": (
+        "The table sits where every chair can pull out, with a clear path around it.",
+    ),
+}
+
+
+def design_rules_block(room_type: str) -> str:
+    """The shared and room-specific DESIGN_RULES as a bulleted list."""
+    return "\n".join(f"- {rule}" for rule in (*DESIGN_RULES["all"], *DESIGN_RULES.get(room_type, ())))
+
+
 def coordinate_system_block(room_width: float, room_depth: float) -> str:
     """Compact coordinate, wall index, and rotation primer."""
     return (

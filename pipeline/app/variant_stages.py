@@ -52,6 +52,7 @@ from app.rules.layout_rules import (
     build_rules_block,
     build_selection_guidance_block,
     coordinate_system_block,
+    design_rules_block,
 )
 from app.rules.placement_mode import placement_mode_for_asset
 from app.rules.planner.feasibility_digest import format_feasibility_digest_for_prompt
@@ -1271,12 +1272,8 @@ def _arrangement_prompt(state: VariantState, options: list[VariantState], images
 
 Each image is one variant drawn top-down and titled with its label: +x right, +y up, 1 m grid. Walls are dark, doors brown with their swing, windows blue. Each piece is its footprint labeled with its instance key; the line ending in a dot points to its front. Blue: floor furniture; green: items on a support; orange: wall-mounted; tan: rugs; grey outline: ceiling items.
 
-Review the chosen variant as a room, against the request and the layout rules below:
-- Clear zones: each group (bed, sitting, dining, work) reads as one area, and zones do not crowd each other.
-- A TV faces its viewers, and its back does not face another zone.
-- The bed's headboard is against a wall, with access from its sides and foot.
-- Large pieces stand against a wall or anchor a zone; nothing floats in the middle of the room without a purpose.
-- Walkways stay open from the door to each zone and between zones.
+Review the chosen variant as a room, against the request, these design rules, and the layout rules below:
+{design_rules_block(room["room_type"])}
 Write two or three sentences on what is wrong with it, or say that it works.
 
 Then return adjustments that fix the problems you name. Give each piece that should move its new center x, y and its rotation_z. Move it as far as the fix needs, and turn it only by quarter turns (rotation_z in radians: 0 faces +x, 1.571 faces +y, 3.142 faces -x, 4.712 faces -y). Items on a support move with it. List only pieces that should move, and return an empty list when nothing needs to change. The server reverts the adjustments when they make the layout checks worse.

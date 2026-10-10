@@ -718,8 +718,8 @@ async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Reco
     (below STYLE_VIOLATION_BELOW is a coordination violation), and whether each
     product a `_jev_attribute_constraints` entry targets meets it (below
     ATTRIBUTE_UNSATISFIED_BELOW is unsatisfied). A constraint without a category
-    targets every product. Notes a rejection. With check off or failed, the audit
-    holds only code results.
+    targets every product except TVs and decor plants. Notes a rejection. With
+    check off or failed, the audit holds only code results.
     """
     audit = _code_audit()
     if "check" not in ctx.run.jev_uses:
@@ -728,12 +728,14 @@ async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Reco
     room_type = state["shared"]["room"]["room_type"]
     anchor = next((uid for group in _ANCHOR_CATEGORIES.get(room_type, (FIT_ANCHOR_SEATING,))
                    for uid in products if categories[uid] in group), None)
-    styled = [uid for uid in products if anchor and uid != anchor
-              and categories[uid] not in BUDGET_EXCLUDED_CATEGORIES and not is_decor_plant(products[uid])]
+    furniture = [uid for uid in products
+                 if categories[uid] not in BUDGET_EXCLUDED_CATEGORIES and not is_decor_plant(products[uid])]
+    styled = [uid for uid in furniture if anchor and uid != anchor]
     constraints = [
         (str(constraint.get("source_label") or constraint.get("label") or constraint.get("value") or "").strip(),
          [uid for uid in products
-          if not constraint.get("category") or _price_constraint_category_matches(constraint["category"], categories[uid])])
+          if _price_constraint_category_matches(constraint["category"], categories[uid])] if constraint.get("category")
+         else furniture)
         for constraint in _jev_attribute_constraints(intent)
     ]
     questions = {f"style_{n}": _STYLE_QUESTION.format(_product_text(products[uid])) for n, uid in enumerate(styled)}

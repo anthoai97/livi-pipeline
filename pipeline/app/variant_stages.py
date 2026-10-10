@@ -445,6 +445,8 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
     )
     variant_directive = state["direction"]
     excluded_categories = set(intent.get("excluded_categories") or [])
+    decor_uids = [asset["uid"] for asset in candidates if not is_decor_plant(asset)
+                  and normalize_category(asset.get("category")) in {"sculpture", "planter", "floor_mirror"}]
     if not studio and "planter" not in excluded_categories:
         plant_uids = [asset["uid"] for asset in candidates if is_decor_plant(asset)]
         plant_guidance = (
@@ -467,13 +469,13 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
             "side table, or small organizer does not satisfy this role.\n"
         )
     optional_piece_guidance = (
-        "Apart from that single perimeter piece, do not add storage, media, extra "
-        f"seating, side tables, or {'other decor' if plant_guidance else 'decor'} by default."
-        if needs_perimeter_storage
-        else f"Do not add storage, media, extra seating, side tables, or {'other decor' if plant_guidance else 'decor'} by default."
+        "Judge completeness across the usable room: each seat has a side surface and a light within reach, the "
+        "seating group is complete for the room size, and a spacious room uses its long walls for storage or display. "
+        "Respect user exclusions and minimal briefs; an extra piece needs a purpose, not unused budget."
     )
     selection_size_guidance = (
-        "Choose the smallest coherent set that satisfies the requested functions and reaches the footprint floor"
+        "Choose a coherent, functionally complete set scaled to the usable room. "
+        "The sparse floor is a lower guardrail, not proof of completeness; satisfy it"
     )
     if bedroom:
         optional_piece_guidance = (
@@ -556,6 +558,7 @@ CONSTRAINTS:
 - {required_role_guidance}
 - {rug_guidance}
 {plant_guidance}- Budget is a spending cap, not a target: total cost must stay at or under ${budget * (1 + BUDGET_FLEX_PCT):.2f} (${budget:.2f} + 10% flex). There is no minimum spend — never inflate item prices to use the budget up.
+- Decor: once the room is functionally complete, if the total is under ${budget:.2f}, add up to 2 decor pieces that suit the room (a tabletop sculpture on a surface, a plant, a floor mirror), keeping the total at or under ${budget:.2f}. Decor UIDs: {', '.join(decor_uids) or 'none available'}. A required decor plant does not count toward these. Skip decor for minimal briefs.
 - Furnish the room: total footprint (width x depth x 2 per asset, rugs excluded) must be at least {footprint_floor:.2f} sqm and at most {furniture_area:.2f} sqm. The comfortable load of {comfortable_load:.2f} sqm is an upper reference, not a target. Once the requested functions and density floor are satisfied, do not add pieces merely to approach it.
 {perimeter_storage_guidance}- Physical layout preflight must pass: rugs must fit the room; every tabletop asset must fit an eligible selected support surface; desk/dining clusters must fit with their chairs; and tiny rooms must not receive extra seating or floor lamps.
 - {count_guidance_constraint}

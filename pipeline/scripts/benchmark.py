@@ -79,14 +79,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Replay the benchmark requests against a running pipeline service")
     parser.add_argument("--runs", type=int, default=3, help="times to send each request")
     parser.add_argument("--url", default="http://127.0.0.1:8000", help="service base URL")
-    parser.add_argument("--only", help="send only the request for this room type, such as studio")
+    parser.add_argument("--only", help="send only the request with this label, such as studio or living_room_scandi")
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs must be at least 1")
 
     cases = [case for case in json.loads(REQUESTS.read_text()) if args.only in (None, case["label"])]
     if not cases:
-        parser.error(f"no benchmark request for room type {args.only!r}")
+        parser.error(f"no benchmark request labeled {args.only!r}")
 
     rows = []
     with httpx.Client(timeout=60) as client:

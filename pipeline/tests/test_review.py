@@ -4,6 +4,7 @@ import io
 import json
 import math
 
+from app import preview
 from PIL import Image
 from scripts import review
 
@@ -58,24 +59,24 @@ RECORD = {
 
 def pixel(image: Image.Image, x: float, y: float) -> tuple[int, int, int]:
     """The image pixel at plan point (x, y) of the 4 x 5 m room."""
-    scale = (review.WIDTH - 2 * review.MARGIN) / 5.0
-    return image.getpixel((round(review.MARGIN + x * scale), round(review.TOP + (5.0 - y) * scale)))
+    scale = (preview.WIDTH - 2 * preview.MARGIN) / 5.0
+    return image.getpixel((round(preview.MARGIN + x * scale), round(preview.TOP + (5.0 - y) * scale)))
 
 
 def test_plan_draws_rotated_footprints_and_the_door_gap():
-    png = review.png_bytes(review.render_plan(RECORD, RECORD["variants"][0]))
+    png = preview.png_bytes(preview.render_plan(RECORD, RECORD["variants"][0]))
     image = Image.open(io.BytesIO(png))
 
-    assert png.startswith(b"\x89PNG") and image.width == review.WIDTH
-    floor_fill = review.KINDS["floor"][0][:3]
+    assert png.startswith(b"\x89PNG") and image.width == preview.WIDTH
+    floor_fill = preview.KINDS["floor"][0][:3]
     # Inside the rotated sofa footprint, outside the unrotated one (x 0-2, y 2.05-2.95), and the reverse.
     assert all(abs(a - b) < 30 for a, b in zip(pixel(image, 0.7, 3.3), floor_fill))
     assert pixel(image, 1.8, 2.2) != pixel(image, 0.7, 3.3)
     # The door leaves a gap in the bottom wall; the rest of that wall is drawn.
-    assert pixel(image, 1.8, 0.0) == review.FLOOR[:3]
-    assert pixel(image, 3.5, 0.0) == review.WALL[:3]
+    assert pixel(image, 1.8, 0.0) == preview.FLOOR[:3]
+    assert pixel(image, 3.5, 0.0) == preview.WALL[:3]
     # The lamp on the side table is drawn on top of it.
-    assert all(abs(a - b) < 30 for a, b in zip(pixel(image, 1.1, 4.1), review.KINDS["support"][0][:3]))
+    assert all(abs(a - b) < 30 for a, b in zip(pixel(image, 1.1, 4.1), preview.KINDS["support"][0][:3]))
 
 
 class FakeProxy:

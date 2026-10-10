@@ -229,6 +229,7 @@ async def interpret(state: PipelineState, ctx: StageContext) -> PipelineState:
         fallback_intent=request.user_intent,
         room_type=request.room_type,
     )
+    ctx.data.update(style_hints=intent["style_hints"], requested_categories=intent["requested_categories"])
     return {"intent": intent}
 
 
@@ -251,6 +252,13 @@ async def room(state: PipelineState, ctx: StageContext) -> PipelineState:
         room_doors=request.room_doors,
         room_windows=request.room_windows,
         intent=state["intent"],
+    )
+    ctx.data.update(
+        room_area=list(request.room_area), wall_height=request.wall_height,
+        doors=len(request.room_doors), windows=len(request.room_windows),
+        floor_area_sqm=context["facts"]["area"], usable_area_sqm=context["furniture_area_sqm"],
+        protected_paths=len(context["protected_paths"]), fit=context["fit"]["severity"],
+        fit_message=context["fit"]["message"],
     )
     return {"room": context}
 
@@ -477,4 +485,13 @@ async def retrieve(state: PipelineState, ctx: StageContext) -> PipelineState:
         ctx.run.record_slot(slot["id"], len(kept), gap, note)
         slots.append({**slot, "gap": gap})
         pool[slot["id"]] = kept
+    ctx.data.update(
+        slots=len(slots), candidates=sum(len(rows) for rows in pool.values()),
+        gaps=[slot["label"] for slot in slots if slot["gap"]],
+        preview=[{
+            "asset_id": str(row["asset_id"]), "name": row.get("title"), "category": row.get("category"),
+            "image_url": row.get("image_url"), "price": float(row["price"]) if row.get("price") is not None else None,
+            "slot": slot["id"], "kind": slot["kind"],
+        } for slot in slots for row in pool[slot["id"]][:1]],
+    )
     return {"slots": slots, "pool": pool}

@@ -171,6 +171,10 @@ async def validate(state, ctx):
     }
 
 
+async def drop(state, ctx):
+    return await validate({**state, "blocking_findings": []}, ctx)
+
+
 STAGES = Stages(
     interpret=interpret,
     room=room,
@@ -181,12 +185,14 @@ STAGES = Stages(
     repair=repair,
     correct=correct,
     validate=validate,
+    drop=drop,
     direction=lambda index, room_type: f"direction {index}",
 )
 
 
 # Fields the web app reads (step 1 contract check), plus today's legacy extras.
 VARIANT_KEYS = {
+    "preview_url",
     "variant_index",
     "variant_id",
     "committed",
@@ -409,17 +415,16 @@ def test_failed_variants_do_not_block_the_others(tmp_path):
 
     _, events, record = post(tmp_path, stages=replace(STAGES, select=flaky_select))
 
-    failed = {e["variant_index"]: e for e in of_type(events, "variant_failed")}
-    assert failed[0]["reason"] == "variant_error"
-    assert failed[1]["reason"] == "asset_selection_failed"
-    assert failed[1]["errors"] == ["over budget"]
+    [failed] = of_type(events, "variant_failed")
+    assert failed["variant_index"] == 0 and failed["reason"] == "variant_error"
+    # A selection that never passes is placed after the last turn instead of failing its variant.
     assert turns[1] == MAX_SELECTION_TURNS
-    [ready] = of_type(events, "variant_ready")
-    assert ready["data"]["variant"]["variant_index"] == 2
-    assert events[-1]["data"]["variants"] == [ready["data"]["variant"]]
+    ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
+    assert sorted(variant["variant_index"] for variant in ready) == [1, 2]
+    assert sorted(variant["variant_index"] for variant in events[-1]["data"]["variants"]) == [1, 2]
     assert [(v["outcome"], v["reason"]) for v in record["variants"]] == [
         ("failed", "variant_error"),
-        ("failed", "asset_selection_failed"),
+        ("ready", None),
         ("ready", None),
     ]
 
@@ -431,16 +436,16 @@ def test_failed_layout_reselects_once_and_each_layout_caps_its_corrections(tmp_p
 
     _, events, record = post(tmp_path, stages=replace(STAGES, correct=stuck_correct))
 
-    failed = of_type(events, "variant_failed")
-    assert {e["reason"] for e in failed} == {"layout_validation_failed"}
-    assert len(failed) == 3
+    # After the reselected layout fails too, drop delivers it.
+    assert not of_type(events, "variant_failed") and len(of_type(events, "variant_ready")) == 3
     for index in range(3):
         runs = [s["stage"] for s in record["stages"] if s["variant_index"] == index]
         assert runs.count("select") == runs.count("place") == runs.count("validate") == 1 + MAX_RESELECTIONS
         assert runs.count("correct") == MAX_CORRECTION_PROPOSALS * (1 + MAX_RESELECTIONS)
+        assert runs[-1] == "drop" and runs.count("drop") == 1
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
         assert notes == ["reselection after the layout failed: blocking findings remain"]
-    assert events[-1]["data"]["variants"] == []
+    assert len(events[-1]["data"]["variants"]) == 3
 
 
 def test_correction_stops_at_the_first_proposal_that_does_not_improve(tmp_path):
@@ -452,7 +457,7 @@ def test_correction_stops_at_the_first_proposal_that_does_not_improve(tmp_path):
 
     _, events, record = post(tmp_path, stages=replace(STAGES, correct=stalling_correct))
 
-    assert {e["reason"] for e in of_type(events, "variant_failed")} == {"layout_validation_failed"}
+    assert len(of_type(events, "variant_ready")) == 3
     for index in range(3):
         runs = [s["stage"] for s in record["stages"] if s["variant_index"] == index]
         # Two proposals per layout, the second one stalled, for the layout and its one reselection.

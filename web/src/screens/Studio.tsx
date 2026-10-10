@@ -12,7 +12,7 @@ export function Studio() {
   const { search } = useLocation();
   const saved = useMemo(() => loadDesign(new URLSearchParams(search)), [search]);
   const confirm = useRef<HTMLDialogElement>(null);
-  const reset = useRun((state) => state.reset);
+  const { reset, runId, recordTiming } = useRun();
 
   function startNew() {
     confirm.current?.close();
@@ -39,11 +39,17 @@ export function Studio() {
       {saved ? (
         <main className="grid flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
           <section aria-label="3D view" className="relative min-h-[420px] overflow-hidden rounded-[20px] bg-canvas md:min-h-[600px]">
-            <RoomScene geometry={saved.variant.render_manifest} furnishings={furnishingsOf(saved.variant.render_manifest)} interactive />
+            <RoomScene
+              key={saved.variant.variant_id}
+              geometry={saved.variant.render_manifest}
+              furnishings={furnishingsOf(saved.variant.render_manifest)}
+              onDisplayed={(timing) => recordTiming(runId, saved.variant.variant_id, "studio", timing)}
+              interactive
+            />
           </section>
 
           <aside className="flex min-h-0 flex-col rounded-[20px] border border-line bg-surface p-5 md:p-6">
-            <h1 className="text-[22px] font-semibold tracking-tight text-text">Pieces in this room</h1>
+            <h1 className="text-[22px] font-semibold tracking-tight text-text">Products in this room</h1>
             <p className="mt-1 text-[14px] text-muted">
               {pieces.length} unique products, {saved.variant.selected_assets.length} items
             </p>
@@ -65,7 +71,7 @@ export function Studio() {
               ))}
             </ul>
             <dl className="mt-4 flex items-baseline justify-between border-t border-line pt-4">
-              <dt className="text-[14px] text-muted">Total spent</dt>
+              <dt className="text-[14px] text-muted">Product total</dt>
               <dd className="text-[22px] font-semibold tracking-tight text-text tabular-nums">{money(saved.variant.total_cost)}</dd>
             </dl>
           </aside>
@@ -73,8 +79,8 @@ export function Studio() {
       ) : (
         <main className="grid flex-1 place-items-center rounded-[20px] bg-canvas p-8 text-center">
           <div>
-            <h1 className="text-[22px] font-semibold tracking-tight text-text">Your 3D design will appear here</h1>
-            <p className="mt-2 text-[15px] text-muted">Draw your room and generate a design to get started.</p>
+            <h1 className="text-[22px] font-semibold tracking-tight text-text">No saved design found</h1>
+            <p className="mt-2 text-[15px] text-muted">Enter your room details to generate a design.</p>
             <Button className="mt-5" onClick={() => navigate("/")}>
               Start a design
             </Button>
@@ -90,7 +96,7 @@ export function Studio() {
         <h2 id="new-design-title" className="text-[20px] font-semibold tracking-tight">
           Start a new design?
         </h2>
-        <p className="mt-2 text-[15px] text-muted">This design stays saved. You can open it again from its link.</p>
+        <p className="mt-2 text-[15px] text-muted">This design stays saved in this browser. Use its link to reopen it.</p>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="outline" onClick={() => confirm.current?.close()}>
             Stay here

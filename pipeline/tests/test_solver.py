@@ -6,8 +6,10 @@ import time
 from pathlib import Path
 
 import pytest
+from shapely.ops import unary_union
 from test_rules_parity import GOLDEN, _golden_id, _golden_inputs
 
+from app.rules.geometry.primitives import asset_polygon
 from app.rules.layout.analysis import analyze_layout, findings_by_level
 from app.rules.layout.comfort import media_viewing_measurements
 from app.rules.layout.dining import dining_layout_measurements
@@ -98,6 +100,32 @@ def test_media_pulls_off_its_wall_to_bring_the_tv_into_its_viewing_range():
     assert blocking(layout, assets, room) == {}
 
 
+def test_studio_tv_stands_free_on_the_sofa_axis_when_the_far_wall_is_out_of_range():
+    # Across the 6.4 m studio a wall-backed 1.2 m TV is seen from 5.3 m, past its 1.44 to 4.2 m range.
+    intent, room, assets = _golden_inputs({"room": "studio"})
+    assets = [{**asset, "placement_mode": "tabletop", "paired_support_uid": "tv_stand_1"}
+              if asset["category"] == "tv" else asset for asset in assets]
+
+    layout, report = solve_layout(assets, room, intent)
+
+    [viewing] = media_viewing_measurements(layout, assets)
+    assert viewing["viewer"] == "sofa_1" and viewing["within_preferred_range"], viewing
+    assert viewing["viewer_faces_media"] and viewing["media_faces_viewer"]
+    assert layout["tv_1"]["on_top_of"] == "tv_stand_1"
+    assert report["unplaceable"] == [] and blocking(layout, assets, room) == {}
+
+
+def test_studio_floor_lamp_stands_by_the_sofa_not_a_dining_chair():
+    intent, room, assets = _golden_inputs({"room": "studio"})
+    assets = [*assets, item("floor_lamp_1", "floor_lamp", 0.46, 0.3, 1.62)]
+
+    layout, _ = solve_layout(assets, room, intent)
+
+    lamp = layout["floor_lamp_1"]["position"][:2]
+    seats = ("sofa_1", "dining_chair_1", "dining_chair_2")
+    assert min(seats, key=lambda uid: math.dist(lamp, layout[uid]["position"][:2])) == "sofa_1"
+
+
 def test_bedside_table_lamps_stand_on_the_nightstands():
     # The seed puts both lamps on the desk, the support nearest a seat (the office chair).
     intent, room, assets = _golden_inputs({"room": "bedroom"})
@@ -132,6 +160,41 @@ def test_a_solve_takes_under_two_seconds(name):
 
     assert time.perf_counter() - started < 2.0
     assert report["elapsed"] < 2.0
+
+
+@pytest.mark.parametrize("benchmark", [False, True], ids=["golden", "benchmark"])
+def test_studio_dining_stands_apart_from_the_sofa_and_the_bed(benchmark):
+    # The dining table used to take the middle of the room, 0.45 m from the bed group (0.6 m in the 5.5 x 7 m benchmark studio).
+    intent, room, assets = _golden_inputs({"room": "studio"})
+    if benchmark:
+        request = BENCHMARK["studio"]
+        room = build_room_context(room_type="studio", room_area=request["room_area"], room_vertices=request["room_vertices"],
+                                  wall_height=request["wall_height"], room_doors=request["room_doors"],
+                                  room_windows=request["room_windows"], intent=intent)
+
+    layout, report = solve_layout(assets, room, intent)
+
+    def footprint(*categories):
+        return unary_union([asset_polygon(layout[asset["uid"]]["position"], layout[asset["uid"]]["rotation"][2],
+                                          asset["width"], asset["depth"]) for asset in assets if asset["category"] in categories])
+
+    dining = footprint("dining_table", "dining_chair")
+    assert dining.distance(footprint("sofa", "coffee_table", "bed", "nightstand")) > 1.0
+    assert report["unplaceable"] == [] and blocking(layout, assets, room) == {}
+
+
+def test_studio_layouts_on_offer_differ_in_their_zone_plans():
+    # The four final layouts used to share one plan (bed, sofa, and dining table in the same places), differing only in the TV stand.
+    intent, room, assets = _golden_inputs({"room": "studio"})
+
+    layout, report = solve_layout(assets, room, intent)
+
+    def plan(layout):
+        x, y, _ = layout["dining_table_1"]["position"]
+        return (*(round(layout[uid]["rotation"][2] / (math.pi / 2)) % 4 for uid in ("bed_1", "sofa_1")), x > 3.2, y > 3.35)
+
+    ties = [alternative["layout"] for alternative in report["alternatives"] if alternative["score"] == report["score"]]
+    assert len({plan(option) for option in (layout, *ties)}) >= 3
 
 
 def test_a_floor_planter_never_stands_on_the_dining_table():

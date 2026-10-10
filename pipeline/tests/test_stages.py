@@ -75,13 +75,18 @@ OVERLAPPING = {**PLACEMENTS, "dining_chair_1": {**PLACEMENTS["dining_chair_1"], 
 FIXED = chair_pose(PLACEMENTS["dining_chair_1"]["position"])
 
 
-def solve_as(monkeypatch, placements: dict) -> None:
-    """Make the place stage's solver return `placements` for the instances it is given."""
+def solve_as(monkeypatch, placements: dict, *alternatives: dict) -> None:
+    """Make the place stage's solver return `placements`, and `alternatives` as its other layouts, for the instances it is given."""
 
     def solve(instances, room, intent):
         keys = {variant_stages._key(asset) for asset in instances}
-        layout = {key: placement for key, placement in placements.items() if key in keys}
-        return layout, {"unplaceable": [], "score": [0, 0, 0], "candidates": 0, "scored": 0, "elapsed": 0.0}
+
+        def only(layout: dict) -> dict:
+            return {key: placement for key, placement in layout.items() if key in keys}
+
+        return only(placements), {"unplaceable": [], "score": [0, 0, 0], "candidates": 0, "scored": 0, "elapsed": 0.0,
+                                  "alternatives": [{"layout": only(layout), "score": [0, 0, 0], "unplaceable": []}
+                                                   for layout in alternatives]}
 
     monkeypatch.setattr(variant_stages, "solve_layout", solve)
 
@@ -94,20 +99,25 @@ class FakeGenai:
     """genai.Client stand-in that answers each schema with `responses[schema title]`.
 
     A response is a dict, a function of the prompt that returns one, or an exception that fails the call.
+    A prompt with image parts is recorded as its text parts; `images` counts the image parts of each call by title.
     """
 
     def __init__(self, responses: dict):
         self.responses = responses
         self.prompts: list[tuple[str, str]] = []
+        self.images: list[tuple[str, int]] = []
         self.aio = SimpleNamespace(models=self)
 
-    async def generate_content(self, *, model: str, contents: str, config: types.GenerateContentConfig):
+    async def generate_content(self, *, model: str, contents: str | list[str | types.Part], config: types.GenerateContentConfig):
         title = config.response_json_schema["title"]
-        self.prompts.append((title, contents))
+        parts = [contents] if isinstance(contents, str) else contents
+        text = "\n".join(part for part in parts if isinstance(part, str))
+        self.prompts.append((title, text))
+        self.images.append((title, sum(isinstance(part, types.Part) and part.inline_data is not None for part in parts)))
         answer = self.responses[title]
         if isinstance(answer, Exception):
             raise answer
-        answer = answer(contents) if callable(answer) else answer
+        answer = answer(text) if callable(answer) else answer
         return types.GenerateContentResponse(
             candidates=[types.Candidate(content=types.Content(role="model", parts=[types.Part(text=json.dumps(answer))]))],
             usage_metadata=types.GenerateContentResponseUsageMetadata(prompt_token_count=100, candidates_token_count=10),
@@ -223,14 +233,15 @@ def test_shared_stages_run_once_and_each_variant_runs_its_stages(tmp_path, searc
     assert [sum(text in prompt for prompt in genai.of("Selection")) for text in directions] == [1, 1]
 
 
-def test_oversized_selection_steps_to_compact_then_capped_counts(tmp_path, searches):
+def test_oversized_selection_steps_to_compact_then_capped_counts_then_drops_the_product(tmp_path, searches):
     # Ten sideboards overcrowd the room on every turn.
     oversized = [(uid, 10 if uid == "sideboard_1" else count) for uid, count in TURN["items"]]
     genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(oversized)})
 
     events, record = run_pipeline(tmp_path, genai)
 
-    assert {e["reason"] for e in of_type(events, "variant_failed")} == {"asset_selection_failed"}
+    ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
+    assert len(ready) == 3 and all(len(variant["selected_assets"]) == 6 for variant in ready)
     compact, capped = "=== ADVISORY FIT ESTIMATE ===", "=== ACCEPTED FIT DECISION ==="
     marker = "VARIANT DIRECTION: Choose a warm, rounded dining table"
     prompts = [prompt for prompt in genai.of("Selection") if marker in prompt]
@@ -242,8 +253,10 @@ def test_oversized_selection_steps_to_compact_then_capped_counts(tmp_path, searc
     for index in range(3):
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
         assert [note for note in notes if "fit step" in note] == ["selection turn 2: fit step compact", "selection turn 3: fit step capped"]
-        assert all(note.startswith(f"selection turn {turn} failed: ") for turn, note in enumerate(
-            (note for note in notes if "fit step" not in note), 1))
+        turns = [note for note in notes if note.startswith("selection turn") and "fit step" not in note]
+        assert [note.split(":")[0] for note in turns[:-1]] == [f"selection turn {turn} failed" for turn in range(1, MAX_SELECTION_TURNS)]
+        # The last turn drops the product that fails it instead of failing the variant.
+        assert turns[-1] == f"selection turn {MAX_SELECTION_TURNS}: dropped sideboard_1; passes"
         assert stage_runs(record, "select", index) == MAX_SELECTION_TURNS
 
 
@@ -278,13 +291,13 @@ def test_selection_failing_a_fit_estimate_the_solver_cannot_place_steps_down(tmp
     fail_fit_estimate(monkeypatch, "footprint")
     solve = variant_stages.solve_layout
     monkeypatch.setattr(variant_stages, "solve_layout", lambda instances, room, intent: (
-        solve(instances, room, intent)[0], {"unplaceable": ["sideboard_1"], "score": [1, 0, 0], "candidates": 0, "scored": 0, "elapsed": 0.0}))
+        solve(instances, room, intent)[0], {"unplaceable": ["sideboard_1"], "score": [1, 0, 0], "candidates": 0, "scored": 0, "elapsed": 0.0, "alternatives": []}))
     genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection()})
 
     events, record = run_pipeline(tmp_path, genai)
 
-    failed = of_type(events, "variant_failed")
-    assert {e["reason"] for e in failed} == {"asset_selection_failed"}
+    # Dropping a product cannot clear the footprint estimate, so the last selection is placed with it.
+    assert len(of_type(events, "variant_ready")) == 3
     for index in range(3):
         assert stage_runs(record, "select", index) == MAX_SELECTION_TURNS
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
@@ -305,17 +318,19 @@ def test_lamp_too_large_for_its_side_table_keeps_the_fit_step(tmp_path, monkeypa
     # The solver cannot place the lamp either, so every turn fails on the lamp alone.
     solve = variant_stages.solve_layout
     monkeypatch.setattr(variant_stages, "solve_layout", lambda instances, room, intent: (
-        solve(instances, room, intent)[0], {"unplaceable": ["table_lamp_1"], "score": [1, 0, 0], "candidates": 0, "scored": 0, "elapsed": 0.0}))
+        solve(instances, room, intent)[0], {"unplaceable": ["table_lamp_1"], "score": [1, 0, 0], "candidates": 0, "scored": 0, "elapsed": 0.0, "alternatives": []}))
     packet = intent_packet(item("table lamp", "table_lamp"), item("side table", "side_table"))
     genai = FakeGenai({"IntentPacket": packet, "Selection": selection([*TURN["items"], ("table_lamp_1", 1), ("side_table_1", 1)])})
 
     events, record = run_pipeline(tmp_path, genai)
 
-    assert {e["reason"] for e in of_type(events, "variant_failed")} == {"asset_selection_failed"}
+    ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
+    assert len(ready) == 3 and not [asset for variant in ready for asset in variant["selected_assets"] if asset["category"] == "table_lamp"]
     # The room fit estimate starts at compact; the lamp failures never step down to capped counts.
     for index in range(3):
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
         assert [note for note in notes if "fit step" in note] == ["selection turn 1: fit step compact"]
+        assert f"selection turn {MAX_SELECTION_TURNS}: dropped table_lamp_1; passes" in notes
         assert stage_runs(record, "select", index) == MAX_SELECTION_TURNS
     retries = [prompt for prompt in genai.of("Selection") if "FAILED VALIDATION" in prompt]
     assert len(retries) == 3 * (MAX_SELECTION_TURNS - 1)
@@ -360,7 +375,12 @@ def test_over_budget_selection_the_repair_cannot_validate_is_retried_keeping_req
 
     events, record = run_pipeline(tmp_path, genai)
 
-    assert {e["reason"] for e in of_type(events, "variant_failed")} == {"asset_selection_failed"}
+    # The last turn drops the sideboard to cut the cost; the requested chairs stay, so the design is delivered over budget.
+    ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
+    assert len(ready) == 3 and all(variant["total_cost"] == 899 + 4 * 1200 for variant in ready)
+    dropped = [note["text"] for note in record["notes"] if " dropped " in note["text"]]
+    assert dropped == [f"selection turn {MAX_SELECTION_TURNS}: dropped sideboard_1; still fails: OVER BUDGET: "
+                       "Selection costs $5699.00 (Flex limit: $5500.00)."] * 3
     rejected = [note["text"] for note in record["notes"] if note["text"].startswith("budget repair")]
     assert len(rejected) == 3 * MAX_SELECTION_TURNS
     assert all(note.startswith("budget repair rejected (dining_chair_39 -> dining_chair_8): ") and "DINING CHAIR DIMENSIONS" in note
@@ -390,30 +410,37 @@ def test_required_item_searched_without_its_limits_can_pass_selection(tmp_path, 
     assert all("candidates ignore them" in prompt for prompt in genai.of("Selection"))
 
 
-def test_blocking_layout_reselects_once_with_placement_feedback_then_fails(tmp_path, searches, monkeypatch):
+def test_blocking_layout_reselects_once_with_placement_feedback_then_drops_the_blocking_item(tmp_path, searches, monkeypatch):
     solve_as(monkeypatch, OVERLAPPING)
     # The correction pushes the chair back into the table, so it never improves the layout.
     genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Correction": chair_pose(TABLE_CENTER)})
 
     events, record = run_pipeline(tmp_path, genai)
 
-    failed = of_type(events, "variant_failed")
-    assert {e["reason"] for e in failed} == {"layout_validation_failed"}
-    assert all("unresolved blocking issues" in e["errors"][0] for e in failed)
+    # The last layout loses the chair inside the table, not the anchor table, and is delivered.
+    ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
+    assert len(ready) == 3
+    for variant in ready:
+        assert sorted(variant["render_manifest"]["layout"]) == sorted(set(PLACEMENTS) - {"dining_chair_1"})
+        assert variant["total_cost"] == 899 + 3 * 510 + 899
+    checks = [event["data"] for event in of_type(events, "node_complete") if event["node"] == "render_scene"]
+    assert [check["valid"] for check in checks].count(True) == 3 and all(check.get("dropped") == 1 for check in checks if check["valid"])
     for index in range(3):
         for stage in ("select", "place", "repair", "validate"):
             assert stage_runs(record, stage, index) == 1 + MAX_RESELECTIONS
         # Each layout stops correcting at its first proposal that does not improve.
         assert stage_runs(record, "correct", index) == 1 + MAX_RESELECTIONS
+        assert stage_runs(record, "drop", index) == 1
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
         assert any(note.startswith("reselection after the layout failed: Final layout has unresolved") for note in notes)
         assert "selection turn 2: fit step compact" in notes
+        assert notes[-1] == "dropped dining_chair_1 for the final check"
     reselections = [prompt for prompt in genai.of("Selection") if "LAYOUT FAILED THE FINAL CHECK" in prompt]
     assert len(reselections) == 3
     for prompt in reselections:
         assert "Items named in the remaining blocking findings: dining_chair_39 (dining_chair)" in prompt
         assert "=== ADVISORY FIT ESTIMATE ===" in prompt and "FAILED VALIDATION" not in prompt
-    assert events[-1]["type"] == "complete" and events[-1]["data"]["variants"] == []
+    assert events[-1]["type"] == "complete" and len(events[-1]["data"]["variants"]) == 3
 
 
 def test_failed_correction_call_ends_correction_with_the_best_layout(tmp_path, searches, monkeypatch):
@@ -423,8 +450,7 @@ def test_failed_correction_call_ends_correction_with_the_best_layout(tmp_path, s
 
     events, record = run_pipeline(tmp_path, genai)
 
-    failed = of_type(events, "variant_failed")
-    assert {e["reason"] for e in failed} == {"layout_validation_failed"} and len(failed) == 3
+    assert len(of_type(events, "variant_ready")) == 3
     for index in range(3):
         # One failed call per layout ends its correction; the failed layout then reselects as usual.
         assert stage_runs(record, "correct", index) == 1 + MAX_RESELECTIONS
@@ -442,7 +468,7 @@ def test_correction_escalates_once_per_layout_to_the_correct_escalate_model(tmp_
 
     events, record = run_pipeline(tmp_path, genai)
 
-    assert {e["reason"] for e in of_type(events, "variant_failed")} == {"layout_validation_failed"}
+    assert len(of_type(events, "variant_ready")) == 3
     for index in range(3):
         models = [call["model"] for call in record["model_calls"] if call["stage"] == "correct" and call["variant_index"] == index]
         # Lite first, then the escalation model, for the layout and again after its reselection.
@@ -462,11 +488,17 @@ def test_jev_style_and_attribute_failures_reject_the_selection(tmp_path, searche
 
     events, record = run_pipeline(tmp_path, genai, FakeJevClient(answer))
 
-    failed = of_type(events, "variant_failed")
-    assert {e["reason"] for e in failed} == {"asset_selection_failed"}
-    for event in failed:
-        assert "SELECTION CONSTRAINT AUDIT: sideboard_1 does not match the style and palette of the anchor dining_table_3" in " ".join(event["errors"])
-        assert "SELECTION CONSTRAINT AUDIT: attribute constraint \"soft neutral\" is not satisfied by ['dining_chair_39']" in event["errors"]
+    # The last turn drops the mismatched sideboard; the requested chairs stay, so their attribute failure remains.
+    ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
+    assert len(ready) == 3 and all("sideboard_1" not in variant["render_manifest"]["layout"] for variant in ready)
+    for index in range(3):
+        notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
+        failures = [note for note in notes if note.startswith("selection turn") and " failed: " in note]
+        assert all("SELECTION CONSTRAINT AUDIT: sideboard_1 does not match the style and palette of the anchor dining_table_3" in note
+                   for note in failures[:-1])
+        [dropped] = [note for note in notes if " dropped " in note]
+        assert dropped.startswith(f"selection turn {MAX_SELECTION_TURNS}: dropped sideboard_1; still fails: SELECTION CONSTRAINT AUDIT: "
+                                  "attribute constraint \"soft neutral\" is not satisfied by ['dining_chair_39']")
     rejections = [note["text"] for note in record["notes"] if note["text"].startswith("jev check rejected")]
     assert len(rejections) == 3 * MAX_SELECTION_TURNS
     assert rejections[0] == "jev check rejected: style ['sideboard_1']; attributes \"soft neutral\" by ['dining_chair_39']"
@@ -498,17 +530,19 @@ def test_jev_failure_never_fails_a_variant(tmp_path, searches, monkeypatch):
 LARGEST_PLANT = "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4"  # 1.03 x 1.11 m; the decor plant slot also holds 1.02 x 1.07 and 0.97 x 1.09
 
 
-def test_solver_places_the_selection_without_a_model_call(tmp_path, searches):
-    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection()})
+def test_solver_places_the_selection_without_a_correction_call(tmp_path, searches):
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Arrangement": arrangement()})
 
     events, record = run_pipeline(tmp_path, genai)
 
     assert len(of_type(events, "variant_ready")) == 3
-    assert {call["stage"] for call in record["model_calls"]} == {"interpret", "select"}
+    # The solver's beam ends with tied layouts, so one pick call per variant chooses among them.
+    assert {call["stage"] for call in record["model_calls"]} == {"interpret", "select", "place"}
     for index in range(3):
         assert [stage_runs(record, stage, index) for stage in ("place", "repair", "correct", "validate")] == [1, 1, 0, 1]
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
         assert any(note.startswith("solver: score [0, 0, 0],") for note in notes)
+        assert any(note.startswith("layout pick: A of ") for note in notes)
 
 
 def test_solver_swaps_an_unplaceable_item_for_the_next_smaller_product_in_its_slot(tmp_path, searches, monkeypatch):
@@ -523,7 +557,7 @@ def test_solver_swaps_an_unplaceable_item_for_the_next_smaller_product_in_its_sl
             **report, "unplaceable": ["planter_1"]}
 
     monkeypatch.setattr(variant_stages, "solve_layout", no_room_for_the_largest_plant)
-    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection()})
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Arrangement": arrangement()})
 
     events, record = run_pipeline(tmp_path, genai)
 
@@ -537,7 +571,7 @@ def test_solver_swaps_an_unplaceable_item_for_the_next_smaller_product_in_its_sl
     assert len(swaps) == 3
     assert all(note.startswith(f"swap {LARGEST_PLANT} -> decor_130b1ed4-b579-481b-a8ee-aaeee5c6e6ef in slot ")
                and ": kept, score [1," in note for note in swaps)
-    assert not [call for call in record["model_calls"] if call["stage"] in {"place", "correct"}]
+    assert not [call for call in record["model_calls"] if call["stage"] == "correct"]
 
 
 def test_solver_layout_with_blocking_findings_falls_back_to_model_correction(tmp_path, searches, monkeypatch):
@@ -567,6 +601,79 @@ def test_solver_layout_with_blocking_findings_falls_back_to_model_correction(tmp
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
         # A smaller table does not free the chair, so the swap is reverted.
         assert any(note.startswith("swap dining_table_3 -> dining_table_552 in slot dining_table: reverted,") for note in notes)
+
+
+# The plant in the other front corner: the checks score it the same as PLACEMENTS.
+CORNER = {**PLACEMENTS, "planter_1": {**PLACEMENTS["planter_1"], "position": [3.6, 0.6, 0.0]}}
+
+
+def arrangement(choice: str = "A", *moves: tuple[str, float, float]) -> dict:
+    """A pick answer that moves each (uid, x, y) of `moves` without turning it."""
+    return {"choice": choice, "reason": "the plant balances the sideboard",
+            "adjustments": [{"uid": uid, "x": x, "y": y, "rotation_z": PLACEMENTS[uid]["rotation"][2]} for uid, x, y in moves]}
+
+
+def delivered(events: list[dict], key: str) -> list[list[float]]:
+    return [event["data"]["variant"]["render_manifest"]["layout"][key]["position"][:2] for event in of_type(events, "variant_ready")]
+
+
+def test_model_picks_among_the_solver_layouts_that_tie_the_best(tmp_path, searches, monkeypatch):
+    # OVERLAPPING scores worse than PLACEMENTS, so only PLACEMENTS (A) and CORNER (B) are offered.
+    solve_as(monkeypatch, PLACEMENTS, OVERLAPPING, CORNER)
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Arrangement": arrangement("B")})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    assert delivered(events, "planter_1") == [[3.6, 0.6]] * 3
+    assert [count for title, count in genai.images if title == "Arrangement"] == [2, 2, 2]
+    for prompt in genai.of("Arrangement"):
+        assert "variant A:" in prompt and "variant B:" in prompt and "variant C:" not in prompt
+        assert REQUEST["user_intent"] in prompt and "planter_1 (planter)" in prompt and "door_0" in prompt
+    places = [event["data"] for event in of_type(events, "node_complete") if event["node"] == "layout_initial"]
+    assert [(data["layout_options"], data["layout_pick"]) for data in places] == [(2, "B")] * 3
+    for index in range(3):
+        notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
+        assert "layout pick: B of 2: the plant balances the sideboard" in notes
+
+
+def test_a_single_layout_makes_no_pick_call(tmp_path, searches, monkeypatch):
+    solve_as(monkeypatch, PLACEMENTS, OVERLAPPING)
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection()})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    assert len(of_type(events, "variant_ready")) == 3
+    assert not [call for call in record["model_calls"] if call["stage"] == "place"]
+    assert [event["data"]["layout_options"] for event in of_type(events, "node_complete") if event["node"] == "layout_initial"] == [1] * 3
+
+
+@pytest.mark.parametrize(("move", "outcome", "planter"), [
+    (("planter_1", 0.7, 0.6), "adjusted planter_1: kept, score [0, 0, 0] -> [0, 0, 0]", [0.7, 0.6]),  # a tie keeps it
+    (("dining_chair_1", 2.535, 2.8), "adjusted dining_chair_1: reverted, score [0, 0, 0] -> [1, ", [0.6, 0.6]),  # into the table
+    (("planter_1", 0.6, 3.0), "rejected too large or unknown: planter_1", [0.6, 0.6]),  # a 2.4 m move
+])
+def test_pick_adjustments_are_kept_only_when_small_and_not_worse(tmp_path, searches, monkeypatch, move, outcome, planter):
+    solve_as(monkeypatch, PLACEMENTS, CORNER)
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Arrangement": arrangement("A", move)})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    assert delivered(events, "planter_1") == [planter] * 3
+    assert delivered(events, "dining_chair_1") == [PLACEMENTS["dining_chair_1"]["position"][:2]] * 3
+    picks = [note["text"] for note in record["notes"] if note["text"].startswith("layout pick: A of 2")]
+    assert len(picks) == 3 and all(outcome in note for note in picks)
+
+
+def test_failed_pick_call_keeps_the_solver_layout(tmp_path, searches, monkeypatch):
+    solve_as(monkeypatch, PLACEMENTS, CORNER)
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Arrangement": DEADLINE})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    assert delivered(events, "planter_1") == [[0.6, 0.6]] * 3
+    assert [call["error"] is not None for call in record["model_calls"] if call["stage"] == "place"] == [True] * 3
+    notes = [note["text"] for note in record["notes"]]
+    assert sum(note.startswith("layout pick failed, kept the solver's best: ModelCallError") for note in notes) == 3
 
 
 # Recorded run 0, variant 1: a sleeper sofa leaves no room for four chairs around the 1.37 m table.

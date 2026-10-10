@@ -1,6 +1,6 @@
 import { create } from "zustand";
-import { mockPipeline } from "./mock";
-import type { NodeData, NodeName, PipelineEvent, PipelineRequest, ReadyVariant } from "./types";
+import { pipeline } from "./pipeline";
+import type { ClientTiming, NodeData, NodeName, PipelineEvent, PipelineRequest, ReadyVariant, SceneTiming } from "./types";
 
 export const VARIANT_COUNT = 3;
 
@@ -19,6 +19,8 @@ export interface VariantProgress {
   current: NodeName | null;
   ready: ReadyVariant | null;
   failed: { reason: string; message: string } | null;
+  receivedMs: number | null;
+  timing: ClientTiming | null;
 }
 
 export type RunStatus = "idle" | "running" | "complete" | "error" | "cancelled";
@@ -28,6 +30,8 @@ interface RunState {
   key: string | null; // the /generate params this run belongs to
   request: PipelineRequest | null;
   startedAt: number;
+  submittedAt: number; // monotonic clock for client timing
+  runId: string | null;
   shared: Nodes;
   variants: VariantProgress[];
   error: string | null;
@@ -36,15 +40,18 @@ interface RunState {
   cancel: () => void;
   reset: () => void;
   select: (index: number) => void;
+  recordTiming: (runId: string | null, variantId: string, screen: ClientTiming["screen"], timing: SceneTiming) => void;
 }
 
-const emptyVariant = (): VariantProgress => ({ nodes: {}, current: null, ready: null, failed: null });
+const emptyVariant = (): VariantProgress => ({ nodes: {}, current: null, ready: null, failed: null, receivedMs: null, timing: null });
 
 const idle = {
   status: "idle" as RunStatus,
   key: null,
   request: null,
   startedAt: 0,
+  submittedAt: 0,
+  runId: null,
   shared: {},
   variants: Array.from({ length: VARIANT_COUNT }, emptyVariant),
   error: null,
@@ -70,6 +77,8 @@ function applyNode(nodes: Nodes, event: Extract<PipelineEvent, { type: "node_sta
 
 function reduce(state: RunState, event: PipelineEvent): Partial<RunState> {
   switch (event.type) {
+    case "start":
+      return { runId: event.run_id };
     case "node_start":
     case "node_complete": {
       if (event.variant_index === null) return { shared: applyNode(state.shared, event) };
@@ -81,41 +90,49 @@ function reduce(state: RunState, event: PipelineEvent): Partial<RunState> {
     case "variant_ready": {
       const ready = event.data.variant;
       const variants = [...state.variants];
-      variants[ready.variant_index] = { ...variants[ready.variant_index], ready, current: null };
+      variants[ready.variant_index] = { ...variants[ready.variant_index], ready, current: null, receivedMs: performance.now() - state.submittedAt };
       return { variants };
     }
     case "variant_failed": {
       const variants = [...state.variants];
       variants[event.variant_index] = {
         ...variants[event.variant_index],
-        failed: { reason: event.reason, message: event.message },
+        failed: { reason: event.reason, message: event.message || event.errors.join("; ") || event.reason },
         current: null,
       };
       return { variants };
     }
     case "complete":
-      return { status: "complete" };
+      return { status: "complete", variants: stoppedVariants(state.variants, "This design did not finish.") };
     case "error":
-      return { status: "error", error: event.message };
+      return { status: "error", error: event.message, variants: stoppedVariants(state.variants, event.message) };
     default:
       return {};
   }
 }
 
+function stoppedVariants(variants: VariantProgress[], message: string): VariantProgress[] {
+  return variants.map((variant) => variant.ready || variant.failed ? variant : {
+    ...variant, current: null, failed: { reason: "stopped", message },
+  });
+}
+
 let controller: AbortController | null = null;
 
-// Mock-only until the pipeline is ready: mockPipeline emits the pipeline's SSE events in order.
-export const useRun = create<RunState>((set) => {
+export const useRun = create<RunState>((set, get) => {
   async function run(request: PipelineRequest, key: string) {
     controller?.abort();
     const current = new AbortController();
     controller = current;
-    set({ ...idle, status: "running", key, request, startedAt: Date.now() });
+    set({ ...idle, status: "running", key, request, startedAt: Date.now(), submittedAt: performance.now() });
     try {
-      await mockPipeline(request, current.signal, (event) => set((state) => reduce(state, event)));
+      await pipeline(request, current.signal, (event) => {
+        if (controller === current && !current.signal.aborted) set((state) => reduce(state, event));
+      });
     } catch (error) {
-      if (current.signal.aborted) return;
-      set({ status: "error", error: error instanceof Error ? error.message : String(error) });
+      if (current.signal.aborted || controller !== current) return;
+      const message = error instanceof Error ? error.message : String(error);
+      set((state) => ({ status: "error", error: message, variants: stoppedVariants(state.variants, message) }));
     }
   }
 
@@ -124,13 +141,35 @@ export const useRun = create<RunState>((set) => {
     start: (request, key) => void run(request, key),
     cancel: () => {
       controller?.abort();
-      set({ status: "cancelled" });
+      set((state) => ({ status: "cancelled", variants: stoppedVariants(state.variants, "Generation stopped.") }));
     },
     reset: () => {
       controller?.abort();
       set({ ...idle });
     },
     select: (selected) => set({ selected }),
+    recordTiming: (runId, variantId, screen, timing) => {
+      const state = get();
+      if (!runId || state.runId !== runId) return;
+      const index = state.variants.findIndex((variant) => variant.ready?.variant_id === variantId);
+      const variant = state.variants[index];
+      if (!variant || variant.timing || variant.receivedMs === null) return;
+      const entry: ClientTiming = {
+        variant_index: index,
+        received_ms: variant.receivedMs,
+        loaded_ms: Math.max(variant.receivedMs, timing.loadedAt - state.submittedAt),
+        displayed_ms: Math.max(variant.receivedMs, timing.loadedAt - state.submittedAt, timing.displayedAt - state.submittedAt),
+        models: timing.models,
+        failed_models: timing.failed_models,
+        screen,
+      };
+      const variants = [...state.variants];
+      variants[index] = { ...variant, timing: entry };
+      set({ variants }); // Mark before posting: rerenders and route changes cannot post twice.
+      void fetch(`/api/runs/${runId}/client-timing`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry), keepalive: true,
+      }).catch(() => {});
+    },
   };
 });
 

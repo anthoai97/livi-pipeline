@@ -7,6 +7,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      "/api": {
+        target: "http://localhost:8000",
+        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
       // The asset bucket sends no CORS headers, so the browser loads GLBs through this proxy.
       "/s3": {
         target: "https://livinit-storage-prod.s3.us-east-2.amazonaws.com",

@@ -4,21 +4,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProductRing, type RingItem } from "../components/ProductRing";
 import { furnishingsOf, RoomScene, type Callout } from "../components/RoomScene";
 import { Button, Stepper, TaskRow, Wordmark, type Task } from "../components/ui";
-import { clock, humanize, metres, money } from "../lib/format";
+import { clock, humanize, metres, money, plural } from "../lib/format";
 import { buildRequest, draftFromParams, roomLabel } from "../lib/room";
 import { navigate, useLocation } from "../lib/router";
 import { polygonCentroid } from "../lib/shapes";
 import { currentStep, nodeData, STEPS, useRun } from "../lib/run";
-import { catalogTask, designName, fitTask, readyTask, roomTasks, selectionTask } from "../lib/tasks";
+import { catalogTask, designName, designTask, rankTask, roomTasks } from "../lib/tasks";
 import type { PipelineRequest } from "../lib/types";
 
-const AUTO_OPEN_MS = 4500;
-
 const COPY = [
-  { title: "Reading your room", body: "Measuring walls, openings, and free floor." },
-  { title: "Choosing pieces", body: "Three designs pick from the same shortlist, each in its own direction." },
-  { title: "Checking the fit", body: "Each design places its pieces, then fixes overlaps and blocked walkways." },
-  { title: "Placing furniture", body: "A design opens as soon as it passes the final check." },
+  { title: "Reading your room", body: "Checking dimensions and space around doors and windows." },
+  { title: "Choosing pieces", body: "Selecting products for each design within your budget." },
+  { title: "Checking the fit", body: "Checking furniture spacing and keeping walkways clear." },
+  { title: "Placing furniture", body: "Your first design is ready. Look around the room while the others finish." },
 ];
 
 const MIN_STEP_MS = 1800;
@@ -83,7 +81,7 @@ function roomCallouts(request: PipelineRequest, room: { floor_area_sqm?: number 
 }
 
 export function Generate() {
-  const { request, shared, variants, status, error, startedAt, start, cancel, select } = useRun();
+  const { request, shared, variants, status, error, startedAt, runId, recordTiming, start, cancel, select } = useRun();
   const reduce = useReducedMotion();
   // The room read takes milliseconds; hold step 1 so its clearance zones and brief chips register.
   const step = usePacedStep(currentStep(shared, variants), { 1: (shared.extract_room?.doneAt ?? 0) + ROOM_HOLD_MS });
@@ -116,28 +114,15 @@ export function Generate() {
   const firstReady = variants.findIndex((variant) => variant.ready);
   const allSettled = variants.every((variant) => variant.ready || variant.failed);
 
-  useEffect(() => {
-    if (firstReady < 0) return;
-    const timer = setTimeout(() => showDesigns(firstReady), AUTO_OPEN_MS);
-    return () => clearTimeout(timer);
-  }, [firstReady, showDesigns]);
-
   const tasks: Task[] = useMemo(() => {
-    const preview = (index: number) =>
-      variants[index].ready ? (
-        <button
-          onClick={() => showDesigns(index)}
-          className="inline-flex items-center gap-1 text-[13.5px] font-medium text-accent hover:underline"
-        >
-          Open this design <ArrowRight size={14} weight="bold" />
-        </button>
-      ) : undefined;
-    const perDesign = (build: typeof fitTask) => variants.map((variant, index) => ({ ...build(variant, index), action: preview(index) }));
     if (step === 1) return roomTasks(shared, request?.room_vertices.length ?? 4);
-    if (step === 2) return [catalogTask(shared), ...perDesign(selectionTask)];
-    if (step === 3) return perDesign(fitTask);
-    return perDesign(readyTask);
-  }, [step, shared, variants, showDesigns, request]);
+    // The room shows the first ready design; its row says so.
+    const designs = variants.map((variant, index) => {
+      const task = designTask(variant, index);
+      return index === firstReady ? { ...task, detail: `${task.detail}, shown in the room` } : task;
+    });
+    return step === 2 ? [catalogTask(shared), rankTask(shared), ...designs] : designs;
+  }, [step, shared, variants, firstReady, request]);
 
   const ring = useMemo((): { items: RingItem[]; caption: string } | null => {
     if (step < 2 || firstReady >= 0) return null;
@@ -162,8 +147,13 @@ export function Generate() {
   const brief = nodeData(shared, "interpret");
   const understood = [...(brief?.requested_categories ?? []).map(humanize), ...(brief?.style_hints ?? [])];
   const ready = firstReady >= 0 ? variants[firstReady].ready : null;
-  const copy = COPY[step - 1];
-  const stopped = status === "error" || status === "cancelled";
+  const readyCount = variants.filter((variant) => variant.ready).length;
+  // Every design has finished and at least one is ready: the run reads as done, not as a step in progress.
+  const finished = allSettled && firstReady >= 0;
+  const copy = finished
+    ? { title: "Your designs are ready", body: `${plural(readyCount, "design")} for your ${roomLabel(request.room_type).toLowerCase()}.` }
+    : COPY[step - 1];
+  const stopped = status === "error" || status === "cancelled" || (status === "complete" && firstReady < 0);
 
   return (
     <div className="mx-auto flex min-h-[100dvh] max-w-[1400px] flex-col px-4 pb-4 md:px-8">
@@ -171,16 +161,10 @@ export function Generate() {
         <Wordmark />
         <div className="order-3 w-full md:order-none md:w-auto md:flex-1">
           <div className="mx-auto max-w-2xl">
-            <Stepper step={step} />
+            <Stepper step={finished ? STEPS.length + 1 : step} />
           </div>
         </div>
         <div className="ml-auto flex items-center gap-3">
-          <span
-            title="A recorded dining room run, fitted to your room"
-            className="rounded-full bg-surface-2 px-3 py-1 text-[12.5px] text-muted"
-          >
-            Mock data
-          </span>
           <span className="font-mono text-[13px] text-muted tabular-nums" aria-label="Elapsed time">
             {clock(elapsed)}
           </span>
@@ -195,6 +179,8 @@ export function Generate() {
       <main className="grid flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_400px]">
         <section aria-label="Room" className="relative min-h-[420px] overflow-hidden rounded-[20px] bg-canvas md:min-h-[560px]">
           <RoomScene
+            key={ready ? `${runId}:${ready.variant_id}` : `room:${startedAt}`}
+            onDisplayed={ready ? (timing) => recordTiming(runId, ready.variant_id, "generate", timing) : undefined}
             geometry={ready?.render_manifest ?? request}
             furnishings={ready ? furnishingsOf(ready.render_manifest) : []}
             callouts={step === 1 ? roomCallouts(request, nodeData(shared, "extract_room")) : []}
@@ -211,7 +197,7 @@ export function Generate() {
           {ring && <ProductRing items={ring.items} caption={ring.caption} />}
           {ready && (
             <p className="absolute top-4 left-1/2 -translate-x-1/2 rounded-full bg-surface/90 px-3.5 py-1.5 text-[13px] font-medium text-text shadow-sm backdrop-blur">
-              {designName(firstReady)} is ready
+              {finished ? `Showing ${designName(firstReady)}` : `${designName(firstReady)} is ready`}
             </p>
           )}
           <div
@@ -223,7 +209,7 @@ export function Generate() {
               {request.user_intent}
             </p>
             {understood.length > 0 ? (
-              <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="What we understood">
+              <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Requested style and products">
                 {understood.map((word, index) => (
                   <motion.li
                     key={word}
@@ -247,7 +233,7 @@ export function Generate() {
         <aside className="flex flex-col rounded-[20px] border border-line bg-surface p-5 md:p-6">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
-              key={stopped ? status : step}
+              key={stopped ? status : "progress"}
               initial={reduce ? false : { opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={reduce ? { opacity: 0 } : { opacity: 0, y: -8 }}
@@ -255,15 +241,29 @@ export function Generate() {
             >
               {stopped ? (
                 <Stopped
-                  title={status === "cancelled" ? "Generation stopped" : "Something went wrong"}
-                  body={status === "cancelled" ? "Nothing was saved. Start again or change the brief." : (error ?? "The pipeline stopped.")}
+                  title={status === "cancelled" ? "Generation stopped" : status === "complete" ? "No designs completed" : "Generation failed"}
+                  body={status === "cancelled" ? "Try again or edit your room details." : (error ?? variants.map((variant, index) => `${designName(index)}: ${variant.failed?.message ?? "Did not finish."}`).join(" "))}
                   onRetry={() => start(request, key)}
                   onEdit={() => navigate("/", { replace: true })}
                 />
               ) : (
                 <>
-                  <h2 className="text-[26px] leading-tight font-semibold tracking-tight text-text">{copy.title}</h2>
-                  <p className="mt-1.5 text-[15px] leading-relaxed text-muted">{copy.body}</p>
+                  {/* Only the copy crossfades on a step change; the rows stay mounted and move in place. */}
+                  <div className="grid">
+                    <AnimatePresence initial={false}>
+                      <motion.div
+                        key={finished ? "finished" : step}
+                        className="[grid-area:1/1]"
+                        initial={reduce ? { opacity: 0 } : { opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={reduce ? { opacity: 0 } : { opacity: 0, y: -8 }}
+                        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                      >
+                        <h2 className="text-[26px] leading-tight font-semibold tracking-tight text-text">{copy.title}</h2>
+                        <p className="mt-1.5 text-[15px] leading-relaxed text-muted">{copy.body}</p>
+                      </motion.div>
+                    </AnimatePresence>
+                  </div>
                   <ul className="mt-5 grid gap-2">
                     {tasks.map((task) => (
                       <TaskRow key={task.id} task={task} />
@@ -276,9 +276,19 @@ export function Generate() {
 
           <div className="mt-auto pt-6">
             {firstReady >= 0 ? (
-              <Button className="w-full" onClick={() => showDesigns(firstReady)}>
-                {allSettled ? "Compare designs" : "Open the first design"} <ArrowRight size={18} weight="bold" />
-              </Button>
+              // The finished room stays on screen; the designs open only when the viewer asks.
+              <div className="border-t border-line pt-4">
+                <p className="mb-3 text-[14.5px] leading-snug text-muted">
+                  {!finished
+                    ? "Want to see the other designs as they finish?"
+                    : readyCount > 1
+                      ? `Want to compare all ${readyCount} designs side by side?`
+                      : "Want to see its products and save it?"}
+                </p>
+                <Button className="w-full" onClick={() => showDesigns(firstReady)}>
+                  {!finished ? "See all designs" : readyCount > 1 ? "Compare designs" : "Open your design"} <ArrowRight size={18} weight="bold" />
+                </Button>
+              </div>
             ) : (
               !stopped &&
               step < 4 && (
@@ -311,7 +321,7 @@ function Stopped({ title, body, onRetry, onEdit }: { title: string; body: string
           <ArrowsClockwise size={17} weight="bold" /> Try again
         </Button>
         <Button variant="outline" onClick={onEdit}>
-          <PencilSimple size={17} /> Edit brief
+          <PencilSimple size={17} /> Edit room details
         </Button>
       </div>
     </div>

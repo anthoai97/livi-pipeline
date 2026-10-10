@@ -5,19 +5,24 @@
     rank deals each slot's candidates to the variants; each Send carries one pool.
 
     variant subgraph, one per Send:
-      select (repeats until the selection passes, at most 4 turns in all)
+      select (repeats until the selection passes, at most 4 turns in all; the last
+         turn's selection is placed even when it fails)
       -- place -- repair -- correct (repeats while blocking findings remain and each
          proposal improves, at most 3 proposals per layout) -- validate
       validate fails -- reselect (once, while turns remain) -- select
+      validate fails again -- drop (removes the failing items, delivers the rest)
 
-`variant` runs the compiled subgraph and always returns a result: it catches
-every exception except cancellation, because LangGraph drops all parallel branch
-updates when one branch raises. Each variant emits variant_ready or
-variant_failed through the stream writer as soon as it finishes.
+Failed checks remove items instead of failing a variant. `variant` runs the
+compiled subgraph and always returns a result: it catches every exception except
+cancellation, because LangGraph drops all parallel branch updates when one branch
+raises. Each variant emits variant_ready, or variant_failed for an exception,
+through the stream writer as soon as it finishes.
 """
 
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, TypedDict, cast
@@ -29,6 +34,7 @@ from langgraph.types import Send
 
 from app import contracts, shared_stages, variant_stages
 from app.contracts import PipelineRequest
+from app.preview import png_bytes, render_plan
 from app.rules.placement_mode import placement_mode_for_asset
 from app.rules.planner.taxonomy import normalize_category
 from app.run import ModelCallError, RunContext, StageContext, describe
@@ -101,24 +107,24 @@ class VariantState(TypedDict, total=False):
     shared: Shared
     pool: dict[str, list[Record]]  # graph: this variant's candidates per slot id, dealt by rank
     selection: Record  # select: latest selection, gaps in selection["gaps"]
-    selection_validation: Record  # select: legacy validator report for `selection`; "valid" decides the next step
+    selection_validation: Record  # select: legacy validator report for `selection`; "valid" or the last turn ends selection
     selection_turns: int  # graph: select calls so far, across reselection
     fit_step: str | None  # select: None, "compact" (smaller products), or "capped" (capped counts)
-    instances: list[Record]  # select: instance records of `selection`, keyed by uid = instance_key
-    layout: Record  # place, repair, correct: best layout so far
-    issues: Record  # place, repair, correct: analyze_layout issues for `layout`
-    findings: list[Record]  # place, repair, correct: findings for `layout`
-    blocking_findings: list[Record]  # place, repair, correct: P0, P1, and critical P2 findings; empty ends correction
-    non_blocking_findings: list[Record]  # place, repair, correct: the other P2 findings
+    instances: list[Record]  # select, drop: instance records of `selection`, keyed by uid = instance_key
+    layout: Record  # place, repair, correct, drop: best layout so far
+    issues: Record  # place, repair, correct, drop: analyze_layout issues for `layout`
+    findings: list[Record]  # place, repair, correct, drop: findings for `layout`
+    blocking_findings: list[Record]  # place, repair, correct, drop: P0, P1, and critical P2 findings; empty ends correction
+    non_blocking_findings: list[Record]  # place, repair, correct, drop: the other P2 findings
     correction_proposals: int  # graph: correct calls so far for this layout
     correction_stalled: bool  # correct: the last proposal did not improve the score; ends correction
     correction_escalated: bool  # correct: later proposals for this layout use the correct_escalate model
     reselections: int  # graph: reselections so far
     placement_feedback: str  # select: the failed layout's items to replace, set on reselection
     validation_errors: list[str]  # validate: why the layout fails; empty when it passes
-    render_manifest: Record  # validate: set when the layout passes
-    selected_assets: list[Record]  # validate: set when the layout passes
-    total_cost: float  # validate: set when the layout passes
+    render_manifest: Record  # validate: set when the layout passes; drop: always set
+    selected_assets: list[Record]  # validate, drop: set with `render_manifest`
+    total_cost: float  # validate, drop: set with `render_manifest`
 
 
 PipelineGraph = CompiledStateGraph[PipelineState, RunContext, Any, Any]
@@ -139,6 +145,7 @@ class Stages:
     repair: VariantStage = variant_stages.repair
     correct: VariantStage = variant_stages.correct
     validate: VariantStage = variant_stages.validate
+    drop: VariantStage = variant_stages.drop
     direction: Callable[[int, str], str] = variant_stages.direction
 
 
@@ -156,9 +163,9 @@ def _stage_node(name: str, stage: Callable[[Any, StageContext], Awaitable[Any]],
 
 
 def _after_select(state: VariantState) -> str:
-    if state.get("selection_validation", {}).get("valid"):
+    if state.get("selection_validation", {}).get("valid") or state.get("selection_turns", 0) >= MAX_SELECTION_TURNS:
         return "place"
-    return "select" if state.get("selection_turns", 0) < MAX_SELECTION_TURNS else END
+    return "select"
 
 
 def _after_layout(state: VariantState) -> str:
@@ -172,12 +179,10 @@ def _after_layout(state: VariantState) -> str:
 
 
 def _after_validate(state: VariantState) -> str:
-    if (
-        "render_manifest" in state
-        or state.get("reselections", 0) >= MAX_RESELECTIONS
-        or state.get("selection_turns", 0) >= MAX_SELECTION_TURNS
-    ):
+    if "render_manifest" in state:
         return END
+    if state.get("reselections", 0) >= MAX_RESELECTIONS or state.get("selection_turns", 0) >= MAX_SELECTION_TURNS:
+        return "drop"
     return "reselect"
 
 
@@ -190,23 +195,13 @@ def _reselect(state: VariantState, runtime: Runtime[RunContext]) -> VariantState
 
 
 def _variant_result(state: VariantState, run_id: str) -> VariantResult:
-    index = state["variant_index"]
-    validation = state.get("selection_validation", {})
-    if not validation.get("valid"):
-        errors = [str(error) for error in validation.get("errors", [])]
-        message = f"No selection passed validation within {MAX_SELECTION_TURNS} turns."
-        return _failed(index, "asset_selection_failed", message, errors)
-    if "render_manifest" not in state:
-        errors = state.get("validation_errors", [])
-        message = "The final layout did not pass validation."
-        return _failed(index, "layout_validation_failed", message, errors)
     variant = contracts.ready_variant(
         run_id,
-        index,
+        state["variant_index"],
         render_manifest=state["render_manifest"],
         selected_assets=state.get("selected_assets", []),
         total_cost=state.get("total_cost", 0.0),
-        selection_validation=validation,
+        selection_validation=state["selection_validation"],
     )
     return {"outcome": "ready", "reason": None, "event": contracts.variant_ready(variant)}
 
@@ -256,14 +251,16 @@ def build_graph(stages: Stages = Stages()) -> PipelineGraph:
     variant_builder.add_node("repair", _stage_node("repair", stages.repair))
     variant_builder.add_node("correct", _stage_node("correct", stages.correct, "correction_proposals"))
     variant_builder.add_node("validate", _stage_node("validate", stages.validate))
+    variant_builder.add_node("drop", _stage_node("drop", stages.drop))
     variant_builder.add_node("reselect", _reselect)
     variant_builder.add_edge(START, "select")
-    variant_builder.add_conditional_edges("select", _after_select, ["select", "place", END])
+    variant_builder.add_conditional_edges("select", _after_select, ["select", "place"])
     variant_builder.add_edge("place", "repair")
     variant_builder.add_conditional_edges("repair", _after_layout, ["correct", "validate"])
     variant_builder.add_conditional_edges("correct", _after_layout, ["correct", "validate"])
-    variant_builder.add_conditional_edges("validate", _after_validate, ["reselect", END])
+    variant_builder.add_conditional_edges("validate", _after_validate, ["reselect", "drop", END])
     variant_builder.add_edge("reselect", "select")
+    variant_builder.add_edge("drop", END)
     variant_graph: CompiledStateGraph[VariantState, RunContext, Any, Any] = variant_builder.compile(name="variant")
 
     def fan_out(state: PipelineState) -> list[Send]:
@@ -291,7 +288,29 @@ def build_graph(stages: Stages = Stages()) -> PipelineGraph:
             final = cast(VariantState, await variant_graph.ainvoke(start))
             result = _variant_result(final, run.run_id)
             findings = [finding["issue"] for finding in final.get("non_blocking_findings", [])]
-            summary = _variant_summary(final) if result["outcome"] == "ready" else None
+            summary = _variant_summary(final)
+            plan = {**summary, "variant_index": index}
+            preview = {"variant_index": index, "elapsed": None, "error": None}
+            run.previews.append(preview)
+            started = time.monotonic()
+
+            def render() -> None:
+                directory = run.runs_dir / run.run_id
+                directory.mkdir(parents=True, exist_ok=True)
+                image = render_plan({"request": run.request.model_dump()}, plan)
+                (directory / f"variant_{index}.png").write_bytes(png_bytes(image))
+
+            try:
+                await asyncio.to_thread(render)
+            except asyncio.CancelledError:
+                preview["error"] = "cancelled"
+                raise
+            except Exception as exc:
+                preview["error"] = describe(exc)
+            else:
+                result["event"]["data"]["variant"]["preview_url"] = f"/runs/{run.run_id}/previews/{index}.png"
+            finally:
+                preview["elapsed"] = round(time.monotonic() - started, 3)
         except Exception as exc:  # CancelledError is not an Exception, so cancellation still propagates.
             reason = "model_call_failed" if isinstance(exc, ModelCallError) else "variant_error"
             result = _failed(index, reason, describe(exc), [describe(exc)])

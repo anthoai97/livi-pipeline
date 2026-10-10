@@ -85,7 +85,7 @@ class GeminiModel:
 
     Stages listed in LLM_STAGE_MODELS use their own model and thinking level; the
     rest use LLM_DESIGN_MODEL at low thinking. A call can pass `model_key` to use
-    another entry, such as `correct_escalate`.
+    another entry, such as `correct_escalate` or `arrange`.
 
     A call that has not answered after MODEL_HEDGE_AFTER_S (0 turns this off) gets
     a duplicate; the first answer wins and the other call is cancelled. Both calls
@@ -101,9 +101,13 @@ class GeminiModel:
             os.environ.get("MODEL_HEDGE_AFTER_S", MODEL_HEDGE_AFTER_S))
 
     async def generate(
-        self, ctx: StageContext, schema: type[M], contents: str, *, system: str | None = None, model_key: str | None = None
+        self, ctx: StageContext, schema: type[M], contents: str | list[str | bytes], *, system: str | None = None,
+        model_key: str | None = None
     ) -> M:
         model, level = self.stages.get(model_key or ctx.stage, (self.model, types.ThinkingLevel.LOW))
+        if not isinstance(contents, str):  # bytes are PNG images, sent as inline image parts
+            contents = [types.Part.from_bytes(data=part, mime_type="image/png") if isinstance(part, bytes) else part
+                        for part in contents]
         config = types.GenerateContentConfig(
             system_instruction=system,
             response_mime_type="application/json",
@@ -132,7 +136,7 @@ class GeminiModel:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _call(self, ctx: StageContext, schema: type[M], contents: str, model: str,
+    async def _call(self, ctx: StageContext, schema: type[M], contents: str | list[str | types.Part], model: str,
                     config: types.GenerateContentConfig) -> M:
         """One model call, recorded under the stage and variant whether it succeeds, fails, or is cancelled."""
         counter = [0]

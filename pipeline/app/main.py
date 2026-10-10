@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
+import re
 import uuid
 from collections.abc import AsyncIterator, Callable
 from functools import cache
@@ -14,8 +16,10 @@ from typing import Any
 import anyio
 import psycopg
 from dotenv import load_dotenv
-from fastapi import FastAPI
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from psycopg.rows import dict_row
 
 from app import contracts
@@ -57,6 +61,8 @@ async def _stream_run(
     run_deadline_s: float,
     heartbeat_s: float,
     runs_dir: Path,
+    active_runs: dict[str, RunContext],
+    record_lock: asyncio.Lock,
 ) -> AsyncIterator[str]:
     """Run the graph and turn its custom stream into SSE frames.
 
@@ -154,10 +160,17 @@ async def _stream_run(
         run.finish("error", describe(exc))
         yield _frame(contracts.error_event("The run failed to start.", "RUN_FAILED", type(exc).__name__))
     finally:
-        await stop_graph()
-        if run.connection is not None:
-            run.connection.close()
-        run.write(runs_dir)
+        with anyio.CancelScope(shield=True):
+            await stop_graph()
+            try:
+                if run.connection is not None:
+                    run.connection.close()
+            finally:
+                async with record_lock:
+                    try:
+                        run.write(runs_dir)
+                    finally:
+                        active_runs.pop(run.run_id, None)
 
 
 def create_app(
@@ -173,15 +186,51 @@ def create_app(
     """Build the app. Tests inject fake stages, a fake model, a fake Jev client, and no database."""
     graph = build_graph(stages or Stages())
     app = FastAPI(title="Livinit pipeline")
+    active_runs: dict[str, RunContext] = {}
+    record_lock = asyncio.Lock()
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # Python's JSON reader accepts NaN/Infinity. Keep rejected inputs JSON-safe
+        # so the validation response is 422 instead of failing during serialization.
+        errors = jsonable_encoder(exc.errors(), custom_encoder={float: lambda value: value if math.isfinite(value) else str(value)})
+        return JSONResponse(status_code=422, content={"detail": errors})
 
     @app.post("/pipeline")
     async def pipeline(request: PipelineRequest) -> StreamingResponse:
-        run = RunContext(uuid.uuid4().hex, request, model or _default_model(), VARIANT_COUNT, jev or _default_jev(), **switches())
+        run = RunContext(uuid.uuid4().hex, request, model or _default_model(), VARIANT_COUNT,
+                         jev or _default_jev(), runs_dir=runs_dir, **switches())
+        active_runs[run.run_id] = run
         return StreamingResponse(
-            _stream_run(graph, run, connect, run_deadline_s, heartbeat_s, runs_dir),
+            _stream_run(graph, run, connect, run_deadline_s, heartbeat_s, runs_dir, active_runs, record_lock),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.get("/runs/{run_id}/previews/{index}.png")
+    async def preview(run_id: str, index: str) -> FileResponse:
+        if re.fullmatch(r"[0-9a-f]{32}", run_id) is None or index not in {"0", "1", "2"}:
+            raise HTTPException(status_code=404, detail="Preview not found")
+        path = runs_dir / run_id / f"variant_{index}.png"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Preview not found")
+        return FileResponse(path, media_type="image/png")
+
+    @app.post("/runs/{run_id}/client-timing", status_code=204)
+    async def client_timing(run_id: str, timing: contracts.ClientTiming) -> Response:
+        if re.fullmatch(r"[0-9a-f]{32}", run_id) is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        async with record_lock:
+            if run := active_runs.get(run_id):
+                run.client_timing.append(timing.model_dump())
+            else:
+                path = runs_dir / f"{run_id}.json"
+                if not path.is_file():
+                    raise HTTPException(status_code=404, detail="Run not found")
+                record = json.loads(path.read_text(encoding="utf-8"))
+                record.setdefault("client_timing", []).append(timing.model_dump())
+                path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        return Response(status_code=204)
 
     return app
 

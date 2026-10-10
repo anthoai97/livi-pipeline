@@ -36,11 +36,8 @@ reserved bands and the living-dining gap. The best SHORTLIST candidates of each
 partial layout are measured with analyze_layout, and the best BEAM_WIDTH partial
 layouts continue, the best of each zone plan first: the wall each sleeping,
 sitting, media, or work group backs onto (or a divider TV) and the room quadrant
-of the dining table. Those zones also spread out: a zone costs up to
-SPREAD_CROWD_COST more the nearer it comes to a placed zone within SPREAD_GAP_M,
-and up to SPREAD_EMPTY_COST by the share of the room's 3 x 3 grid no zone covers.
-A dining table prefers the room center, except in a studio or living room, where
-it prefers a wall, away from the other zones.
+of the dining table. A dining table prefers the room center, except in a studio
+or living room, where it prefers a wall.
 
 Each complete group layout then gets its accessories (table
 lamps, tabletop items, wall art, other rugs and ceiling lights, floor TVs) from
@@ -157,11 +154,7 @@ SOFA_TABLE_GAPS_M = (sum(SOFA_COFFEE_TABLE_DISTANCE_RANGE_M) / 2, SOFA_COFFEE_TA
 SOFA_WALL_GAP_M = sum(SOFA_BACK_WALL_DISTANCE_RANGE_M) / 2
 ACCESS_M = BED_ACCESS_MIN_M  # every service band; the bed, dining, storage, and sofa-console checks all use 0.56 m
 MEDIA_PULL_M = WALL_FLUSH_MAX_GAP_M - _SEED_MARGIN - 0.01  # a pulled media group stays inside the wall-flush gap
-ZONE_KINDS = ("sleeping", "sitting", "media", "dining", "work")  # the functional groups the spread cost keeps apart
-SPREAD_GAP_M = 1.2  # a zone nearer than this to a placed zone costs more, up to SPREAD_CROWD_COST when they touch
-SPREAD_CROWD_COST = 0.15
-SPREAD_EMPTY_COST = 0.1  # times the share of the room's 3 x 3 grid cells no zone covers
-SPREAD_CELL_SHARE = 0.1  # a cell counts as covered when zone footprints cover this share of it
+ZONE_KINDS = ("sleeping", "sitting", "media", "dining", "work")  # the functional groups a zone plan names
 DINING_WALL_COST = 0.1  # per metre from a studio or living-room dining group to its nearest wall
 _WALL_MODES = {"anchor_wall", "focal_wall", "support_wall", "wall", "desk_wall"}  # seed modes that take wall candidates
 _STORAGE_FRONTS = {  # storage whose front band the room's checker measures (bedroom.py, dining.py)
@@ -195,8 +188,6 @@ class _Partial:
     seats: list[Polygon] = field(default_factory=list)  # what the floor lamp reach check measures from
     tall: list[Polygon] = field(default_factory=list)  # placed footprints that would block the TV (_blocks_view)
     sightline: Polygon | None = None  # set with the media group: the strip from the viewer to the screen
-    zones: list[Polygon] = field(default_factory=list)  # each placed zone's floor footprint
-    cells: frozenset[int] = frozenset()  # the room grid cells the zones cover (_cells)
     preference: float = 0.0
     score: tuple[int, int, int] = (0, 0, 0)
     unplaceable: tuple[str, ...] = ()
@@ -720,7 +711,7 @@ def _preference(ctx: _Room, parent: _Partial, group: _Group, template: _Template
                 poses: dict[str, Pose], floors: list[tuple[str, Polygon]]) -> float:
     """Soft costs that order checked candidates: template cost, the seed's preferred walls, door
     distance, a clear view from the viewer to the TV, the sofa's wall gap, TV viewing distance,
-    facing and centerline, floor lamp reach, zone spread, a central dining table (in a studio or living
+    facing and centerline, floor lamp reach, a central dining table (in a studio or living
     room, one by a wall), and corners for floor pieces. A candidate that a soft rule would flag costs 1 more."""
     cost = template.penalty
     anchor = next(iter(template.poses))
@@ -778,11 +769,6 @@ def _preference(ctx: _Room, parent: _Partial, group: _Group, template: _Template
         miss = max(0.0, low - gap, gap - high)
         far = max(0.0, ctx.polygon.exterior.distance(polygon) - FLOOR_LAMP_WALL_MAX_GAP_M)
         cost += (miss > 0) + miss + (far > 0) + far
-    if group.kind in ZONE_KINDS and floors:
-        # Spread the zones: closeness to the nearest placed zone, and the share of the room no zone covers.
-        gap = min((polygon.distance(zone) for _, polygon in floors for zone in parent.zones), default=SPREAD_GAP_M)
-        empty = 1 - len(parent.cells | _cells(ctx, floors)) / 9
-        cost += SPREAD_CROWD_COST * max(0.0, 1 - gap / SPREAD_GAP_M) + SPREAD_EMPTY_COST * empty
     min_x, min_y, max_x, max_y = ctx.polygon.bounds
     if group.kind == "dining" and ctx.room["room_type"] in {"studio", "living_room"}:  # its own part of the room, by a wall
         cost += DINING_WALL_COST * min(ctx.polygon.exterior.distance(polygon) for _, polygon in floors)
@@ -791,19 +777,6 @@ def _preference(ctx: _Room, parent: _Partial, group: _Group, template: _Template
     if group.kind == "free":
         cost += 0.2 * min(math.dist(poses[anchor][:2], corner) for corner in ((min_x, min_y), (max_x, min_y), (min_x, max_y), (max_x, max_y)))
     return cost
-
-
-def _cells(ctx: _Room, floors: list[tuple[str, Polygon]]) -> frozenset[int]:
-    """The cells of a 3 x 3 grid over the room's bounds that the footprints' boxes cover at least SPREAD_CELL_SHARE of."""
-    min_x, min_y, max_x, max_y = ctx.polygon.bounds
-    width, depth = (max_x - min_x) / 3, (max_y - min_y) / 3
-    covered = [0.0] * 9
-    for _, polygon in floors:
-        x0, y0, x1, y1 = polygon.bounds
-        for n in range(9):
-            left, bottom = min_x + n % 3 * width, min_y + n // 3 * depth
-            covered[n] += max(0.0, min(x1, left + width) - max(x0, left)) * max(0.0, min(y1, bottom + depth) - max(y0, bottom))
-    return frozenset(n for n, area in enumerate(covered) if area >= SPREAD_CELL_SHARE * width * depth)
 
 
 def _blocks_view(ctx: _Room, uid: str) -> bool:
@@ -897,8 +870,6 @@ def _expand(ctx: _Room, parent: _Partial, group: _Group) -> list[_Partial]:
             seats=[*parent.seats, *(polygon for uid, polygon in floors if uid in ctx.seats)],
             tall=[*parent.tall, *(polygon for uid, polygon in floors if _blocks_view(ctx, uid))],
             sightline=_sightline(ctx, layout) if group.kind == "media" else parent.sightline,
-            zones=[*parent.zones, unary_union([polygon for _, polygon in floors])] if zone and floors else parent.zones,
-            cells=parent.cells | _cells(ctx, floors) if zone else parent.cells,
             preference=parent.preference + cost,
             score=layout_issue_score(ctx.analyze(layout)),
             unplaceable=(*parent.unplaceable, *(sorted(poses) if relaxed else ())),

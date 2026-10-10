@@ -1031,9 +1031,10 @@ def test_requested_tv_with_a_substitute_keeps_unpriced_tvs(monkeypatch):
 
     slots, pool, _, _, calls = retrieve(monkeypatch, "living_room", packet, search)
 
-    assert set(slots["tv"]["categories"]) >= {"tv", "tv_stand"} and not slots["tv"]["gap"]
-    assert sorted(pool["tv"]) == ["stand_priced", "tv_unpriced"]
-    [tv_filters] = [f for f in calls if "tv_stand" in f["categories"] and "tv" in f["categories"]]
+    # A media support is not a TV substitute, so the TV slot holds only TVs.
+    assert "tv" in slots["tv"]["categories"] and "tv_stand" not in slots["tv"]["categories"] and not slots["tv"]["gap"]
+    assert pool["tv"] == ["tv_unpriced"]
+    [tv_filters] = [f for f in calls if "tv" in f["categories"]]
     assert tv_filters["known_price"] and tv_filters["price_exempt"] == ["television", "tv"]
 
 

@@ -111,17 +111,23 @@ export function Generate() {
     [select],
   );
   const elapsed = useClock(status === "running", startedAt);
-  const firstReady = variants.findIndex((variant) => variant.ready);
+  // The first design to finish, not the lowest-numbered one, so the room keeps it while the others finish.
+  const firstReady = variants.reduce(
+    (first, variant, index) =>
+      variant.receivedMs !== null && variant.receivedMs < (variants[first]?.receivedMs ?? Infinity) ? index : first,
+    -1,
+  );
   const allSettled = variants.every((variant) => variant.ready || variant.failed);
 
   const tasks: Task[] = useMemo(() => {
     if (step === 1) return roomTasks(shared, request?.room_vertices.length ?? 4);
-    // The room shows the first ready design; its row says so.
-    const designs = variants.map((variant, index) => {
+    // Design rows appear only in the last step, once a design is ready.
+    if (step < 4) return [catalogTask(shared), rankTask(shared)];
+    // The room shows the first design to finish; its row says so.
+    return variants.map((variant, index) => {
       const task = designTask(variant, index);
       return index === firstReady ? { ...task, detail: `${task.detail}, shown in the room` } : task;
     });
-    return step === 2 ? [catalogTask(shared), rankTask(shared), ...designs] : designs;
   }, [step, shared, variants, firstReady, request]);
 
   const ring = useMemo((): { items: RingItem[]; caption: string } | null => {
@@ -197,7 +203,7 @@ export function Generate() {
           {ring && <ProductRing items={ring.items} caption={ring.caption} />}
           {ready && (
             <p className="absolute top-4 left-1/2 -translate-x-1/2 rounded-full bg-surface/90 px-3.5 py-1.5 text-[13px] font-medium text-text shadow-sm backdrop-blur">
-              {finished ? `Showing ${designName(firstReady)}` : `${designName(firstReady)} is ready`}
+              Showing {designName(firstReady)}
             </p>
           )}
           <div

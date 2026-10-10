@@ -232,5 +232,127 @@
         }
       ]
     }
+  },
+  {
+    "label": "living_room_scandi",
+    "phase_5_run_id": "5e18ba6b80c2414695a46ba84e032648",
+    "geometry": "Recorded from the web brief: door and window on the back wall.",
+    "note": "Design 2 failed every selection turn: a Jev style mismatch on one product, then a tabletop item with no support.",
+    "request": {
+      "user_intent": "A cosy Scandinavian living room — soft neutrals, wool and boucle textures, low wooden furniture, airy and serene.",
+      "budget": 10000.0,
+      "room_type": "living_room",
+      "room_area": [
+        4.27,
+        4.88
+      ],
+      "wall_height": 2.7,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          4.27,
+          0.0
+        ],
+        [
+          4.27,
+          4.88
+        ],
+        [
+          0.0,
+          4.88
+        ]
+      ],
+      "room_doors": [
+        {
+          "id": "door-1",
+          "height": 2.08,
+          "center": [
+            3.074,
+            4.88
+          ],
+          "width": 0.9,
+          "depth": 0.05,
+          "wall": "top"
+        }
+      ],
+      "room_windows": [
+        {
+          "id": "window-1",
+          "height": 1.2,
+          "sill_height": 0.9,
+          "center": [
+            1.196,
+            4.88
+          ],
+          "width": 1.1,
+          "depth": 0.05,
+          "wall": "top"
+        }
+      ]
+    }
+  },
+  {
+    "label": "studio_relaxed",
+    "phase_5_run_id": "06afd8ae48f84584830d54786b14ee35",
+    "geometry": "Recorded from the web brief: door and window on the back wall.",
+    "note": "Sofa and TV on opposite walls about 4 m apart, dining squeezed by the door and the TV stand.",
+    "request": {
+      "user_intent": "A relaxed studio with a complete bed, a sofa facing a TV, and dining for two. Keep the TV comfortable to watch from the sofa and allow space to pull out the dining chairs.",
+      "budget": 10000.0,
+      "room_type": "studio",
+      "room_area": [
+        5.0,
+        6.5
+      ],
+      "wall_height": 2.7,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          5.0,
+          0.0
+        ],
+        [
+          5.0,
+          6.5
+        ],
+        [
+          0.0,
+          6.5
+        ]
+      ],
+      "room_doors": [
+        {
+          "id": "door-1",
+          "height": 2.08,
+          "center": [
+            3.6,
+            6.5
+          ],
+          "width": 0.9,
+          "depth": 0.05,
+          "wall": "top"
+        }
+      ],
+      "room_windows": [
+        {
+          "id": "window-1",
+          "height": 1.2,
+          "sill_height": 0.9,
+          "center": [
+            1.4,
+            6.5
+          ],
+          "width": 1.1,
+          "depth": 0.05,
+          "wall": "top"
+        }
+      ]
+    }
   }
 ]

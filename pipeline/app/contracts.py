@@ -4,14 +4,14 @@ Shapes follow today's pipeline (livinit_pipeline src/api/models.py, src/api/sse.
 src/api/execution/pipeline_stream.py, src/nodes/render_scene.py) for the fields
 the web app reads. Frames are flat `{"type": ..., ...}` except `variant_ready` and
 `complete`, which nest under `data`. Saving fields (`create_payload`,
-`turn_payload`) wait for phase 5. The stream never sends `fit_confirmation_required`.
+`turn_payload`) are outside browser delivery. The stream never sends `fit_confirmation_required`.
 """
 
 from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 RoomType = Literal["living_room", "bedroom", "dining_room", "studio"]
 # Event node names. The web app's progress steps key on the legacy names
@@ -26,6 +26,7 @@ NODE_NAMES = {
     "repair": "layout_fix",
     "correct": "layout_fix",
     "validate": "render_scene",
+    "drop": "render_scene",
 }
 NODES = list(dict.fromkeys(NODE_NAMES.values()))
 
@@ -57,6 +58,28 @@ class Instance(TypedDict):
     asset: dict[str, Any]  # prepared record from pipeline.pipeline_assets_v2
 
 
+class ClientTiming(BaseModel):
+    """Browser times since submission, in milliseconds (at most one day)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    variant_index: int = Field(ge=0, le=2)
+    received_ms: float = Field(ge=0, le=86_400_000, allow_inf_nan=False)
+    loaded_ms: float = Field(ge=0, le=86_400_000, allow_inf_nan=False)
+    displayed_ms: float = Field(ge=0, le=86_400_000, allow_inf_nan=False)
+    models: int = Field(ge=0, le=10_000)
+    failed_models: int = Field(ge=0, le=10_000)
+    screen: Literal["generate", "chooser", "studio"]
+
+    @model_validator(mode="after")
+    def check_measurements(self) -> ClientTiming:
+        if not self.received_ms <= self.loaded_ms <= self.displayed_ms:
+            raise ValueError("times must follow received_ms <= loaded_ms <= displayed_ms")
+        if self.failed_models > self.models:
+            raise ValueError("failed_models cannot exceed models")
+        return self
+
+
 def start_event(run_id: str) -> dict:
     return {"type": "start", "run_id": run_id, "nodes": NODES, "route": "NEW_DESIGN", "mode": "full_pipeline"}
 
@@ -66,8 +89,8 @@ def node_start(stage: str, variant_index: int | None) -> dict:
     return {"type": "node_start", "node": node, "index": NODES.index(node), "variant_index": variant_index}
 
 
-def node_complete(stage: str, variant_index: int | None, elapsed: float) -> dict:
-    return {**node_start(stage, variant_index), "type": "node_complete", "elapsed": elapsed}
+def node_complete(stage: str, variant_index: int | None, elapsed: float, data: dict) -> dict:
+    return {**node_start(stage, variant_index), "type": "node_complete", "elapsed": elapsed, "data": data}
 
 
 def heartbeat_event(node: str | None, variant_index: int | None, elapsed: float) -> dict:
@@ -83,6 +106,7 @@ def ready_variant(
     selected_assets: list[dict[str, Any]],
     total_cost: float,
     selection_validation: dict[str, Any],
+    preview_url: str | None = None,
 ) -> dict:
     return {
         "variant_index": variant_index,
@@ -93,6 +117,7 @@ def ready_variant(
         "total_cost": total_cost,
         "selection_validation": selection_validation,
         "asset_selection_failed": False,
+        "preview_url": preview_url,
     }
 
 

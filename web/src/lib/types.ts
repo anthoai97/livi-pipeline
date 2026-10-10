@@ -1,17 +1,16 @@
-// Shapes of the pipeline's POST /pipeline request and SSE events (pipeline/app/contracts.py).
+import { z } from "zod";
 
+// Shapes of POST /pipeline and its SSE events (pipeline/app/contracts.py).
 export type RoomType = "living_room" | "bedroom" | "dining_room" | "studio";
-export type Vec2 = [number, number];
+const vec2 = z.tuple([z.number(), z.number()]);
+const vec3 = z.tuple([z.number(), z.number(), z.number()]);
+export type Vec2 = z.infer<typeof vec2>;
 
-export interface Opening {
-  id: string;
-  center: Vec2; // plan metres, on a wall
-  width: number; // box size along plan X
-  depth: number; // box size along plan Y
-  height: number;
-  sill_height?: number;
-  wall?: "top" | "right" | "bottom" | "left";
-}
+const opening = z.object({
+  id: z.string(), center: vec2, width: z.number(), depth: z.number(), height: z.number(),
+  sill_height: z.number().optional(), wall: z.enum(["top", "right", "bottom", "left"]).optional(),
+});
+export type Opening = z.infer<typeof opening>;
 
 export interface PipelineRequest {
   user_intent: string;
@@ -24,108 +23,105 @@ export interface PipelineRequest {
   room_windows: Opening[];
 }
 
-export type NodeName =
-  "interpret" | "extract_room" | "rag_scope_assets" | "select_asset_intent" | "layout_initial" | "layout_fix" | "render_scene";
+const nodeName = z.enum([
+  "interpret", "extract_room", "rag_scope_assets", "select_asset_intent", "layout_initial", "layout_fix", "render_scene",
+]);
+export type NodeName = z.infer<typeof nodeName>;
+const count = z.number().int().nonnegative();
+const variantIndex = count.max(2);
+const product = z.object({
+  asset_id: z.string(), name: z.string().nullable(), category: z.string().nullable(),
+  image_url: z.string().nullable(), price: z.number().nullable(),
+});
+export type Product = z.infer<typeof product>;
 
-export interface Product {
-  asset_id: string;
-  name: string | null;
-  category: string | null;
-  image_url: string | null;
-  price: number | null;
-}
+const nodeData = {
+  interpret: z.object({ style_hints: z.array(z.string()), requested_categories: z.array(z.string()) }),
+  extract_room: z.object({
+    room_area: vec2, wall_height: z.number(), doors: count, windows: count,
+    floor_area_sqm: z.number(), usable_area_sqm: z.number(), protected_paths: count,
+    fit: z.string(), fit_message: z.string(),
+  }),
+  rag_scope_assets: z.object({
+    slots: count, candidates: count, gaps: z.array(z.string()),
+    preview: z.array(product.extend({ slot: z.string(), kind: z.string() })),
+  }),
+  // Shared rank and per-variant selection use the same legacy node name.
+  select_asset_intent: z.object({
+    ranked_slots: count.optional(), shared_products: count.optional(),
+    turn: count.optional(), valid: z.boolean().optional(), errors: count.optional(),
+    fit_step: z.string().nullable().optional(), total_cost: z.number().optional(), items: z.array(product).optional(),
+  }),
+  layout_initial: z.object({ placed: count, findings: count, blocking: count, swaps: count, drops: count }),
+  layout_fix: z.object({ placed: count, findings: count, blocking: count, improved: z.boolean() }),
+  render_scene: z.object({ valid: z.boolean(), errors: count }),
+};
+export type NodeData = { [N in NodeName]: z.infer<(typeof nodeData)[N]> };
 
-/** `node_complete.data`, one shape per node. */
-export interface NodeData {
-  interpret: { style_hints: string[]; requested_categories: string[] };
-  extract_room: {
-    room_area: Vec2;
-    wall_height: number;
-    doors: number;
-    windows: number;
-    floor_area_sqm: number;
-    usable_area_sqm: number;
-    protected_paths: number;
-    fit: string;
-    fit_message: string;
-  };
-  rag_scope_assets: {
-    slots: number;
-    candidates: number;
-    gaps: string[];
-    preview: (Product & { slot: string; kind: string })[];
-  };
-  select_asset_intent: {
-    turn: number;
-    valid: boolean;
-    errors: number;
-    fit_step: string | null;
-    total_cost: number;
-    items: Product[];
-  };
-  layout_initial: { placed: number; findings: number; blocking: number };
-  layout_fix: { placed?: number; findings: number; blocking: number; improved: boolean };
-  render_scene: { valid: boolean; errors: number };
-}
+const manifestAsset = z.object({
+  instance_key: z.string(), asset_id: z.string(), name: z.string(), category: z.string(),
+  image_url: z.string().nullable(), glb_url: z.string(), frontView: z.number().nullable(),
+  width: z.number(), depth: z.number(), height: z.number(), placement_mode: z.string(), is_decor_item: z.boolean(),
+});
+export type ManifestAsset = z.infer<typeof manifestAsset>;
+const placement = z.object({
+  instance_key: z.string(), category: z.string(),
+  position: vec3, // plan x, y, z_bottom
+  rotation: vec3, // [0, 0, yaw]
+});
+export type Placement = z.infer<typeof placement>;
+const renderManifest = z.object({
+  room_area: vec2, room_vertices: z.array(vec2).min(3), room_doors: z.array(opening), room_windows: z.array(opening),
+  wall_height: z.number(), layout: z.record(z.string(), placement), assets: z.record(z.string(), manifestAsset),
+});
+export type RenderManifest = z.infer<typeof renderManifest>;
+const selectedAsset = product.extend({
+  instance_key: z.string(), name: z.string(), category: z.string(), is_decor_item: z.boolean(),
+});
+export type SelectedAsset = z.infer<typeof selectedAsset>;
+const readyVariant = z.object({
+  variant_index: variantIndex, variant_id: z.string(), render_manifest: renderManifest,
+  selected_assets: z.array(selectedAsset), total_cost: z.number(),
+  preview_url: z.string().regex(/^\/runs\/[0-9a-f]{32}\/previews\/[0-2]\.png$/).nullable(),
+});
+export type ReadyVariant = z.infer<typeof readyVariant>;
 
-export interface ManifestAsset {
-  instance_key: string;
-  asset_id: string;
-  name: string;
-  category: string;
-  image_url: string | null;
-  glb_url: string;
-  frontView: number | null;
-  width: number;
-  depth: number;
-  height: number;
-  placement_mode: string;
-  is_decor_item: boolean;
-}
+const nodeFields = { node: nodeName, index: count, variant_index: variantIndex.nullable() };
+export const pipelineEvent = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("start"), run_id: z.string().regex(/^[0-9a-f]{32}$/), nodes: z.array(nodeName) }),
+  z.object({ type: z.literal("node_start"), ...nodeFields }),
+  z.object({
+    type: z.literal("node_complete"), ...nodeFields, elapsed: z.number().nonnegative(),
+    data: z.record(z.string(), z.unknown()),
+  }).transform((event, ctx) => {
+    const parsed = nodeData[event.node].safeParse(event.data);
+    if (!parsed.success) {
+      ctx.addIssue({ code: "custom", message: `Invalid ${event.node} display data` });
+      return z.NEVER;
+    }
+    return { ...event, data: parsed.data };
+  }),
+  z.object({ type: z.literal("heartbeat"), node: nodeName.nullable(), variant_index: variantIndex.nullable(), elapsed: z.number() }),
+  z.object({ type: z.literal("variant_ready"), data: z.object({ variant: readyVariant }) }),
+  z.object({ type: z.literal("variant_failed"), variant_index: variantIndex, reason: z.string(), message: z.string(), errors: z.array(z.string()) }),
+  z.object({ type: z.literal("complete"), data: z.object({ run_dir: z.string(), variants: z.array(readyVariant) }) }),
+  z.object({ type: z.literal("error"), message: z.string(), code: z.string() }),
+]);
+export type PipelineEvent = z.infer<typeof pipelineEvent>;
 
-export interface Placement {
-  instance_key: string;
-  category: string;
-  position: [number, number, number]; // plan x, y, z_bottom
-  rotation: [number, number, number]; // [0, 0, yaw]
-}
-
-export interface RenderManifest {
-  room_area: Vec2;
-  room_vertices: Vec2[];
-  room_doors: Opening[];
-  room_windows: Opening[];
-  wall_height: number;
-  layout: Record<string, Placement>;
-  assets: Record<string, ManifestAsset>;
-}
-
-export interface SelectedAsset {
-  instance_key: string;
-  asset_id: string;
-  name: string;
-  category: string;
-  image_url: string | null;
-  price: number | null;
-  is_decor_item: boolean;
-}
-
-export interface ReadyVariant {
+export interface ClientTiming {
   variant_index: number;
-  variant_id: string;
-  render_manifest: RenderManifest;
-  selected_assets: SelectedAsset[];
-  total_cost: number;
+  received_ms: number;
+  loaded_ms: number;
+  displayed_ms: number;
+  models: number;
+  failed_models: number;
+  screen: "generate" | "chooser" | "studio";
 }
 
-type NodeEvent<T extends string> = { type: T; node: NodeName; index: number; variant_index: number | null };
-
-export type PipelineEvent =
-  | { type: "start"; run_id: string; nodes: NodeName[] }
-  | NodeEvent<"node_start">
-  | (NodeEvent<"node_complete"> & { elapsed: number; data: Partial<NodeData[NodeName]> })
-  | { type: "heartbeat"; node: NodeName | null; variant_index: number | null; elapsed: number }
-  | { type: "variant_ready"; data: { variant: ReadyVariant } }
-  | { type: "variant_failed"; variant_index: number; reason: string; message: string; errors: string[] }
-  | { type: "complete"; data: { run_dir: string; variants: ReadyVariant[] } }
-  | { type: "error"; message: string; code: string };
+export interface SceneTiming {
+  loadedAt: number;
+  displayedAt: number;
+  models: number;
+  failed_models: number;
+}

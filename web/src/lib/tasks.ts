@@ -7,14 +7,6 @@ type Nodes = Partial<Record<NodeName, NodeState>>;
 
 const status = (node?: NodeState): TaskStatus => (!node ? "queued" : node.status === "done" ? "done" : "working");
 
-const FAILURES: Record<string, string> = {
-  asset_selection_failed: "No set of pieces passed the room rules.",
-  layout_validation_failed: "The layout did not pass the final check.",
-  timeout: "Ran out of time before it finished.",
-};
-
-export const failureText = (reason: string) => FAILURES[reason] ?? "This design could not be completed.";
-
 export const designName = (index: number) => `Design ${index + 1}`;
 
 export function roomTasks(shared: Nodes, walls: number): Task[] {
@@ -29,13 +21,13 @@ export function roomTasks(shared: Nodes, walls: number): Task[] {
       title: "Reading your brief",
       status: status(shared.interpret),
       detail: brief
-        ? [asked && `Asked for ${asked}`, brief.style_hints?.length && `${brief.style_hints.join(", ")} feel`].filter(Boolean).join(", ") ||
-          "Brief understood"
-        : "Turning your words into a list of pieces",
+        ? [asked && `Asked for ${asked}`, brief.style_hints?.length && brief.style_hints.join(", ")].filter(Boolean).join(", ") ||
+          "Room details read"
+        : "Identifying furniture and style from your description",
     },
     {
       id: "shell",
-      title: "Room shell",
+      title: "Room dimensions",
       status: roomStatus,
       detail: room?.room_area
         ? `${walls === 4 ? "" : `${walls} walls, `}${metres(room.room_area[0])} x ${metres(room.room_area[1])}${walls === 4 ? "" : " overall"}, ${metres(room.wall_height ?? 0)} ceiling`
@@ -43,7 +35,7 @@ export function roomTasks(shared: Nodes, walls: number): Task[] {
     },
     {
       id: "openings",
-      title: "Openings",
+      title: "Doors and windows",
       status: roomStatus,
       detail: room
         ? `${plural(room.doors ?? 0, "door")} and ${plural(room.windows ?? 0, "window")} kept clear`
@@ -55,11 +47,11 @@ export function roomTasks(shared: Nodes, walls: number): Task[] {
       status: roomStatus,
       detail: room?.usable_area_sqm
         ? `${room.usable_area_sqm.toFixed(1)} of ${room.floor_area_sqm?.toFixed(1)} m² free to furnish`
-        : "Floor left after door clearance",
+        : "Calculating floor space outside door clearances",
     },
     {
       id: "fit",
-      title: "Fit estimate",
+      title: "Space check",
       status: room ? (tight ? "warn" : "done") : roomStatus,
       detail: room?.fit_message ?? "How much furniture the room can hold",
     },
@@ -79,48 +71,58 @@ export function catalogTask(shared: Nodes): Task {
   };
 }
 
-export function selectionTask(variant: VariantProgress, index: number): Task {
-  const node = variant.nodes.select_asset_intent;
-  const picked = nodeData(variant.nodes, "select_asset_intent");
-  const base = { id: `select-${index}`, title: designName(index) };
-  if (variant.failed && !picked?.valid) return { ...base, status: "failed", detail: failureText(variant.failed.reason) };
-  if (!node) return { ...base, status: "queued", detail: "Waits for the catalog search" };
-  if (node.status === "done" && picked?.valid) {
-    const compact = picked.fit_step === "compact" ? ", sized down to fit" : "";
-    return { ...base, status: "done", detail: `${plural(picked.items?.length ?? 0, "piece")}, ${money(picked.total_cost ?? 0)}${compact}` };
-  }
+export function rankTask(shared: Nodes): Task {
+  const ranked = nodeData(shared, "select_asset_intent");
   return {
-    ...base,
-    status: "working",
-    detail: node.runs > 1 ? `Try ${node.runs}: swapping pieces that broke a room rule` : "Picking one product for each piece",
+    id: "rank", title: "Comparing products", status: status(shared.select_asset_intent),
+    detail: ranked
+      ? `${plural(ranked.ranked_slots ?? 0, "need")} ranked across three designs, ${plural(ranked.shared_products ?? 0, "shared product")}`
+      : "Comparing products for each design",
   };
 }
 
-export function fitTask(variant: VariantProgress, index: number): Task {
-  const { layout_initial: placed, layout_fix: fixing, render_scene: final } = variant.nodes;
-  const base = { id: `fit-${index}`, title: designName(index) };
-  if (variant.failed) return { ...base, status: "failed", detail: failureText(variant.failed.reason) };
-  if (!placed) return { ...base, status: "queued", detail: "Waits for its pieces" };
-  if (placed.status === "working") return { ...base, status: "working", detail: "Placing every piece in the room" };
-  const blocking = nodeData(variant.nodes, "layout_fix")?.blocking ?? nodeData(variant.nodes, "layout_initial")?.blocking ?? 0;
-  if (final || variant.ready || (blocking === 0 && fixing?.status !== "working")) {
-    return { ...base, status: "done", detail: "Nothing overlaps or blocks a walkway" };
-  }
-  return {
-    ...base,
-    status: "working",
-    detail: `Fixing ${plural(blocking, "layout issue")}${fixing && fixing.runs > 1 ? `, pass ${fixing.runs}` : ""}`,
-  };
-}
-
-export function readyTask(variant: VariantProgress, index: number): Task {
-  const base = { id: `ready-${index}`, title: designName(index) };
+/** A design's row, reporting where the design really is whichever step the page shows. */
+export function designTask(variant: VariantProgress, index: number): Task {
+  const base = { id: `design-${index}`, title: designName(index) };
   if (variant.ready) {
     const { selected_assets, total_cost } = variant.ready;
     return { ...base, status: "done", detail: `${plural(selected_assets.length, "piece")}, ${money(total_cost)}` };
   }
-  if (variant.failed) return { ...base, status: "failed", detail: failureText(variant.failed.reason) };
-  return { ...base, status: variant.nodes.layout_initial ? "working" : "queued", detail: "Still checking the fit" };
+  if (variant.failed) return { ...base, status: "failed", detail: variant.failed.message };
+  const { select_asset_intent: selecting, layout_initial: placed, layout_fix: fixing } = variant.nodes;
+  if (placed) {
+    if (placed.status === "working") return { ...base, status: "working", detail: "Placing every piece in the room" };
+    if (fixing?.status === "working") {
+      return { ...base, status: "working", detail: `Adjusting furniture positions${fixing.runs > 1 ? `, pass ${fixing.runs}` : ""}` };
+    }
+    const initial = nodeData(variant.nodes, "layout_initial");
+    const repair = nodeData(variant.nodes, "layout_fix");
+    const blocking = repair?.blocking ?? initial?.blocking;
+    const changes = [
+      initial?.swaps ? `${plural(initial.swaps, "product swap")}` : "",
+      initial?.drops ? `${plural(initial.drops, "piece")} removed` : "",
+    ].filter(Boolean).join(", ");
+    // Passing the checks is not the end: the final check and delivery are still to come.
+    if (blocking === 0) return { ...base, status: "working", detail: `Layout checks passed${changes ? `; ${changes}` : ""}` };
+    return {
+      ...base,
+      status: "working",
+      detail: `${blocking === undefined ? "Checking layout issues" : `${plural(blocking, "blocking layout issue")} remaining`}${repair ? (repair.improved ? "; spacing improved" : "; keeping the previous layout") : ""}`,
+    };
+  }
+  if (selecting) {
+    const picked = nodeData(variant.nodes, "select_asset_intent");
+    if (selecting.status === "done" && picked?.valid) {
+      const compact = picked.fit_step === "compact" ? ", sized down to fit" : "";
+      return { ...base, status: "working", detail: `${plural(picked.items?.length ?? 0, "product")}, ${money(picked.total_cost ?? 0)}${compact}` };
+    }
+    return {
+      ...base,
+      status: "working",
+      detail: selecting.runs > 1 ? `Try ${selecting.runs}: replacing products that do not fit` : "Selecting furniture and decor",
+    };
+  }
+  return { ...base, status: "queued", detail: "Waiting for product comparisons" };
 }
 
 /** Where a design is, in a few words, for the option switcher. */

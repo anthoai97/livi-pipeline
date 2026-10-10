@@ -13,6 +13,7 @@ import {
   draftToParams,
   draftVertices,
   openingsProblem,
+  PROMPT_STARTERS,
   ROOM_TYPES,
   WINDOW_WIDTH,
   type RoomDraft,
@@ -79,6 +80,10 @@ export function Brief() {
   const [submitted, setSubmitted] = useState(false);
   const reduce = useReducedMotion();
   const errors = submitted ? check(draft) : {};
+  const starter = PROMPT_STARTERS.find(
+    (example) =>
+      example.roomType === draft.roomType && example.prompt === draft.prompt && example.width === draft.width && example.length === draft.length,
+  );
   // The preview keeps the last sensible size while a field is mid-edit or out of range.
   const preview = useMemo(() => {
     const sizes = check(draft);
@@ -91,12 +96,13 @@ export function Brief() {
   }, [draft]);
 
   const set = <K extends keyof RoomDraft>(key: K, value: RoomDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
-  // A new outline has new walls, so the door and window move to the longest wall the view shows.
-  const reshape = (shape: ShapeId, corner: CutCorner) =>
+  // A new outline or size has new walls, so the door and window move to the longest wall the view shows.
+  const reshape = (change: Partial<RoomDraft>) =>
     setDraft((current) => {
-      const vertices = shapeVertices(shape, corner, current.width, current.length);
-      const wall = defaultWall(polygonEdges(vertices), viewCorner(vertices, [current.width, current.length]));
-      return { ...current, shape, corner, doorWall: wall, windowWall: wall };
+      const next = { ...current, ...change };
+      const vertices = draftVertices(next);
+      const wall = defaultWall(polygonEdges(vertices), viewCorner(vertices, [next.width, next.length]));
+      return { ...next, doorWall: wall, windowWall: wall };
     });
   const edges = draftEdges(draft);
   const cuts = SHAPES.find((s) => s.value === draft.shape)?.cuts;
@@ -122,18 +128,38 @@ export function Brief() {
           initial={reduce ? false : { opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
-          className="flex flex-col gap-6 pt-4 lg:pt-10"
+          aria-label="Room details"
+          className="flex flex-col gap-6 pt-4"
         >
-          <div>
-            <h1 className="text-4xl leading-[1.05] font-semibold tracking-tighter text-text md:text-[44px]">
-              Describe a room. Get three layouts.
-            </h1>
-            <p className="mt-3 max-w-[46ch] text-[16px] leading-relaxed text-muted">
-              Set the size and budget. We pick real products and place them so the room still works.
-            </p>
-          </div>
+          <Field label="Example prompt" hint="Choose an example or write your own below.">
+            {(id) => (
+              <select
+                id={id}
+                value={starter?.prompt ?? ""}
+                onChange={(event) => {
+                  const example = PROMPT_STARTERS.find((item) => item.prompt === event.target.value);
+                  if (example) {
+                    const { roomType, prompt, width, length } = example;
+                    reshape({ roomType, prompt, width, length });
+                  }
+                }}
+                className={input}
+              >
+                <option value="" disabled>Choose an example</option>
+                {ROOM_TYPES.map((room) => (
+                  <optgroup key={room.value} label={room.label}>
+                    {PROMPT_STARTERS.filter((example) => example.roomType === room.value).map((example) => (
+                      <option key={example.label} value={example.prompt}>
+                        {room.label}: {example.label}, {example.width} x {example.length} m
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            )}
+          </Field>
 
-          <Field label="What should the room feel like?" error={errors.prompt}>
+          <Field label="Describe your room" error={errors.prompt}>
             {(id) => (
               <textarea
                 id={id}
@@ -174,7 +200,7 @@ export function Brief() {
                   key={shape.value}
                   type="button"
                   aria-pressed={draft.shape === shape.value}
-                  onClick={() => reshape(shape.value, draft.corner)}
+                  onClick={() => reshape({ shape: shape.value })}
                   className={`flex flex-col items-center gap-1 rounded-xl border px-2 py-2.5 text-[13px] transition active:scale-[0.98] ${
                     draft.shape === shape.value
                       ? "border-accent bg-accent-soft font-medium text-accent"
@@ -194,7 +220,7 @@ export function Brief() {
                     key={corner.value}
                     type="button"
                     aria-pressed={draft.corner === corner.value}
-                    onClick={() => reshape(draft.shape, corner.value)}
+                    onClick={() => reshape({ corner: corner.value })}
                     className={`rounded-full border px-3 py-1 text-[13px] transition active:scale-[0.98] ${
                       draft.corner === corner.value
                         ? "border-accent bg-accent-soft font-medium text-accent"
@@ -209,13 +235,13 @@ export function Brief() {
           </fieldset>
 
           <div className="grid grid-cols-3 gap-3">
-            <Field label="Width" error={errors.width}>
+            <Field label="Width (m)" error={errors.width}>
               {(id) => <input id={id} type="number" step={0.1} value={draft.width} onChange={number("width")} className={input} />}
             </Field>
-            <Field label="Length" error={errors.length}>
+            <Field label="Length (m)" error={errors.length}>
               {(id) => <input id={id} type="number" step={0.1} value={draft.length} onChange={number("length")} className={input} />}
             </Field>
-            <Field label="Ceiling" error={errors.height}>
+            <Field label="Ceiling (m)" error={errors.height}>
               {(id) => <input id={id} type="number" step={0.1} value={draft.height} onChange={number("height")} className={input} />}
             </Field>
           </div>
@@ -251,7 +277,6 @@ export function Brief() {
             <Button type="submit">
               Design my room <ArrowRight size={18} weight="bold" />
             </Button>
-            <p className="text-[13px] text-faint">Mock mode: plays a recorded dining room run, fitted to your room.</p>
           </div>
         </motion.form>
 

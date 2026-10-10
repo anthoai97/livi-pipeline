@@ -1,6 +1,6 @@
 # How the pipeline builds a room
 
-The pipeline (`pipeline/`, phase 4) turns a prompt, room geometry, and budget into
+The pipeline (`pipeline/`, phase 5) turns a prompt, room geometry, and budget into
 three furnished room designs. This page walks through each step in order and
 says what the step does, what it reads, and what it produces.
 
@@ -20,7 +20,8 @@ POST /pipeline
                     direction, then deals them so variants get different products
      then in parallel, each:
        b. select    model picks products, code and Jev check them (up to 4 turns)
-       c. place     code solver places every item (no model call)
+       c. place     code solver places every item; a model picks among tied
+                    layouts
        d. repair    code fixes layout problems (no model call)
        e. correct   fallback: model fixes blocking findings that remain
                     (up to 3 proposals)
@@ -56,9 +57,14 @@ The service then:
 6. Writes a run record to `pipeline/.data/runs/<run_id>.json`. The record has
    stage timings, model and Jev calls, tokens, cost, the `JEV_USES`
    and `PRODUCT_REUSE_RATE` switches, slot results, notes, and variant outcomes with their
-   non-blocking findings.
+   non-blocking findings, preview render results, and browser timing entries.
 
 Every stage sends `node_start` and `node_complete` events with its elapsed time.
+Each `node_complete` also carries `data` for browser progress: interpreted
+categories, room facts, retrieved products, and counts or validation results
+from the variant stages. These facts describe work already done. They do not
+change selection or placement. See the [delivery reference](../../pipeline/README.md#browser-delivery)
+for the fields.
 
 ## 1. Interpret the prompt
 
@@ -258,11 +264,19 @@ A tabletop item too large for its supports, such as a lamp on a small
 nightstand, does not step down. Its error asks for a smaller tabletop item or a
 larger support from the same slots.
 
-After 4 failed turns in all, the variant fails with `asset_selection_failed`.
+After 4 failed turns in all, the last selection loses the products that fail
+it, and the variant goes on to placement. Code removes one product a round,
+every unit of it, while that leaves fewer errors (then less cost over the
+budget allowance). It never removes the anchor piece (sofa, bed, or dining
+table). For example, a coffee table that does not match the sofa's style, or a
+lamp with nothing to stand on, is removed instead of failing the design. Errors
+that removal cannot fix, such as a missing required item, stay in the run
+record, and the design is still delivered.
 
 ### 4c. Place products
 
-`variant_stages.place` lays out the selection with code, with no model call.
+`variant_stages.place` lays out the selection with code. A model call is made only
+to pick among tied layouts, as described at the end of this section.
 The solver (`app.rules.layout.solver`) splits the selection into groups:
 
 - the bed with its nightstands
@@ -282,9 +296,29 @@ furniture, blocks a door or a protected path, or takes the space a bed side, a
 chair pull-out, or a cabinet front needs. When a TV faces the sofa, the sofa can
 also move forward off its wall, so that the viewing distance fits the TV size.
 
+In a studio, the TV stand can also stand free as a divider, on the sofa's axis
+and facing it, with the screen near the middle of its viewing range (1.2 to 3.5
+times the TV width). For example, a 1.2 m TV that the far wall puts 5.3 m from
+the sofa stands 2.8 m from it instead. The checker notes a free-standing stand,
+so a wall-backed TV within its range still wins. A floor lamp goes beside the
+sofa or an accent chair; dining chairs count as seats only in a room without
+one.
+
 Groups go in order, largest first. After each group, the best partial layouts,
-measured with the same checker as validation, go on to the next group. Lamps,
-tabletop items, and wall art are added last with the seed rules, and the
+measured with the same checker as validation, go on to the next group. The kept
+layouts differ in their zone plan first: the wall the bed, sofa, TV, or desk
+backs onto (or a divider TV) and the room quarter that holds the dining table.
+So the final layouts are different rooms, not copies that differ in one shelf.
+
+Zones (bed, sofa, TV, dining, desk) also spread out. A zone costs a little more
+the closer it comes to a placed zone, up to 0.15 when they touch and nothing
+past 1.2 m, and up to 0.1 for the share of a 3 x 3 grid over the room that no
+zone covers. These costs only order positions that pass the checks; door, view,
+and TV distance costs outweigh them. A dining table in a dining room prefers the
+room center. In a studio or living room it prefers a wall (0.1 per metre away),
+so it takes its own part of the room instead of the middle.
+
+Lamps, tabletop items, and wall art are added last with the seed rules, and the
 complete layout with the fewest findings wins. A solve takes 0.1 to 1.5 s on the
 test rooms (up to 15 items).
 
@@ -296,6 +330,19 @@ up to 2, when the selection stays valid. A request for an exact number of
 seats, or the room's minimum, keeps its chairs. Each swap or removal is kept
 only if the layout gets better, and the run record notes it. Findings that
 remain go to repair and correction.
+
+The solver ends with up to 4 complete layouts. When other layouts tie the
+result's issue score, with no more unplaceable items, one model call (model key
+`arrange`) gets each one drawn top-down as variant A, B, C, or D, with the room,
+the request, and each piece's key, category, and size. The model judges them as
+an interior designer (clear zones, a TV whose back does not face another zone, a
+bed against a wall with access, nothing floating mid-room, open walkways), picks
+one with a one-sentence reason, and can suggest small adjustments. Code rejects
+a move over 0.5 m or a turn that is not a whole number of quarter turns, and
+keeps the rest only if the issue score does not get worse. A worse layout is
+never offered. With one layout there is no call. A failed call keeps the
+solver's layout, so the pick never fails a variant. The run record notes the
+pick, its reason, and the adjustments kept, reverted, or rejected.
 
 The layout is then normalized: wall items snap to walls, rugs fit the room, and
 displays sit on their supports. It is then analyzed into findings by severity:
@@ -343,15 +390,27 @@ hard layouts. The run record notes each escalation.
 placed exactly once and no blocking finding remains.
 
 - **Pass:** it builds the render manifest (model references and placements),
-  the selected-asset list, and the total cost, then sends `variant_ready`.
+  the selected-asset list, and the total cost. The graph then renders a top-down
+  preview in a worker thread and sends `variant_ready` with its `preview_url`.
 - **Fail, first time:** the variant goes back to select once, if selection
   turns remain. The prompt names the items in the remaining blocking findings
   and asks for smaller products or fewer items. The fit step moves to the next
   step, and the new layout gets its own 3 correction proposals.
-- **Fail again:** it sends `variant_failed` with reason
-  `layout_validation_failed` and the errors.
+- **Fail again:** `variant_stages.drop` removes the items the check fails on,
+  then delivers the rest as on a pass. It removes one named item a round,
+  non-anchor items first, choosing the removal that leaves the fewest findings.
+  Items resting on a removed item go with it. For example, a chair stuck inside
+  the dining table is removed and the room keeps three chairs.
+
+Failed checks never fail a variant. A variant sends `variant_failed` only when a
+stage raises, such as a model call that used all its attempts.
 
 The viewer can show each variant as soon as its `variant_ready` event arrives.
+The preview uses product footprints without downloading images. The service
+saves it beside the run record and serves it through
+`GET /runs/{run_id}/previews/{index}.png`. Rendering and image write failures
+leave the design ready with a null URL. The record keeps the render time and error.
+Benchmark reviews use the same renderer in `app/preview.py`.
 
 ### Jev
 
@@ -366,6 +425,17 @@ the run record notes it.
 
 After all three variants finish, the service sends a `complete` event with every
 ready variant and writes the run record.
+
+The browser posts when each shown design arrived, finished loading models, and
+drew its first frame after loading to `POST /runs/{run_id}/client-timing`.
+Times are milliseconds since submission. Model counts, failed model counts,
+and the screen name give context. The record keeps these in `client_timing`,
+whether they arrive during generation or after it finishes.
+
+Continuing with a ready design disconnects the stream. The service cancels the
+unfinished variants and saves a `cancelled` record with ready variants and
+browser timing retained. Record writes and timing submissions share a lock so
+completion or cancellation cannot overwrite an accepted timing entry.
 
 ## Limits
 
@@ -385,6 +455,5 @@ ready variant and writes the run record.
 
 ## Not in this phase
 
-- Saving designs, design-create payloads, and the chat reply (phase 5).
-- Preview images (phase 5).
+- Saving designs, design-create payloads, and the chat reply. The browser still uses its local save mock.
 - Supabase upload and billing fields.

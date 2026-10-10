@@ -20,8 +20,8 @@ export const DEFAULT_DRAFT: RoomDraft = {
   budget: 10000,
   shape: "Rectangle",
   corner: "top-right",
-  width: 4.27,
-  length: 4.88,
+  width: 5.5,
+  length: 5.8,
   height: 2.7,
   doorWall: 2, // the back wall of a rectangle
   windowWall: 2,
@@ -104,6 +104,75 @@ export const ROOM_TYPES: { value: RoomType; label: string }[] = [
   { value: "bedroom", label: "Bedroom" },
   { value: "dining_room", label: "Dining room" },
   { value: "studio", label: "Studio" },
+];
+
+// Prompt starters from web-pipeline/components/dashboard/DesignPromptSection.tsx.
+// Each starter carries a room size that suits it; Cosy Scandi living room reproduces a recorded benchmark case.
+export const PROMPT_STARTERS: { roomType: RoomType; label: string; prompt: string; width: number; length: number }[] = [
+  {
+    roomType: "living_room", label: "Warm minimal", width: 5.2, length: 6,
+    prompt: "A warm, minimal living room in oak and linen. A three-seat sofa, an armchair, a coffee table, and a rug, with the window left clear for natural light.",
+  },
+  {
+    roomType: "living_room", label: "Cosy Scandi", width: 4.27, length: 4.88,
+    prompt: "A cosy Scandinavian living room — soft neutrals, wool and boucle textures, low wooden furniture, airy and serene.",
+  },
+  {
+    roomType: "living_room", label: "Coastal calm", width: 5.5, length: 6.4,
+    prompt: "An airy coastal living room in sandy neutrals with pale blue accents. A linen sofa, two accent chairs, a round coffee table, and a jute rug. No nautical decor.",
+  },
+  {
+    roomType: "living_room", label: "Mid-century", width: 4.8, length: 5.6,
+    prompt: "A mid-century living room with walnut and mustard accents. A low sofa, a lounge chair with a floor lamp for reading, a coffee table, and a TV stand. Keep walkways open.",
+  },
+  {
+    roomType: "bedroom", label: "Warm minimal", width: 3.8, length: 4.2,
+    prompt: "A warm, minimal bedroom in oak and soft neutrals. A queen bed with two nightstands and a dresser, with clear space to walk around the bed.",
+  },
+  {
+    roomType: "bedroom", label: "Cosy Scandi", width: 3.6, length: 4,
+    prompt: "A cosy Scandinavian bedroom with wool and boucle textures. A wooden double bed, a nightstand with a reading lamp, and a wardrobe for clothes.",
+  },
+  {
+    roomType: "bedroom", label: "Moody industrial", width: 4.2, length: 4.6,
+    prompt: "A moody industrial bedroom in charcoal, leather, and black metal. A king bed with two nightstands, a dresser, and warm bedside lamps.",
+  },
+  {
+    roomType: "bedroom", label: "Bright Japandi", width: 4, length: 4.4,
+    prompt: "A bright Japandi bedroom with a low queen platform bed, light wood nightstands, a bench at the foot of the bed, and a tall plant. Calm and uncluttered.",
+  },
+  {
+    roomType: "dining_room", label: "Warm minimal", width: 3.6, length: 4,
+    prompt: "A warm, minimal dining room for four: an oak table with four matching chairs and a pendant above. Leave room to pull out every chair.",
+  },
+  {
+    roomType: "dining_room", label: "Cosy Scandi", width: 3.4, length: 3.8,
+    prompt: "A cosy Scandinavian dining room for four with a round light wood table, four soft upholstered chairs, and a rug underneath. Keep the door clear.",
+  },
+  {
+    roomType: "dining_room", label: "Family dining", width: 4.4, length: 5.4,
+    prompt: "A contemporary dining room for six: a long rectangular table, six comfortable chairs, and a sideboard for dishes. Keep space around every chair.",
+  },
+  {
+    roomType: "dining_room", label: "Dark modern", width: 3.8, length: 4.4,
+    prompt: "A dark, moody modern dining room for four: a black oval table, four velvet chairs, a large painting on the wall, and a statement pendant above the table.",
+  },
+  {
+    roomType: "studio", label: "Warm minimal", width: 5.2, length: 6.6,
+    prompt: "A warm, minimal studio in oak and linen. A double bed, a compact sofa, and a small dining table with two chairs, with clear paths between each area.",
+  },
+  {
+    roomType: "studio", label: "Cosy Scandi", width: 5, length: 6.5,
+    prompt: "A cosy Scandinavian studio with a wooden double bed, a loveseat, and a round dining table with two chairs. Soft lighting, and keep the entrance clear.",
+  },
+  {
+    roomType: "studio", label: "Movie evenings", width: 5.5, length: 7,
+    prompt: "A relaxed studio for movie nights: a queen bed, a sofa facing a TV stand, and a dining table with two chairs. Keep the TV easy to see from the sofa.",
+  },
+  {
+    roomType: "studio", label: "Artful studio", width: 5.4, length: 6.8,
+    prompt: "A calm, gallery-like studio with a double bed, a compact sofa on a rug, a dining table with two chairs, and two paintings on the walls.",
+  },
 ];
 
 export const roomLabel = (type: RoomType) => ROOM_TYPES.find((room) => room.value === type)?.label ?? type;

@@ -20,7 +20,7 @@ events. The service reads these variables from the repository `.env`:
 | `GEMINI_API_KEY` | Gemini model calls and query embeddings. |
 | `LOCAL_CONNECTION_STRING` | Postgres with the prepared catalog and embeddings. |
 | `LLM_DESIGN_MODEL` | Model for the design stages. Defaults to `gemini-3.8-flash`. |
-| `LLM_STAGE_MODELS` | Optional model and thinking level per stage, such as `select=gemini-3.5-flash-lite:minimal,correct=gemini-3.5-flash-lite:minimal`. Stages: `interpret`, `select`, `correct`. `correct_escalate` sets the model correction switches to after a proposal does not improve; without it, correction stops there. Unlisted stages use `LLM_DESIGN_MODEL` at `low`. |
+| `LLM_STAGE_MODELS` | Optional model and thinking level per stage, such as `select=gemini-3.5-flash-lite:minimal,correct=gemini-3.5-flash-lite:minimal`. Stages: `interpret`, `select`, `correct`. `correct_escalate` sets the model correction switches to after a proposal does not improve; without it, correction stops there. `arrange` sets the model that picks among tied solver layouts in `place`. Unlisted stages use `LLM_DESIGN_MODEL` at `low`; for `arrange` that keeps the call at 2-6 s, while `medium` takes 7-54 s. |
 | `MODEL_HEDGE_AFTER_S` | Seconds before a slow model call gets a duplicate; the first answer wins and the other call is cancelled. Defaults to `8`; `0` turns it off. |
 | `JEV_API_KEY` | Jev (typesafe-sdk) yes/no questions. |
 | `JEV_MODEL` | Jev model. Defaults to the pinned `jev-1.13.0`. |
@@ -34,6 +34,48 @@ Each request writes one run record, with stage timings, model and Jev calls,
 tokens, cost, switches, notes, and variant outcomes, to
 `pipeline/.data/runs/<run_id>.json`. Each ready variant also keeps its
 direction, total cost, products, and layout poses for review.
+
+## Browser delivery
+
+Every `node_complete` event includes `data` with facts from that stage:
+
+| Stage | Display data |
+| --- | --- |
+| interpret | `style_hints`, `requested_categories` |
+| room | `room_area`, `wall_height`, door and window counts, `floor_area_sqm`, `usable_area_sqm`, protected path count, `fit`, `fit_message` |
+| retrieve | Slot and candidate counts, gap labels, and `preview` with the top product per nonempty slot |
+| rank | `ranked_slots`, `shared_products` (distinct products held by multiple variants, including small shared slots) |
+| select | `turn`, `valid`, error count, `fit_step`, `total_cost`, and unique selected `items`, capped at the slot count |
+| place | `placed`, finding and blocking counts, kept `swaps` and `drops` |
+| repair, correct | `placed`, finding and blocking counts, `improved` |
+| validate | `valid`, error count |
+
+After validation passes, `app/preview.py` draws the layout in a worker thread.
+The PNG is saved to `<runs_dir>/<run_id>/variant_<index>.png`, where `runs_dir`
+defaults to `pipeline/.data/runs`. The ready variant includes
+`preview_url: "/runs/<run_id>/previews/<index>.png"`. A render or image write
+failure leaves the variant ready with `preview_url: null`. The record's
+`previews` list stores each variant index, elapsed seconds, and error or null.
+
+`GET /runs/{run_id}/previews/{index}.png` serves the PNG. Malformed IDs, indices
+outside 0 to 2, and missing images return 404. Run IDs are 32 lowercase hex characters.
+
+`POST /runs/{run_id}/client-timing` accepts the following JSON fields and returns 204:
+
+| Field | Allowed value |
+| --- | --- |
+| `variant_index` | Integer, 0 to 2 |
+| `received_ms`, `loaded_ms`, `displayed_ms` | Finite numbers, 0 to 86,400,000, measured since request submission and in that order |
+| `models`, `failed_models` | Integers, 0 to 10,000; failures cannot exceed the model count |
+| `screen` | `generate`, `chooser`, or `studio` |
+
+Unknown fields and invalid values return 422. Unknown runs return 404.
+Entries append to the record's `client_timing` list, during or after generation.
+A shared lock coordinates timing submissions with the final record write.
+Disconnecting cancels unfinished variants and writes a `cancelled` record that
+retains ready variants and timing entries. These routes run in one service process.
+
+## Checks and benchmarks
 
 Run the tests with `python -m pytest` from `pipeline/`.
 

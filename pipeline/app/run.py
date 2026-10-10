@@ -48,7 +48,8 @@ class ModelClient(Protocol):
     stages: Mapping[str, Any]
 
     async def generate(
-        self, ctx: StageContext, schema: type[M], contents: str, *, system: str | None = None, model_key: str | None = None
+        self, ctx: StageContext, schema: type[M], contents: str | list[str | bytes], *, system: str | None = None,
+        model_key: str | None = None
     ) -> M: ...
 
 
@@ -57,7 +58,8 @@ class StageContext:
     """What a stage function gets besides its state.
 
     - `generate(schema, contents, system=..., model_key=...)`: one bounded
-      structured model call, recorded under this stage and variant. `model_key`
+      structured model call, recorded under this stage and variant. `contents`
+      is a prompt, or a list of text parts and PNG image bytes. `model_key`
       picks the model by that key instead of the stage name.
     - `run.connection`: the request's sync psycopg connection (dict rows) for
       `search_assets`. Run blocking calls with `asyncio.to_thread`.
@@ -69,13 +71,16 @@ class StageContext:
       run; `run.product_reuse_rate` caps how much of a selection other
       variants may share.
     - `run.record_slot(...)` and `run.note(...)`: run-record entries.
+    - `data`: display facts sent with this stage's `node_complete` event.
     """
 
     run: RunContext
     stage: str
     variant_index: int | None
+    data: dict = field(default_factory=dict)
 
-    async def generate(self, schema: type[M], contents: str, *, system: str | None = None, model_key: str | None = None) -> M:
+    async def generate(self, schema: type[M], contents: str | list[str | bytes], *, system: str | None = None,
+                       model_key: str | None = None) -> M:
         return await self.run.model.generate(self, schema, contents, system=system, model_key=model_key)
 
     async def ask(self, use: str, state: Any, questions: dict[str, str]) -> dict[str, float] | None:
@@ -107,6 +112,9 @@ class RunContext:
     slots: list[dict] = field(default_factory=list)
     variants: dict[int, dict] = field(default_factory=dict)
     notes: list[dict] = field(default_factory=list)
+    previews: list[dict] = field(default_factory=list)
+    client_timing: list[dict] = field(default_factory=list)
+    runs_dir: Path = RUNS_DIR
 
     def elapsed(self) -> float:
         """Seconds since the run started."""
@@ -118,8 +126,9 @@ class RunContext:
         entry: dict = {"stage": name, "variant_index": variant_index, "start": self.elapsed(), "elapsed": None, "outcome": "running"}
         self.stages.append(entry)
         emit(contracts.node_start(name, variant_index))
+        ctx = StageContext(self, name, variant_index)
         try:
-            yield StageContext(self, name, variant_index)
+            yield ctx
         except asyncio.CancelledError:
             entry["outcome"] = "cancelled"
             raise
@@ -131,7 +140,7 @@ class RunContext:
             entry["outcome"] = "ok"
         finally:
             entry["elapsed"] = round(self.elapsed() - entry["start"], 3)
-        emit(contracts.node_complete(name, variant_index, entry["elapsed"]))
+        emit(contracts.node_complete(name, variant_index, entry["elapsed"], ctx.data))
 
     def record_model_call(
         self,
@@ -250,6 +259,8 @@ class RunContext:
             "slots": self.slots,
             "variants": [self.variants[index] for index in sorted(self.variants)],
             "notes": self.notes,
+            "previews": self.previews,
+            "client_timing": self.client_timing,
             "totals": {
                 "first_ready_s": ready[0] if ready else None,
                 "all_ready_s": ready[-1] if len(ready) == self.variant_count else None,

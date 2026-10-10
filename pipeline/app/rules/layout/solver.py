@@ -16,10 +16,17 @@ into the room. The sofa keeps the wall gap sofa_wall_gap accepts, so a TV reache
 its preferred viewing range by the choice of wall pair, or by a media group pulled
 off its wall as far as the wall-flush check allows. The dining group goes on the
 legacy repack grid in both orientations; a media group (a support with its TV, or
-a floor-standing TV) on the walls, preferring the one its viewer faces. Floor
-lamps take the legacy service-slot targets beside each seat, ranked by the floor
-lamp reach rule (when none passes the checks, the accessory pass places them). Single pieces, and accent seats the chosen sitting template left
-out, take the seed's own candidates for their placement mode.
+a floor-standing TV) on the walls, preferring the one its viewer faces. In a
+studio, a TV on a support the studio checks let stand free also gets divider
+candidates on its viewer's axis, inside its viewing range; comfort marks a
+floating support, so a wall-backed group in range still wins. Furniture taller
+than the TV's support (not the viewer or a coffee table) costs more when it stands
+in the strip between the viewer and the screen, before or after the TV. Floor lamps take
+the legacy service-slot targets beside each lounge seat (dining chairs only in a
+room without one), ranked by the floor lamp reach rule (when none passes the
+checks, the accessory pass places them). Single pieces, and accent seats the
+chosen sitting template left out, take the seed's own candidates for their
+placement mode.
 
 Groups are placed in order: sleeping and sitting (largest first), the left-out
 seats, media, dining, work, floor lamps, wall pieces, floor pieces. A candidate
@@ -27,12 +34,21 @@ must first pass the seed's cheap checks (inside the room, clear of placed
 furniture, door clearances, protected paths, windows for TV items) plus the
 reserved bands and the living-dining gap. The best SHORTLIST candidates of each
 partial layout are measured with analyze_layout, and the best BEAM_WIDTH partial
-layouts continue. Each complete group layout then gets its accessories (table
+layouts continue, the best of each zone plan first: the wall each sleeping,
+sitting, media, or work group backs onto (or a divider TV) and the room quadrant
+of the dining table. Those zones also spread out: a zone costs up to
+SPREAD_CROWD_COST more the nearer it comes to a placed zone within SPREAD_GAP_M,
+and up to SPREAD_EMPTY_COST by the share of the room's 3 x 3 grid no zone covers.
+A dining table prefers the room center, except in a studio or living room, where
+it prefers a wall, away from the other zones.
+
+Each complete group layout then gets its accessories (table
 lamps, tabletop items, wall art, other rugs and ceiling lights, floor TVs) from
 the seed generator, with each table lamp first paired with a free bedside piece,
 side table or, for a desk lamp, desk. It is normalized the way the place stage
 measures layouts and scored with layout_issue_score, then
-layout_issue_magnitudes. A group with no candidate that passes the checks takes
+layout_issue_magnitudes. The best wins; the others are reported as alternatives,
+from which the place stage may pick a tie. A group with no candidate that passes the checks takes
 its least-violating pose, and an accessory the seed skips takes a free spot, so
 the layout is always complete; their instance keys are reported as unplaceable.
 """
@@ -111,7 +127,7 @@ from app.rules.layout.relations import (
     _window_seating_clearance_poly,
     floor_assets,
 )
-from app.rules.layout.studio import SITTING_CATEGORIES
+from app.rules.layout.studio import SITTING_CATEGORIES, is_freestanding_studio_media_support
 from app.rules.layout.validation_functional import (
     compute_living_group_cohesion_violations,
     compute_sofa_wall_gap_violations,
@@ -141,6 +157,12 @@ SOFA_TABLE_GAPS_M = (sum(SOFA_COFFEE_TABLE_DISTANCE_RANGE_M) / 2, SOFA_COFFEE_TA
 SOFA_WALL_GAP_M = sum(SOFA_BACK_WALL_DISTANCE_RANGE_M) / 2
 ACCESS_M = BED_ACCESS_MIN_M  # every service band; the bed, dining, storage, and sofa-console checks all use 0.56 m
 MEDIA_PULL_M = WALL_FLUSH_MAX_GAP_M - _SEED_MARGIN - 0.01  # a pulled media group stays inside the wall-flush gap
+ZONE_KINDS = ("sleeping", "sitting", "media", "dining", "work")  # the functional groups the spread cost keeps apart
+SPREAD_GAP_M = 1.2  # a zone nearer than this to a placed zone costs more, up to SPREAD_CROWD_COST when they touch
+SPREAD_CROWD_COST = 0.15
+SPREAD_EMPTY_COST = 0.1  # times the share of the room's 3 x 3 grid cells no zone covers
+SPREAD_CELL_SHARE = 0.1  # a cell counts as covered when zone footprints cover this share of it
+DINING_WALL_COST = 0.1  # per metre from a studio or living-room dining group to its nearest wall
 _WALL_MODES = {"anchor_wall", "focal_wall", "support_wall", "wall", "desk_wall"}  # seed modes that take wall candidates
 _STORAGE_FRONTS = {  # storage whose front band the room's checker measures (bedroom.py, dining.py)
     "bedroom": {"dresser", "cabinet", "wardrobe", "storage_unit", "sideboard"},
@@ -171,10 +193,14 @@ class _Partial:
     living: list[Polygon] = field(default_factory=list)
     dining: list[Polygon] = field(default_factory=list)
     seats: list[Polygon] = field(default_factory=list)  # what the floor lamp reach check measures from
+    tall: list[Polygon] = field(default_factory=list)  # placed footprints that would block the TV (_blocks_view)
+    sightline: Polygon | None = None  # set with the media group: the strip from the viewer to the screen
+    zones: list[Polygon] = field(default_factory=list)  # each placed zone's floor footprint
+    cells: frozenset[int] = frozenset()  # the room grid cells the zones cover (_cells)
     preference: float = 0.0
     score: tuple[int, int, int] = (0, 0, 0)
     unplaceable: tuple[str, ...] = ()
-    key: tuple = ()
+    key: tuple = ()  # the zone plan: (kind, back wall | "divider" | dining table quadrant) per placed zone
 
 
 @dataclass
@@ -194,7 +220,7 @@ class _Room:
     plan: Record
     supports: dict[str, str] = field(default_factory=dict)  # TV uid -> the media support it stands on
     rug: str | None = None  # the sitting group's rug
-    view: Record | None = None  # viewer, bed, tv, low, high, inset: the TV distance the viewer's pose should reach
+    view: Record | None = None  # viewer, bed, tv, support, low, high, inset: the TV distance the viewer's pose should reach
     stats: Record = field(default_factory=lambda: {"candidates": 0, "scored": 0})
 
     def dims(self, uid: str) -> tuple[float, float]:
@@ -224,7 +250,9 @@ def solve_layout(instances: list[Record], room: Record, intent: Record) -> tuple
     the place stage's measure; report holds `unplaceable` (instance keys placed
     without a pose that passes the checks), `score` (layout_issue_score of the
     layout), `candidates` (group candidates checked), `scored` (layouts measured
-    with analyze_layout), and `elapsed` (seconds).
+    with analyze_layout), `elapsed` (seconds), and `alternatives`: the other
+    complete beam layouts, best first, each as {layout, score, unplaceable};
+    a layout identical to one already listed is left out.
     """
     started = time.monotonic()
     ctx = _room(instances, room, intent)
@@ -234,24 +262,31 @@ def solve_layout(instances: list[Record], room: Record, intent: Record) -> tuple
         fewest = min((len(child.unplaceable) for child in children), default=0)
         beam = _pick([child for child in children if len(child.unplaceable) == fewest], BEAM_WIDTH,
                      key=lambda child: (child.score, child.preference)) or beam
-    best: tuple[tuple, Record, list[str]] | None = None
+    complete = []
     for partial in beam:
         layout, skipped = _accessorize(ctx, partial)
         layout = normalize_layout(layout, instances, room["room_vertices"], room_windows=None, rehome_service_items=False)
         issues = ctx.analyze(layout)
         unplaceable = sorted({*partial.unplaceable, *skipped})
         score = (layout_issue_score(issues), layout_issue_magnitudes(issues), len(unplaceable), partial.preference)
-        if best is None or score < best[0]:
-            best = (score, layout, unplaceable)
-    assert best is not None
-    score, layout, unplaceable = best
+        complete.append((score, layout, unplaceable))
+    complete.sort(key=lambda row: row[0])  # stable: a tie keeps beam order
+    (score, layout, unplaceable), *others = complete
+    alternatives: list[Record] = []
+    for other_score, other, other_unplaceable in others:
+        if other != layout and all(other != alternative["layout"] for alternative in alternatives):
+            alternatives.append({"layout": other, "score": list(other_score[0]), "unplaceable": other_unplaceable})
     return layout, {"unplaceable": unplaceable, "score": list(score[0]), **ctx.stats,
-                    "elapsed": round(time.monotonic() - started, 3)}
+                    "elapsed": round(time.monotonic() - started, 3), "alternatives": alternatives}
 
 
 def _room(instances: list[Record], room: Record, intent: Record) -> _Room:
     area = tuple(room["room_area"])
     polygon = room_polygon(area, room["room_vertices"])
+    seating = {str(asset["uid"]): normalize_category(asset.get("category")) for asset in instances
+               if matches_category_keywords(asset.get("category", ""), str(asset["uid"]), SEATING_ROLE_KEYWORDS)}
+    # A floor lamp serves lounge seats; dining chairs count only in a room without one.
+    lounge = {uid for uid, category in seating.items() if category != "dining_chair"}
     guidance = build_seed_guidance(room_facts=room["facts"], intent_packet=intent,
                                    feasibility_digest=room["digest"], selected_assets=instances)
     return _Room(
@@ -264,8 +299,7 @@ def _room(instances: list[Record], room: Record, intent: Record) -> _Room:
         doors=_blocker_polygons(room["room_doors"], None, boundary=room["room_vertices"], room_area=area),
         windows=_blocker_polygons(None, room["room_windows"], boundary=room["room_vertices"], room_area=area),
         seating_windows=[_window_seating_clearance_poly(window, room["room_vertices"]) for window in room["room_windows"]],
-        seats={str(asset["uid"]) for asset in instances
-               if matches_category_keywords(asset.get("category", ""), str(asset["uid"]), SEATING_ROLE_KEYWORDS)},
+        seats=lounge or set(seating),
         paths=protected_path_polygons(room["protected_paths"]),
         guidance=guidance,
         plan=build_seed_layout_plan(instances, guidance),
@@ -328,7 +362,8 @@ def _groups(ctx: _Room) -> list[_Group]:
         low, high = (ctx.dims(tv)[0] * factor for factor in TV_VIEW_WIDTH_RANGE)
         # The screen point sits half the TV depth in front of the TV center (comfort).
         screen_inset = (ctx.dims(media[0])[1] + ctx.dims(tv)[1]) / 2 if tvs else ctx.dims(tv)[1]
-        ctx.view = {"viewer": viewer, "bed": viewer == bed, "tv": tv, "low": low, "high": high, "inset": _SEED_MARGIN + screen_inset}
+        ctx.view = {"viewer": viewer, "bed": viewer == bed, "tv": tv, "support": ctx.supports.get(tv),
+                    "low": low, "high": high, "inset": _SEED_MARGIN + screen_inset}
 
     dining_table = next(iter(pick("dining_table")), None)
     chairs = pick("dining_chair", dining_table) if dining_table else []
@@ -543,16 +578,18 @@ def _placements(ctx: _Room, parent: _Partial, group: _Group, template: _Template
     footprint = {uid: pose for uid, pose in template.poses.items() if ctx.floor(uid)}
     _, (x0, _, x1, y1) = oriented_living_group_bounds(footprint, dims, 0)
     walls = (ctx.plan["preferred_walls_by_uid"].get(next(iter(template.poses))) or [])
-    candidates = _wall_candidates(ctx.area[0], ctx.area[1], x1 - x0, y1, 0, walls)
+    candidates = [(center, rotation, (_back_wall_name(rotation),))
+                  for center, rotation in _wall_candidates(ctx.area[0], ctx.area[1], x1 - x0, y1, 0, walls)]
     if group.kind == "media" and ctx.view and ctx.view["viewer"] in parent.layout:
-        candidates.append(_facing_wall_candidate(ctx, parent, x1 - x0, y1))
-    for center, rotation in candidates:
+        center, rotation = _facing_wall_candidate(ctx, parent, x1 - x0, y1)
+        candidates += [(center, rotation, (_back_wall_name(rotation),)), *_divider_candidates(ctx, parent)]
+    for center, rotation, key in candidates:
         quarter = round((rotation - math.pi / 2) / (math.pi / 2)) % 4
-        wall = _back_wall_name(rotation)
+        wall = key[0]
         oriented, _ = oriented_living_group_bounds(template.poses, dims, quarter)
         cx, cy = _turn((x0 + x1) / 2, y1 / 2, quarter)
         poses = {uid: (x + center[0] - cx, y + center[1] - cy, normalize_rotation(yaw)) for uid, (x, y, yaw) in oriented.items()}
-        result.append(((wall,), poses))
+        result.append((key, poses))
         sofa = next(iter(template.poses))  # sitting templates start with the sofa
         if group.kind == "sitting" and any(asset_polygon([*poses[sofa][:2], 0.0], poses[sofa][2], *dims[sofa]).intersects(zone)
                                            for zone in ctx.seating_windows):
@@ -570,7 +607,7 @@ def _lamp_slots(ctx: _Room, parent: _Partial, uid: str) -> list[tuple[list[float
     """Legacy _rehome_service_items floor-lamp targets: beside and behind each placed seat, mid reach range."""
     width, depth = ctx.dims(uid)
     item = FloorAsset(uid, ctx.assets[uid], [0.0, 0.0, 0.0], 0.0, width, depth, Polygon())
-    return [candidate for seat in floor_assets(parent.layout, ctx.instances, keywords=SEATING_ROLE_KEYWORDS)
+    return [candidate for seat in floor_assets(parent.layout, ctx.instances, keywords=SEATING_ROLE_KEYWORDS) if seat.uid in ctx.seats
             for candidate in _service_slot_candidates(item, seat, gap=sum(FLOOR_LAMP_REACH_RANGE_M) / 2, include_rear=True)]
 
 
@@ -582,6 +619,22 @@ def _facing_wall_candidate(ctx: _Room, parent: _Partial, width: float, depth: fl
         return [x, y], normalize_rotation(yaw + math.pi)
     reach = math.dist((x, y), hit) - _SEED_MARGIN - depth / 2
     return [x + math.cos(yaw) * reach, y + math.sin(yaw) * reach], normalize_rotation(yaw + math.pi)
+
+
+def _divider_candidates(ctx: _Room, parent: _Partial) -> list[tuple[list[float], float, tuple]]:
+    """Studio media boxes standing free on the viewer's axis and facing it, with the screen at the middle and
+    quarter points of the viewing range. Only for a TV on a support the studio checks let stand free."""
+    view = ctx.view
+    support = ctx.supports.get(view["tv"])
+    if ctx.room["room_type"] != "studio" or not support or not is_freestanding_studio_media_support(ctx.assets[support]):
+        return []
+    placement = parent.layout[view["viewer"]]
+    (ex, ey), yaw = _eye(ctx, (*placement["position"][:2], placement["rotation"][2]))
+    middle = (view["low"] + view["high"]) / 2
+    # The TV stands at the support center, so the box center sits half the TV depth behind the screen.
+    reaches = [distance + ctx.dims(view["tv"])[1] / 2 for distance in ((view["low"] + middle) / 2, middle, (middle + view["high"]) / 2)]
+    return [([ex + math.cos(yaw) * reach, ey + math.sin(yaw) * reach], normalize_rotation(yaw + math.pi),
+             ("divider", round(reach, 1))) for reach in reaches]
 
 
 def _ray_hit(ctx: _Room, x: float, y: float, yaw: float) -> tuple[float, float] | None:
@@ -666,14 +719,23 @@ def _is_dining_table(ctx: _Room, uid: str) -> bool:
 def _preference(ctx: _Room, parent: _Partial, group: _Group, template: _Template, key: tuple,
                 poses: dict[str, Pose], floors: list[tuple[str, Polygon]]) -> float:
     """Soft costs that order checked candidates: template cost, the seed's preferred walls, door
-    distance, the sofa's wall gap, TV viewing distance, facing and centerline, floor lamp reach,
-    a central dining table, and corners for floor pieces. A candidate that a soft rule would flag costs 1 more."""
+    distance, a clear view from the viewer to the TV, the sofa's wall gap, TV viewing distance,
+    facing and centerline, floor lamp reach, zone spread, a central dining table (in a studio or living
+    room, one by a wall), and corners for floor pieces. A candidate that a soft rule would flag costs 1 more."""
     cost = template.penalty
     anchor = next(iter(template.poses))
     if group.kind not in {"dining", "free"}:
         walls = ctx.plan["preferred_walls_by_uid"].get(anchor) or []
         cost += 0.1 * (walls.index(key[0]) if key[0] in walls else len(walls))
     cost += sum(max(0.0, 0.4 - polygon.distance(door)) for _, polygon in floors for door in ctx.doors)
+    # Keep the view clear: a TV whose strip to its viewer crosses tall furniture, or tall furniture placed in it, costs more.
+    if group.kind == "media":
+        strip = _sightline(ctx, {**parent.layout, **{uid: _placement(ctx, uid, *pose) for uid, pose in poses.items()}})
+        blocked = sum(strip.intersection(polygon).area for polygon in parent.tall) if strip else 0.0
+    else:
+        blocked = sum(parent.sightline.intersection(polygon).area for uid, polygon in floors
+                      if _blocks_view(ctx, uid)) if parent.sightline else 0.0
+    cost += (blocked > 1e-6) + blocked
     if group.kind == "sitting":  # sofa_wall_gap flags a sofa (the first footprint) inside a window's seating zone
         cost += any(floors[0][1].intersects(zone) for zone in ctx.seating_windows)
     view = ctx.view
@@ -695,6 +757,8 @@ def _preference(ctx: _Room, parent: _Partial, group: _Group, template: _Template
             distance = math.dist(eye, (tx + inset * math.cos(tyaw), ty + inset * math.sin(tyaw)))
             miss = max(0.0, view["low"] - distance, distance - view["high"])
             cost += (miss > 0) + miss
+            if ctx.room["room_type"] == "studio":  # the middle of the range, so the nearer of two in-range options wins
+                cost += abs(distance - (view["low"] + view["high"]) / 2) / (view["high"] - view["low"])
         if not view["bed"] and ctx.room["room_type"] != "studio":  # compute_media_focal_alignment_violations
             axis, _ = _facing_axis_and_sign(viewer["rotation"][2])
             cost += abs((y, x)[axis == "y"] - viewer["position"][1 if axis == "x" else 0]) > MEDIA_CENTERLINE_MAX_OFFSET_M
@@ -714,12 +778,57 @@ def _preference(ctx: _Room, parent: _Partial, group: _Group, template: _Template
         miss = max(0.0, low - gap, gap - high)
         far = max(0.0, ctx.polygon.exterior.distance(polygon) - FLOOR_LAMP_WALL_MAX_GAP_M)
         cost += (miss > 0) + miss + (far > 0) + far
+    if group.kind in ZONE_KINDS and floors:
+        # Spread the zones: closeness to the nearest placed zone, and the share of the room no zone covers.
+        gap = min((polygon.distance(zone) for _, polygon in floors for zone in parent.zones), default=SPREAD_GAP_M)
+        empty = 1 - len(parent.cells | _cells(ctx, floors)) / 9
+        cost += SPREAD_CROWD_COST * max(0.0, 1 - gap / SPREAD_GAP_M) + SPREAD_EMPTY_COST * empty
     min_x, min_y, max_x, max_y = ctx.polygon.bounds
-    if group.kind == "dining":
+    if group.kind == "dining" and ctx.room["room_type"] in {"studio", "living_room"}:  # its own part of the room, by a wall
+        cost += DINING_WALL_COST * min(ctx.polygon.exterior.distance(polygon) for _, polygon in floors)
+    elif group.kind == "dining":
         cost += 0.1 * math.dist(poses[anchor][:2], ((min_x + max_x) / 2, (min_y + max_y) / 2))
     if group.kind == "free":
         cost += 0.2 * min(math.dist(poses[anchor][:2], corner) for corner in ((min_x, min_y), (max_x, min_y), (min_x, max_y), (max_x, max_y)))
     return cost
+
+
+def _cells(ctx: _Room, floors: list[tuple[str, Polygon]]) -> frozenset[int]:
+    """The cells of a 3 x 3 grid over the room's bounds that the footprints' boxes cover at least SPREAD_CELL_SHARE of."""
+    min_x, min_y, max_x, max_y = ctx.polygon.bounds
+    width, depth = (max_x - min_x) / 3, (max_y - min_y) / 3
+    covered = [0.0] * 9
+    for _, polygon in floors:
+        x0, y0, x1, y1 = polygon.bounds
+        for n in range(9):
+            left, bottom = min_x + n % 3 * width, min_y + n // 3 * depth
+            covered[n] += max(0.0, min(x1, left + width) - max(x0, left)) * max(0.0, min(y1, bottom + depth) - max(y0, bottom))
+    return frozenset(n for n, area in enumerate(covered) if area >= SPREAD_CELL_SHARE * width * depth)
+
+
+def _blocks_view(ctx: _Room, uid: str) -> bool:
+    """Floor furniture taller than the TV's support, other than the viewer and a coffee table, hides the screen."""
+    view = ctx.view
+    if not view or not view["support"] or uid == view["viewer"]:
+        return False
+    category = normalize_category(ctx.assets[uid].get("category"))
+    return (not matches_category_keywords(category, uid, COFFEE_TABLE_ROLE_KEYWORDS)
+            and float(ctx.assets[uid].get("height") or 0) > float(ctx.assets[view["support"]].get("height") or 0))
+
+
+def _sightline(ctx: _Room, layout: Record) -> Polygon | None:
+    """The floor strip as wide as the TV, from the viewer's front edge to the screen, once both are placed."""
+    view = ctx.view
+    if not view or not view["support"] or view["viewer"] not in layout or view["tv"] not in layout:
+        return None
+    ends = []
+    for uid, reach in ((view["viewer"], ctx.dims(view["viewer"])[1] / 2), (view["tv"], ctx.dims(view["tv"])[1] / 2)):
+        x, y = layout[uid]["position"][:2]
+        yaw = layout[uid]["rotation"][2]
+        ends.append((x + reach * math.cos(yaw), y + reach * math.sin(yaw)))
+    if math.dist(*ends) < 1e-6:
+        return None
+    return LineString(ends).buffer(ctx.dims(view["tv"])[0] / 2, cap_style="flat")
 
 
 def _eye(ctx: _Room, pose: Pose) -> tuple[tuple[float, float], float]:
@@ -772,9 +881,13 @@ def _expand(ctx: _Room, parent: _Partial, group: _Group) -> list[_Partial]:
             checked.append((violation, template, key, poses, floors, bands))
     children = []
     shortlist = LAMP_SHORTLIST if group.kind == "lamp" else SHORTLIST
+    min_x, min_y, max_x, max_y = ctx.polygon.bounds
+    zone = group.kind in ZONE_KINDS
     for cost, template, key, poses, floors, bands in _pick(checked, shortlist, key=lambda row: row[0], diversity=lambda row: row[2]):
         layout = {**parent.layout, **{uid: _placement(ctx, uid, *pose) for uid, pose in poses.items()}}
         living = _living(ctx, poses)
+        x, y, _ = poses[next(iter(template.poses))]
+        plan = (x > (min_x + max_x) / 2, y > (min_y + max_y) / 2) if group.kind == "dining" else key[0]
         child = _Partial(
             layout=layout,
             furniture=[*parent.furniture, *(polygon for _, polygon in floors)],
@@ -782,10 +895,14 @@ def _expand(ctx: _Room, parent: _Partial, group: _Group) -> list[_Partial]:
             living=[*parent.living, *(polygon for uid, polygon in floors if uid in living)],
             dining=[*parent.dining, *(polygon for uid, polygon in floors if _is_dining_table(ctx, uid))],
             seats=[*parent.seats, *(polygon for uid, polygon in floors if uid in ctx.seats)],
+            tall=[*parent.tall, *(polygon for uid, polygon in floors if _blocks_view(ctx, uid))],
+            sightline=_sightline(ctx, layout) if group.kind == "media" else parent.sightline,
+            zones=[*parent.zones, unary_union([polygon for _, polygon in floors])] if zone and floors else parent.zones,
+            cells=parent.cells | _cells(ctx, floors) if zone else parent.cells,
             preference=parent.preference + cost,
             score=layout_issue_score(ctx.analyze(layout)),
             unplaceable=(*parent.unplaceable, *(sorted(poses) if relaxed else ())),
-            key=key,
+            key=(*parent.key, (group.kind, plan)) if zone else parent.key,
         )
         children.append(child)
     return children

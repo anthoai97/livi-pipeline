@@ -1,9 +1,10 @@
-import { Edges, Html, Line, OrbitControls, useGLTF, useProgress } from "@react-three/drei";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { Component, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Edges, Html, Line, OrbitControls, useGLTF } from "@react-three/drei";
+import { addAfterEffect, Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Component, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
 import { insideSpans, pointInPolygon, polygonCentroid, viewCorner } from "../lib/shapes";
-import type { ManifestAsset, Opening, Placement, Vec2 } from "../lib/types";
+import { trackModels } from "../lib/model-loading";
+import type { ManifestAsset, Opening, Placement, SceneTiming, Vec2 } from "../lib/types";
 
 // Plan frame: metres, Z-up, origin at the room's min corner. three.js: Y-up, room centred on the origin.
 // Conversion follows the legacy viewer (web-pipeline lib/scene3d/signatures.ts).
@@ -404,12 +405,14 @@ function Walkway({ geometry, walls }: { geometry: RoomGeometry; walls: Wall[] })
 }
 
 /** Scale a GLB to the catalog size, centre it on X/Z, and set it on the floor (legacy `prepareAssetModel`). */
-function Model({ url, asset }: { url: string; asset: ManifestAsset }) {
+function Model({ url, asset, onSettled }: { url: string; asset: ManifestAsset; onSettled: (failed: boolean) => void }) {
   const gltf = useGLTF(url, true);
   const object = useMemo(() => {
     const inner = new THREE.Group();
     inner.add(gltf.scene.clone(true));
-    const size = new THREE.Box3().setFromObject(inner).getSize(new THREE.Vector3());
+    const bounds = new THREE.Box3().setFromObject(inner);
+    if (bounds.isEmpty()) throw new Error("The model has no geometry.");
+    const size = bounds.getSize(new THREE.Vector3());
     inner.scale.set(asset.width / (size.x || 1), asset.height / (size.y || 1), asset.depth / (size.z || 1));
     inner.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(inner);
@@ -420,6 +423,7 @@ function Model({ url, asset }: { url: string; asset: ManifestAsset }) {
     });
     return inner;
   }, [gltf, asset.width, asset.height, asset.depth]);
+  useLayoutEffect(() => onSettled(false), [onSettled]);
   return <primitive object={object} />;
 }
 
@@ -439,10 +443,13 @@ function Placeholder({ asset }: { asset: ManifestAsset }) {
   );
 }
 
-class ModelBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
+class ModelBoundary extends Component<{ fallback: ReactNode; children: ReactNode; onFailed: () => void }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() {
     return { failed: true };
+  }
+  componentDidCatch() {
+    this.props.onFailed();
   }
   render() {
     return this.state.failed ? this.props.fallback : this.props.children;
@@ -456,7 +463,10 @@ class ModelBoundary extends Component<{ fallback: ReactNode; children: ReactNode
 const DROP_S = 0.55;
 const DROP_HEIGHT = 1.3;
 
-function Piece({ item, center, delay, wall }: { item: Furnishing; center: Vec2; delay: number; wall?: Wall }) {
+function Piece({ item, center, delay, wall, tracker, onProgress }: {
+  item: Furnishing; center: Vec2; delay: number; wall?: Wall;
+  tracker: ReturnType<typeof trackModels>; onProgress: () => void;
+}) {
   const { asset, placement } = item;
   const root = useRef<THREE.Group>(null);
   const lift = useRef<THREE.Group>(null);
@@ -464,6 +474,13 @@ function Piece({ item, center, delay, wall }: { item: Furnishing; center: Vec2; 
   const age = useAge();
   const still = useMemo(prefersReducedMotion, []);
   const grounded = asset.placement_mode === "floor";
+  const onSettled = useCallback((failed: boolean) => {
+    tracker.settle(placement.instance_key, failed);
+    onProgress();
+  }, [tracker, placement.instance_key, onProgress]);
+  useLayoutEffect(() => {
+    if (!asset.glb_url) onSettled(true);
+  }, [asset.glb_url, onSettled]);
 
   // Falls with gravity, squashes a little on landing, and sends a ripple across the floor.
   useFrame(({ clock, camera }) => {
@@ -493,9 +510,9 @@ function Piece({ item, center, delay, wall }: { item: Furnishing; center: Vec2; 
         <meshBasicMaterial color={PALETTE.accent} transparent opacity={0} depthWrite={false} />
       </mesh>
       <group ref={lift}>
-        <ModelBoundary fallback={<Placeholder asset={asset} />}>
+        <ModelBoundary onFailed={() => onSettled(true)} fallback={<Placeholder asset={asset} />}>
           <Suspense fallback={<Placeholder asset={asset} />}>
-            {asset.glb_url ? <Model url={proxied(asset.glb_url)} asset={asset} /> : <Placeholder asset={asset} />}
+            {asset.glb_url ? <Model url={proxied(asset.glb_url)} asset={asset} onSettled={onSettled} /> : <Placeholder asset={asset} />}
           </Suspense>
         </ModelBoundary>
       </group>
@@ -579,6 +596,7 @@ export function RoomScene({
   zoom = 1,
   interactive = false,
   effects = {},
+  onDisplayed,
 }: {
   geometry: RoomGeometry;
   furnishings?: Furnishing[];
@@ -587,7 +605,12 @@ export function RoomScene({
   zoom?: number;
   interactive?: boolean;
   effects?: SceneEffects;
+  onDisplayed?: (timing: SceneTiming) => void;
 }) {
+  const [tracker] = useState(() => trackModels(furnishings.map((item) => item.placement.instance_key)));
+  const [progress, setProgress] = useState(() => tracker.snapshot());
+  const onProgress = useCallback(() => setProgress(tracker.snapshot()), [tracker]);
+  const report = useCallback((timing: SceneTiming) => onDisplayed?.(timing), [onDisplayed]);
   const walls = useMemo(() => buildWalls(geometry), [geometry]);
   const center = centerOf(geometry);
   const span = Math.max(...geometry.room_area);
@@ -626,34 +649,54 @@ export function RoomScene({
           <Piece
             key={item.placement.instance_key}
             item={item}
+            tracker={tracker}
+            onProgress={onProgress}
             center={center}
             delay={0.2 + index * 0.22}
             wall={item.asset.placement_mode === "wall_mounted" ? nearestWall(walls, item.placement.position) : undefined}
           />
         ))}
+        <FirstFrame tracker={tracker} onDisplayed={report} />
         {callouts.map((callout) => (
           <Html key={callout.id} position={toWorld(callout.at, center)} center zIndexRange={[20, 0]}>
             <span className="callout">{callout.label}</span>
           </Html>
         ))}
       </Canvas>
-      {furnishings.length > 0 && <LoadingChip />}
+      {progress.settled < progress.models && (
+        <p role="status" className="absolute top-4 right-4 rounded-full bg-surface/90 px-3.5 py-1.5 text-[13px] text-muted shadow-sm backdrop-blur">
+          Loading 3D pieces, {progress.settled} of {progress.models}
+        </p>
+      )}
+      {progress.settled === progress.models && progress.failed_models > 0 && (
+        <p role="status" className="absolute top-4 right-4 rounded-full bg-surface/90 px-3.5 py-1.5 text-[13px] text-muted shadow-sm backdrop-blur">
+          {progress.failed_models} 3D {progress.failed_models === 1 ? "piece unavailable" : "pieces unavailable"}
+        </p>
+      )}
     </>
   );
 }
 
-/** Catalog GLBs run to tens of MB; say so while they stream in. The parent must be `relative`. */
-function LoadingChip() {
-  const { active, loaded, total } = useProgress();
-  if (!active) return null;
-  return (
-    <p
-      role="status"
-      className="absolute top-4 right-4 rounded-full bg-surface/90 px-3.5 py-1.5 text-[13px] text-muted shadow-sm backdrop-blur"
-    >
-      Loading 3D pieces, {loaded} of {total}
-    </p>
-  );
+/** Observe this canvas's draw, then report after three.js renders it. */
+function FirstFrame({ tracker, onDisplayed }: {
+  tracker: ReturnType<typeof trackModels>; onDisplayed: (timing: SceneTiming) => void;
+}) {
+  const drew = useRef(false);
+  const reported = useRef(false);
+  const callback = useRef(onDisplayed);
+  useLayoutEffect(() => { callback.current = onDisplayed; }, [onDisplayed]);
+  useFrame(() => {
+    const state = tracker.snapshot();
+    drew.current = state.loadedAt !== null;
+  });
+  useLayoutEffect(() => addAfterEffect(() => {
+    if (!drew.current || reported.current) return;
+    const state = tracker.snapshot();
+    if (state.loadedAt === null) return;
+    reported.current = true;
+    callback.current({ loadedAt: state.loadedAt, displayedAt: performance.now(), models: state.models, failed_models: state.failed_models });
+  }), [tracker]);
+  return null;
 }
 
 export function furnishingsOf(manifest: { layout: Record<string, Placement>; assets: Record<string, ManifestAsset> }): Furnishing[] {

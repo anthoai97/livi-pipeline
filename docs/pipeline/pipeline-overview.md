@@ -1,440 +1,92 @@
 # How the pipeline builds a room
 
-The pipeline (`pipeline/`, phase 5) turns a prompt, room geometry, and budget into
-three furnished room designs. This page walks through each step in order and
-says what the step does, what it reads, and what it produces.
+`POST /pipeline` turns a prompt, room geometry and budget into three furnished
+designs, streamed to the browser as each finishes. This page describes `main`
+as of 2026-10-11. Speed and quality: [2026-10-11 report](report-2026-10-11.md).
+Adding a room: [adding a room type](adding-a-room-type.md).
+Every step and rule in full: [pipeline details](pipeline-details.md).
 
-For the older production pipeline, see the
-[legacy pipeline overview](legacy-pipeline-overview.md). For measured timings,
-see [phase 3 local runs](phase-3-local-runs.md).
+## Flow
 
-## Overview
+```mermaid
+flowchart TD
+    REQ["POST /pipeline<br/>prompt · room · budget"] --> INT
+    INT["1 · Interpret<br/><b>Gemini</b>: prompt → intent<br/>items, styles, limits"] --> ROOM
+    ROOM["2 · Room<br/><b>code</b>: paths, door zones,<br/>density, count caps"] --> RET
+    RET["3 · Retrieve<br/><b>vector search</b>: candidates<br/>per slot (item kind)"] --> RANK
+    RANK["4a · Rank and deal<br/><b>Jev</b>: order candidates per design,<br/>deal mostly different products"] --> D
 
-```text
-POST /pipeline
-  -> 1. interpret   one model call: prompt -> structured intent
-  -> 2. room        no model call: geometry -> room facts and limits
-  -> 3. retrieve    one vector search per slot -> candidate pool
-  -> 4. three variants:
-       a. rank      once for all three: Jev orders each slot's candidates per
-                    direction, then deals them so variants get different products
-     then in parallel, each:
-       b. select    model picks products, code and Jev check them (up to 4 turns)
-       c. place     code solver places every item and keeps its tied layouts
-       d. finish    model picks a layout, reviews and adjusts it; the final
-                    check removes failing items; build the render manifest
-  -> complete event with every ready variant
+    subgraph D["Each of 3 designs, in parallel"]
+        SEL["4b · Select<br/><b>Gemini</b> picks products<br/><b>code</b> fixes the TV, checks fit and budget<br/><b>Jev</b> checks style and attributes"]
+        SEL -- "fails: retry with errors<br/>(up to 4 turns)" --> SEL
+        SEL --> PLACE["4c · Place<br/><b>code solver</b>: arranges every group<br/>keeps its tied best layouts"]
+        PLACE --> FIN["4d · Finish<br/><b>Gemini</b> picks a layout, reviews, adjusts<br/><b>code</b> keeps moves that pass,<br/>removes items that still fail"]
+    end
+
+    FIN --> OUT["variant_ready<br/>render manifest · products · cost · preview"]
 ```
 
-Steps 1 to 3 and rank (4a) run once per request. All three variants share their
-results, and each variant gets its own dealt candidates.
-
-Example request used below:
-
-> A cozy modern living room with a cream sofa, a wooden coffee table, a floor
-> lamp for reading, and a TV for movie nights.
-
-Budget USD 5,000, room 5.0 m x 6.0 m, one door, one window.
-
-## 0. Receive the request
-
-`POST /pipeline` (`app/main.py`) accepts the geometry request: prompt, budget,
-room type, room size, vertices, wall height, doors, and windows.
-
-The service then:
-
-1. Sends a `start` event with the run ID and stage names.
-2. Opens one database connection for the request.
-3. Runs the graph and streams its events as server-sent events.
-4. Sends a `heartbeat` every 10 seconds while a stage is running.
-5. Stops the run when the client disconnects or after 300 seconds. On the
-   deadline, it sends every finished variant and marks the rest as failed with
-   `timeout`.
-6. Writes a run record to `pipeline/.data/runs/<run_id>.json`. The record has
-   stage timings, model and Jev calls, tokens, cost, the `JEV_USES`
-   and `PRODUCT_REUSE_RATE` switches, slot results, notes, and variant outcomes with their
-   non-blocking findings, preview render results, and browser timing entries.
-
-Every stage sends `node_start` and `node_complete` events with its elapsed time.
-Each `node_complete` also carries `data` for browser progress: interpreted
-categories, room facts, retrieved products, and counts or validation results
-from the variant stages. These facts describe work already done. They do not
-change selection or placement. See the [delivery reference](../../pipeline/README.md#browser-delivery)
-for the fields.
-
-## 1. Interpret the prompt
-
-`shared_stages.interpret` makes one `gemini-3.8-flash` call that turns the prompt
-into an intent packet.
-
-| Field | Example |
-|---|---|
-| Requested items | sofa x1 (cream), coffee table x1 (wooden), floor lamp x1 (reading), TV x1 |
-| Per-item limits | sizes the user states, and exact colors, styles, and materials from the catalog vocabulary, such as `colors=[cream]` |
-| Excluded and avoided categories | "no rug" -> `excluded_categories=[rug]` |
-| Price and brand constraints | "sofa under USD 1,500"; brand is always a preference |
-| Style and function hints | `style_hints=[cozy, modern]`, `functional_hints=[tv_focused]` |
-| Fit flexibility | `strict_counts`, `space_first`, `flexible`, or `balanced` |
-
-The legacy cleanup code (`coerce_intent_packet`) then normalizes categories and
-counts. If this call fails, the whole run fails with an `error` event.
-
-## 2. Read the room
-
-`shared_stages.room` builds the room context from the geometry and the intent.
-It makes no model call and takes about 10 ms.
-
-It computes:
-
-- Walls, doors, windows, and blocked zones near openings.
-- Protected walking paths that furniture must keep clear.
-- A density budget: the minimum and maximum furniture footprint for the room.
-- Maximum counts per category for this room size.
-- A fit estimate. If the requested items will probably not fit, it sets
-  `fit_warning`, and selection starts with smaller products.
-
-## 3. Find candidate products
-
-`shared_stages.retrieve` plans search slots, then runs every slot search at the
-same time.
-
-### Plan the slots
-
-One slot is one kind of item the room may need:
-
-| Slot kind | Source | Example | Kept after Jev rank | Kept without it |
-|---|---|---|---:|---:|
-| Requested | each requested item | sofa, coffee table, floor lamp, TV | 6 | 10 |
-| Required | room rules not covered by a requested item | storage, design-only plant | 6 | 10 |
-| Optional | room roles the model may use | accent seating, media unit, storage | 4 | 6 |
-| Decor | fixed list | planter, sculpture, floor mirror, wall mirror | 3 | 4 |
-
-Rank (4a) deals each variant up to these sizes from each slot.
-
-Each slot carries:
-
-- **Search text:** the item label, then its descriptors, then the room style
-  hints. Example: `cream sofa, cozy, modern`.
-- **Exact filters:** prepared categories, the price limit (the item limit or
-  110% of the budget, whichever is lower), the item's size limits, and its exact
-  colors, styles, and materials.
-
-TV categories skip the price filters, because TV prices never count toward the
-budget. In a slot that mixes TVs with other categories, such as a requested TV
-that a TV stand may substitute, the other categories keep the price filters.
-
-### Search each slot
-
-For each slot, the stage:
-
-1. Embeds the search text with `gemini-embedding-2` (`embed_query`).
-2. Calls `search_assets` once, which ranks products by cosine similarity within
-   each of the slot's categories and keeps only placeable products that pass
-   every filter. It fetches up to 30 per category. The design-only plant slot
-   searches only design-only products.
-3. Merges the categories in turn, so one category cannot crowd out the others.
-4. Applies checks that need the room: the product must fit the floor in either
-   orientation, meet the requested minimum sizes, match a strict brand, and be
-   allowed in this room type.
-5. Moves preferred brands to the front and keeps up to 30 products.
-
-If a required slot finds nothing within the user's limits, the stage searches
-again without them and marks the slot as relaxed. A requested item with no
-match is reported as a gap. Gaps do not fail the variants.
-
-The result is `slots` (the plan) and `pool` (kept products per slot).
-
-## 4. Run three variants
-
-Rank runs once, then the graph sends the shared results and each variant's own
-candidates to three variants that run in parallel. Each variant has its own
-state. A failed variant does not stop the others.
-
-| Variant | Direction added to the Jev rank request and the selection prompt |
-|---|---|
-| 0 | None |
-| 1 | Soft, rounded anchor; warm textiles and wood; cream, sand, terracotta |
-| 2 | Compact, structured anchor; cool greys, charcoal, deep blue or green |
-
-Bedrooms, dining rooms, and studios use room-specific versions of directions 1
-and 2.
-
-### 4a. Rank and deal candidates
-
-`variant_stages.rank` runs once, after retrieve, for all three directions. It
-sends one Jev request per slot and direction, about 45 at once. The request
-states the brief (prompt, style hints, room type), the variant direction, and
-the slot, and asks one yes/no question per candidate: is this product a good
-choice? Each question carries the candidate's title, category, colors,
-materials, styles, size, price, and description.
-
-For each direction, candidates are sorted by Jev's yes probability, with
-preferred brands still first, and the list size is 6, 4, or 3. When Jev ranking
-is off or a direction's request fails, that direction keeps the embedding order
-and the larger sizes.
-
-Then each slot is dealt to the variants, in plan order. `PRODUCT_REUSE_RATE`
-(default 0.5) is the largest share of a variant's products that other variants
-may also use:
-
-1. In rounds, each variant takes its highest-ranked product that no other
-   variant holds, until it has `ceil(size x (1 - rate))` of them. The first pick
-   rotates each round. These products are exclusive: no other variant gets them,
-   in any slot.
-2. Each variant fills up to its size with its own highest-ranked remaining
-   products that are not another variant's exclusive. Variants may share these.
-
-Example with rate 0.5 and size 6: each variant gets 3 exclusive sofas, then 3
-more that other variants may also see. Rate 0 gives fully separate pools; rate 1
-gives each variant its own top 6.
-
-A slot with fewer than 6 products is not dealt: every variant gets its own
-ranked list, the run record notes the shared slot, and its products do not count
-toward the reuse limit. Each variant's selection prompt lists its own pool.
-
-### 4b. Select products
-
-`variant_stages.select` runs one selection turn:
-
-1. The model receives the room, budget, intent, room limits, the variant
-   direction, and the variant's candidates as CSV grouped by slot. Each row has
-   the price, size, brand, colors, styles, materials, a 120-character
-   description, mount type, features, and `shared` (yes when another variant
-   may also use the product). The prompt states the reuse limit.
-2. The model returns one product ID per unit and a note on gaps. It no longer
-   writes reasons, a strategy, or a self-audit.
-3. Code counts each product under the requested slot it was listed in, so a
-   loveseat from the sofa slot satisfies the sofa request.
-4. One Jev request checks the selection:
-   - **Style.** For each other selected product (not TVs or decor plants): does
-     it match the anchor's style and palette? The anchor is the sofa, bed, or
-     dining table. Below 0.3 rejects the product.
-   - **Attributes.** For each required attribute that the catalog vocabulary
-     cannot filter, such as "pet-friendly" or "stain resistant": does each
-     targeted product meet it? Below 0.5 rejects the product.
-5. The legacy selection validator checks the result:
-   - total cost is at most 110% of the budget, with TVs and design-only decor
-     excluded
-   - counts, required items, and requested attributes, plus the Jev results
-   - footprint is within the density budget
-   - tabletop items have a support, each TV has a media support it fits, and
-     rugs fit the room
-   - at most `PRODUCT_REUSE_RATE` of the distinct selected products are marked
-     shared (`REUSE LIMIT` error)
-
-When a turn fails only on fit estimates, the code solver (4c) checks the
-selection before the next turn. Fit estimates are the footprint estimate
-(`OVER CROWDED`) and these layout preflight size checks: sofa, bed, rug, desk
-cluster, and dining cluster against the room clear area, and tabletop items
-against their supports. If the solver places every item with no blocking
-findings, the selection passes, and the run record notes
-`fit estimate overruled by the solver: <category counts>; overruled <errors>`.
-All other checks still apply, including TV and media pairing, dining table edge
-length, dining light clearance, and tiny-room counts.
-
-When a turn is over the budget allowance (`OVER BUDGET`), code tries a budget
-repair before the next turn. It takes the purchasable products from most to
-least expensive, skipping the anchor (sofa, bed, or dining table), and swaps
-each for a cheaper product of the same category from the same slot of this
-variant's pool. It picks the next cheaper product in the variant's ranked
-order, changes every unit of the product, and keeps the reuse limit. It stops
-when the total is within the allowance. The repaired selection goes through the
-same checks, including the Jev check and the solver check above. If it passes,
-it replaces the model's selection without another model turn, and the run
-record notes `budget repair: $<from> -> $<to> (<old> -> <new>, ...)`. If it
-fails, the run record notes `budget repair rejected (<swaps>): <errors>`, and
-the next turn uses the model's selection as usual. Each failed turn adds
-`selection turn <n> failed: <errors>` to the run record.
-
-If validation fails, the next turn repeats with the errors. An over-budget turn
-also tells the model to keep every requested item and its count and to replace
-expensive picks with cheaper products from the same slots. When products do
-not fit, the turns step down:
-
-1. First fit failure: switch to smaller products (`compact`).
-2. Next fit failure: reduce counts to what fits, keeping required items
-   (`capped`). An item the user asked for that is not optional keeps its
-   requested count; only optional items are reduced.
-
-A tabletop item too large for its supports, such as a lamp on a small
-nightstand, does not step down. Its error asks for a smaller tabletop item or a
-larger support from the same slots.
-
-After 4 failed turns in all, the last selection loses the products that fail
-it, and the variant goes on to placement. Code removes one product a round,
-every unit of it, while that leaves fewer errors (then less cost over the
-budget allowance). It never removes the anchor piece (sofa, bed, or dining
-table). For example, a coffee table that does not match the sofa's style, or a
-lamp with nothing to stand on, is removed instead of failing the design. Errors
-that removal cannot fix, such as a missing required item, stay in the run
-record, and the design is still delivered.
-
-### 4c. Place products
-
-`variant_stages.place` lays out the selection with code, with no model call.
-The solver (`app.rules.layout.solver`) splits the selection into groups:
-
-- the bed with its nightstands
-- the sofa with its coffee table, accent chairs, side tables, and rug
-- the TV stand with its TV
-- the dining table with its chairs and ceiling lights
-- the desk with its chair
-- each other piece alone
-
-Each group has a few arrangements taken from the existing rules. For example,
-the sofa stands 0.1 m off its wall, the coffee table 0.47 or 0.54 m in front of
-it, and accent chairs beside the table or across from the sofa.
-
-The solver tries each group against every wall, facing into the room, and the
-dining table on a grid of positions. It drops a position that overlaps placed
-furniture, blocks a door or a protected path, or takes the space a bed side, a
-chair pull-out, or a cabinet front needs. When a TV faces the sofa, the sofa can
-also move forward off its wall, so that the viewing distance fits the TV size.
-
-In a studio, the TV stand can also stand free as a divider, on the sofa's axis
-and facing it, with the screen near the middle of its viewing range (1.2 to 3.5
-times the TV width). For example, a 1.2 m TV that the far wall puts 5.3 m from
-the sofa stands 2.8 m from it instead. The checker notes a free-standing stand,
-so a wall-backed TV within its range still wins. A floor lamp goes beside the
-sofa or an accent chair; dining chairs count as seats only in a room without
-one.
-
-Groups go in order, largest first. After each group, the best partial layouts,
-measured with the same checker as validation, go on to the next group. The kept
-layouts differ in their zone plan first: the wall the bed, sofa, TV, or desk
-backs onto (or a divider TV) and the room quarter that holds the dining table.
-So the final layouts are different rooms, not copies that differ in one shelf.
-
-A dining table in a dining room prefers the room center. In a studio or living room it prefers a wall (0.1 per metre away),
-so it takes its own part of the room instead of the middle.
-
-Lamps, tabletop items, and wall art are added last with the seed rules, and the
-complete layout with the fewest findings wins. A solve takes 0.1 to 1.5 s on the
-test rooms (up to 15 items).
-
-If the solver cannot place an item, or blocking findings remain, the stage
-swaps the largest item involved for the next smaller product in the same slot
-that keeps the selection valid, and solves again, up to 2 swaps. If a dining
-table or chair is still involved, it then removes one dining chair at a time,
-up to 2, when the selection stays valid. A request for an exact number of
-seats, or the room's minimum, keeps its chairs. Each swap or removal is kept
-only if the layout gets better, and the run record notes it. Findings that
-remain go to the final review (4d).
-
-The solver ends with up to 4 complete layouts. Place keeps the result and the
-others that tie its issue score, with no more unplaceable items, for the final
-review. A worse layout is never offered.
-
-The layout is then normalized: wall items snap to walls, rugs fit the room, and
-displays sit on their supports. It is then analyzed into findings by severity:
-
-- **P0:** physical problems such as overlaps, items outside the room, and
-  blocked doors.
-- **P1:** placement problems such as wall items off the wall and blocked
-  walking paths.
-- **Critical P2:** function problems that block a layout, such as a broken
-  seating group.
-- **Other P2:** quality notes that do not block.
-
-### 4d. Review, check, and send
-
-`variant_stages.finish` gives every design a final review, then checks and
-delivers it:
-
-Comfort and taste live in `DESIGN_RULES` as plain text, so a new rule is one
-line and needs no code. Code keeps only the hard geometry checks (overlaps,
-inside the room, doors, walkways, TV and stand), and rejects any adjustment that
-breaks them.
-
-1. **Review.** One model call (stage `finish`, low thinking unless
-   `LLM_STAGE_MODELS` sets it) gets the request, the requested items and style
-   hints, the layout rules for the room type with their definitions, the
-   coordinate system, the room boundary, doors, windows, and protected paths,
-   each piece's key, category, size, and mount type, and each tied layout drawn
-   top-down as variant A, B, C, or D with its poses and measured facts: the
-   findings the checks still report (issue, items, gaps and limits), and
-   edge-to-edge gaps from sofa and lounge chairs to the coffee table, floor
-   lamps to their seat, and the TV viewing distance. Acting as an interior
-   designer, the model picks the layout that reads best as a room against the
-   design rules (`DESIGN_RULES` in `app/rules/layout_rules.py`: shared rules such
-   as clear zones, a TV whose back does not face another zone, nothing tall in
-   front of a window, a floor lamp at the seat it lights, plus rules per room
-   type), writes two or three sentences on
-   what is wrong with it, and returns new poses that fix those problems. With
-   one layout, it still reviews and adjusts that one.
-2. **Adjust.** Code rejects poses for unknown items, with non-finite values, or
-   with a rotation that is neither a whole number of quarter turns from the
-   current one nor aligned with the room axes. Moves of any length
-   are allowed. The rest are applied together, moving supported items with
-   their supports, and kept if the issue score does not get worse. Otherwise
-   each move is applied in the model's order on top of the moves kept, and kept
-   if the score does not get worse. A failed call or an unknown label keeps the
-   solver's best layout. The run record notes the pick, the review, and the
-   adjustments kept, reverted, or rejected. The `node_complete` data carries
-   `layout_pick` and `review`.
-3. **Check.** The final layout check runs: every selected unit is placed
-   exactly once and no blocking finding remains. When it fails, code removes the
-   items it fails on, one named item a round, non-anchor items first, choosing
-   the removal that leaves the fewest findings. Items resting on a removed item
-   go with it. For example, a chair stuck inside the dining table is removed and
-   the room keeps three chairs.
-4. **Send.** Finish builds the render manifest (model references and
-   placements), the selected-asset list, and the total cost. The graph then
-   renders a top-down preview in a worker thread and sends `variant_ready` with
-   its `preview_url`.
-
-Failed checks and a failed review never fail a variant. A variant sends
-`variant_failed` only when a stage raises, such as a selection model call that
-used all its attempts.
-
-The viewer can show each variant as soon as its `variant_ready` event arrives.
-The preview uses product footprints without downloading images. The service
-saves it beside the run record and serves it through
-`GET /runs/{run_id}/previews/{index}.png`. Rendering and image write failures
-leave the design ready with a null URL. The record keeps the render time and error.
-Benchmark reviews use the same renderer in `app/preview.py`.
-
-### Jev
-
-Jev (`typesafe-sdk`, model `jev-1.13.0`) answers yes/no questions with a
-probability in about 0.3 seconds. Each call has a 5-second timeout and up to 2
-attempts, and the run record lists its time, tokens, and cost (USD 0.042 per
-million input tokens). `JEV_USES` turns `rank` and `check` on or off. A failed
-Jev call never fails a variant: that use falls back to its Jev-off behavior, and
-the run record notes it.
-
-## 5. Finish the run
-
-After all three variants finish, the service sends a `complete` event with every
-ready variant and writes the run record.
-
-The browser posts when each shown design arrived, finished loading models, and
-drew its first frame after loading to `POST /runs/{run_id}/client-timing`.
-Times are milliseconds since submission. Model counts, failed model counts,
-and the screen name give context. The record keeps these in `client_timing`,
-whether they arrive during generation or after it finishes.
-
-Continuing with a ready design disconnects the stream. The service cancels the
-unfinished variants and saves a `cancelled` record with ready variants and
-browser timing retained. Record writes and timing submissions share a lock so
-completion or cancellation cannot overwrite an accepted timing entry.
+## Steps
+
+| Step | Who | What it does |
+| --- | --- | --- |
+| 1 Interpret | Gemini | Reads the prompt: requested items and counts, sizes, colors, materials, exclusions, style hints. A TV stand is never a TV substitute. |
+| 2 Room | Code | Walls, doors, windows, protected walkways, the furniture footprint range and count caps for the room size. |
+| 3 Retrieve | Embeddings + Postgres | One search per slot: requested items, required room items, optional roles, decor. Price at most budget + 10%. When a request covers a required role, its other kinds still get a slot (side tables beside a requested coffee table). |
+| 4a Rank | Jev | Orders each slot's candidates for each design's style direction, then deals them so the designs differ. |
+| 4b Select | Gemini, code, Jev | Picks the products, then the checks below. Retries with the errors, up to 4 turns. |
+| 4c Place | Code | Solver places groups (bed, sofa, TV, dining, desk, singles) against walls, keeping doors and walkways clear. Swaps or drops a piece that cannot fit. |
+| 4d Finish | Gemini, code | Picks the best tied layout from top-down images and measured gaps, reviews it against the design rules, and moves pieces. Code keeps each move that does not make the checks worse, then removes any item that still fails. |
+
+## Selection rules
+
+- **What the model is asked for:** furnish the room to its size, spend 85-95%
+  of the budget on better main pieces before extras, and add up to 2 decor
+  pieces with leftover budget. Minimal briefs stay minimal.
+- **TV (code):** adds a TV when the brief asks for one or a stand is chosen,
+  swaps a TV too wide for its stand, otherwise hangs it on the wall at eye level.
+- **Checks:** budget, counts, required items, footprint, rug and tabletop fit,
+  reuse limit between designs (code); style match to the anchor and brief
+  attributes (Jev).
+- **Budget repair (code, no model call):** over 110%, swap for cheaper; under
+  80%, swap for pricier toward 90% and never over 100%. Same category, same
+  slot, pieces swapped, never added.
+- **Last turn:** products that still fail are removed; the design is still
+  delivered.
+
+## What never fails a design
+
+A failed check removes the failing items; a failed review keeps the solver's
+layout. A design fails only when a stage raises, such as a model call that used
+all its attempts.
+
+## Models
+
+| Setting | Default | Note |
+| --- | --- | --- |
+| `LLM_DESIGN_MODEL` | `gemini-3.8-flash`, low thinking | Model for interpret, select and finish. |
+| `LLM_STAGE_MODELS` | none | Per stage, e.g. `select=gemini-3.5-flash-lite:minimal`. |
+| Non-Gemini model | - | A name like `claude-haiku-5-5` goes through the AI proxy; the level becomes `reasoning_effort`. About 2x slower, so not the default. |
+| `MODEL_HEDGE_AFTER_S` | 8 | Sends a duplicate of a slow call; 0 turns it off. |
+| `JEV_USES` | `rank,check` | Turns the two Jev uses on or off. |
+
+Every setting is in `.env.example`.
 
 ## Limits
 
 | Limit | Value |
-|---|---|
-| Variants | 3 |
-| Selection turns per variant | 4 |
-| Final review calls per variant | 1 |
-| Solver product swaps per layout | 2 |
-| Solver dining chairs removed per layout | 2 |
-| Model call timeout | 60 s, up to 3 attempts |
-| Jev call timeout | 5 s, up to 2 attempts |
+| --- | --- |
+| Designs per request | 3 |
+| Selection turns | 4 |
+| Budget | target 85-95%, floor 80%, ceiling 110% |
+| Decor with leftover budget | up to 2 pieces |
+| Model call | 60 s, up to 3 attempts |
+| Jev call | 5 s, up to 2 attempts |
 | Run deadline | 300 s |
-| Budget allowance | 110% of the stated budget |
-| Search fetch per slot | 30 per category, 30 kept |
 
-## Not in this phase
+## Output
 
-- Saving designs, design-create payloads, and the chat reply. The browser still uses its local save mock.
-- Supabase upload and billing fields.
+Each `variant_ready` event carries the render manifest (model references and
+poses), the product list, the total cost, and a top-down preview URL. Each run
+writes a record to `pipeline/.data/runs/<run_id>.json` with stage timings, model
+and Jev calls, notes and outcomes. Event fields: [delivery reference](../../pipeline/README.md#browser-delivery).

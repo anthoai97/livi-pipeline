@@ -45,24 +45,43 @@ products, rotate the room, and save a design into Studio.
 | Catalog search | PostgreSQL with pgvector searches prepared product embeddings, with filters for dimensions, categories, and prices. |
 | Geometry and validation | Shapely, NumPy, and Python rules handle placement and clearance checks. Pydantic and Zod validate service and browser data. |
 
-## How we reduce waiting
+## How it works
 
-- Interpret the brief, analyze the room, and retrieve candidates once, then
-  reuse that work across all three designs.
-- Generate designs in parallel. Candidate ranking also runs concurrently
-  across furniture needs and design directions.
-- Use code for geometry, placement, and budget repairs. Reserve model calls
-  for interpretation, product choices, and visual review.
-- Use Gemini Flash with low thinking by default. Combine the final layout
-  choice, review, and adjustments in one model call.
-- Duplicate model calls that take longer than eight seconds and keep the first
-  successful answer. This reduces some slow responses at the cost of extra calls.
-- Stream each design as it finishes so users can inspect or save it while the
-  others continue. Run placement and preview rendering in worker threads to
-  keep the service responsive.
+```text
+            brief + floor plan + budget
+                        |
+                        v
+  1  Interpret   Gemini reads the brief: items, styles, limits      ~7 s
+                        |
+                        v
+  2  Room        code: walls, doors, walkways, size limits         <0.1 s
+                        |
+                        v
+  3  Retrieve    vector search: candidates for each item kind       ~1 s
+                        |
+                        v
+  4a Rank        Jev orders candidates for each design's style     ~0.6 s
+                        |
+           +------------+------------+
+           v            v            v       three designs, in parallel
+       Design 1     Design 2     Design 3
+                        |
+  4b Select      Gemini picks products; code fixes the TV and       ~6 s
+                 checks fit and budget; Jev checks style
+                 (retries with the errors, up to 4 turns)
+                        |
+  4c Place       code solver arranges every piece                  ~0.7 s
+                        |
+  4d Finish      Gemini reviews the layout and adjusts it;          ~5 s
+                 code keeps safe moves and removes failing items
+                        |
+                        v
+            each design streams to the browser when ready
+```
 
-See the [pipeline overview](docs/pipeline/pipeline-overview.md) for the stage
-flow, design rules, and delivery format.
+Steps 1 to 4a run once and are shared by all three designs. Times are medians
+from the [benchmark](#benchmark-2026-10-11). Full flow, rules and delivery
+format: [pipeline overview](docs/pipeline/pipeline-overview.md).
 
 ## Benchmark (2026-10-11)
 

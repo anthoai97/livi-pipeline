@@ -5,8 +5,8 @@ and door geometry live in `app.rules.door_geometry`.
 """
 
 from app.rules.categories import (  # noqa: F401
-    CEILING_HEIGHT_M,
     CEILING_MOUNTED_CATEGORIES,
+    DEFAULT_WALL_HEIGHT_M,
     FLOOR_LAMP_CATEGORIES,
     FLOOR_ONLY_CATEGORIES,
     SEAT_HEIGHT_CATEGORIES,
@@ -36,7 +36,6 @@ from app.rules.categories import (  # noqa: F401
 from app.rules.door_geometry import (  # noqa: F401
     DEFAULT_DOOR_THICKNESS,
     DEFAULT_DOOR_WIDTH,
-    DOOR_CLEARANCE,
     RoomWall,
     WALL_NAMES,
     clamp,

@@ -22,7 +22,6 @@ from app.rules.planner.taxonomy import (
     SOFA_ROLE_KEYWORDS,
 )
 from app.rules.pipeline_shared import (
-    CEILING_HEIGHT_M,
     WALL_MOUNT_Z,
     door_clearance_rect,
     is_ceiling_mounted_asset,
@@ -33,11 +32,13 @@ from app.rules.pipeline_shared import (
     is_tabletop_support_asset,
     is_wall_mounted_asset,
     matches_category_keywords,
+    normalize_asset_label,
     room_walls,
     tabletop_support_priority,
 )
 
 from app.rules.layout.constants import (
+    BEDROOM_TV_CENTER_Z,
     CARDINAL_TOLERANCE,
     COFFEE_TABLE_ROLE_KEYWORDS,
     LOUNGE_CHAIR_ROLE_KEYWORDS,
@@ -120,11 +121,6 @@ def _matches_item(item: FloorAsset, keywords: tuple[str, ...]) -> bool:
         keywords,
     )
 
-def _is_generic_chair(item: FloorAsset) -> bool:
-    category = str(item.asset.get("category") or "").strip().lower()
-    # Catalog ID prefixes can survive reclassification as office/accent chairs.
-    return category == "chair" or (category in {"", "unknown"} and item.uid.startswith("chair_"))
-
 def _largest_floor_asset(items: list[FloorAsset]) -> FloorAsset | None:
     if not items:
         return None
@@ -161,15 +157,6 @@ def _functional_group_assets(
     dining_chairs = [
         item for item in floor_items if _matches_item(item, DINING_CHAIR_ROLE_KEYWORDS)
     ]
-    if dining_tables:
-        dining_chairs.extend(
-            item
-            for item in floor_items
-            if _is_generic_chair(item)
-            and str(item.asset.get("functional_role") or "")
-            in {"", "dining_seating"}
-            and item.uid not in {chair.uid for chair in dining_chairs}
-        )
     dining_chair_uids = {item.uid for item in dining_chairs}
     sofas = [item for item in floor_items if _matches_item(item, SOFA_ROLE_KEYWORDS)]
     lounge_chairs = []
@@ -231,13 +218,15 @@ def _is_floor_only_layout_asset(asset: dict[str, Any], uid: str = "") -> bool:
         uid,
     )
 
-def _wall_mount_z(asset: dict[str, Any], below: float = 0.0) -> float:
-    """Bottom z of a wall-mounted asset. A TV centers its screen at seated eye level, above
-    the top of the furniture under it (`below`); its top stays under the ceiling."""
+def _wall_mount_z(asset: dict[str, Any], ceiling: float, below: float = 0.0) -> float:
+    """Bottom z of a wall-mounted asset under the room's ceiling. A TV centers its screen at seated
+    eye level (reclined eye level when it serves a bed), above the top of the furniture under it
+    (`below`); its top stays under the ceiling."""
     height = float(asset.get("height", 0.0) or 0.0)
     if _is_media_display_asset(asset):
-        return max(0.0, min(CEILING_HEIGHT_M - height, max(WALL_TV_CENTER_Z - height / 2, below + WALL_TV_SUPPORT_GAP_M)))
-    return min(WALL_MOUNT_Z, max(0.0, CEILING_HEIGHT_M - height))
+        center = BEDROOM_TV_CENTER_Z if asset.get("viewing_target") == "bed" else WALL_TV_CENTER_Z
+        return max(0.0, min(ceiling - height, max(center - height / 2, below + WALL_TV_SUPPORT_GAP_M)))
+    return min(WALL_MOUNT_Z, max(0.0, ceiling - height))
 
 def _is_near_cardinal(rotation_z: float) -> bool:
     delta = abs(
@@ -410,11 +399,11 @@ def _parent_uid(placement: dict[str, Any]) -> str:
     return str(value).strip() if isinstance(value, str) else ""
 
 def _is_media_display_asset(asset: dict[str, Any], uid: str = "") -> bool:
-    return matches_category_keywords(
-        asset.get("category", ""),
-        uid,
-        MEDIA_DISPLAY_ROLE_KEYWORDS,
-    )
+    """A TV or monitor by its whole category, so a tv_stand is not one; the uid counts only without a category."""
+    category = normalize_asset_label(asset.get("category", ""))
+    if category in {"", "unknown"}:
+        return matches_category_keywords("", uid, MEDIA_DISPLAY_ROLE_KEYWORDS)
+    return category in MEDIA_DISPLAY_ROLE_KEYWORDS
 
 def _is_media_support_asset(asset: dict[str, Any], uid: str = "") -> bool:
     return matches_category_keywords(

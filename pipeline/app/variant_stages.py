@@ -421,7 +421,7 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
         "A side table for bedside lighting belongs to sleeping, not sitting or dining. "
         "Choose a sitting area rug whose usable width spans the sofa and whose depth permits front-leg engagement "
         "plus at least 0.60m of useful rug in front; do not select a small mat as a substitute for an area rug. "
-        "Keep its envelope out of the bed and dining group. In compact studios plan dining chairs AND 0.56m pull-out "
+        "Keep its envelope out of the bed and dining group. In compact studios plan dining chairs AND 0.46m pull-out "
         "before choosing sofa depth and media support. For shared TV viewing consider both bed and sofa distances "
         "relative to screen width; do not assume a TV on the opposite wall will be comfortable. "
         "For bed-only or shared viewing, plan a wall-backed TV first and choose a display whose preferred range "
@@ -1134,7 +1134,8 @@ def _measure(state: VariantState, layout: Record) -> VariantState:
     """Normalize and analyze a layout the way legacy fresh designs do."""
     room = state["shared"]["room"]
     assets = state["instances"]
-    layout = normalize_layout(layout, assets, room["room_vertices"], room_windows=None, rehome_service_items=False)
+    layout = normalize_layout(layout, assets, room["room_vertices"], room_windows=None, rehome_service_items=False,
+                              wall_height=room["wall_height"])
     issues = analyze_layout(
         layout,
         assets,
@@ -1144,6 +1145,7 @@ def _measure(state: VariantState, layout: Record) -> VariantState:
         room_windows=room["room_windows"],
         protected_paths=room["protected_paths"],
         room_type=room["room_type"],
+        wall_height=room["wall_height"],
     )
     levels = findings_by_level(issues)
 
@@ -1325,7 +1327,7 @@ STYLE HINTS: {", ".join(intent.get("style_hints") or []) or "none"}
 
 {build_rules_block(include_definitions=True, room_type=room["room_type"])}
 
-ROOM: {room["room_type"].replace("_", " ")}, {room_width:.2f} m x {room_depth:.2f} m
+ROOM: {room["room_type"].replace("_", " ")}, {room_width:.2f} m x {room_depth:.2f} m, wall height {room["wall_height"]:.2f} m
 ROOM BOUNDARY VERTICES:
 {json.dumps(room["room_vertices"])}
 
@@ -1445,6 +1447,7 @@ async def finish(state: VariantState, ctx: StageContext) -> VariantState:
         room_doors=room["room_doors"],
         room_windows=room["room_windows"],
         protected_paths=room["protected_paths"],
+        wall_height=room["wall_height"],
     )
     left: list[Record] = []
     removed: list[str] = []

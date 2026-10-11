@@ -5,10 +5,14 @@ from typing import Any
 
 from shapely.geometry import LineString, Point, Polygon
 
-from app.rules.geometry.primitives import asset_polygon, extract_placement, room_polygon, service_center_bounds
+from app.rules.geometry.primitives import _blocker_polygons, asset_polygon, extract_placement, room_polygon, service_center_bounds
+from app.rules.planner._util import room_scale
 from app.rules.planner.taxonomy import normalize_category
+from app.rules.protected_paths import PROTECTED_PATH_WIDTH_M
 
-BED_ACCESS_MIN_M = 0.56
+BED_ACCESS_MIN_M = 0.60  # bed sides and foot, and a desk chair's pull-out
+BED_TWO_SIDED_MIN_WIDTH_M = 1.4  # a bed this wide needs both sides clear, unless the room is compact
+STORAGE_FRONT_M = 0.76  # in front of a dresser, wardrobe, cabinet or sideboard: a drawer plus the person opening it
 BED_HEADBOARD_MAX_GAP_M = 0.20
 BEDSIDE_HEAD_ZONE_M = 0.65
 BEDSIDE_MAX_GAP_M = 0.30
@@ -20,6 +24,16 @@ BEDROOM_ISSUE_KEYS = (
 )
 
 
+def bed_foot_access_m(pos: list[float], yaw: float, depth: float, doors: list[Polygon]) -> float:
+    """Clear depth a bed's foot needs: BED_ACCESS_MIN_M, or the main-path width when the strip across
+    the room just past the foot reaches a door's clear zone, so the foot strip is the route to the door."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    near, far = depth / 2, depth / 2 + PROTECTED_PATH_WIDTH_M
+    strip = Polygon([(pos[0] + f * c - side * s, pos[1] + f * s + side * c)
+                     for f, side in ((near, -100.0), (far, -100.0), (far, 100.0), (near, 100.0))])
+    return PROTECTED_PATH_WIDTH_M if any(strip.intersects(door) for door in doors) else BED_ACCESS_MIN_M
+
+
 def is_bedside_asset(asset: dict[str, Any]) -> bool:
     category = normalize_category(asset.get("category"))
     return (category == "nightstand" or asset.get("functional_role") == "bedside"
@@ -29,14 +43,18 @@ def is_bedside_asset(asset: dict[str, Any]) -> bool:
 def bedroom_layout_measurements(
     layout: dict[str, Any], assets: list[dict[str, Any]],
     boundary: list[list[float]], room_area: tuple[float, float],
-    *, mixed_groups: bool = False,
+    *, room_doors: list[dict[str, Any]] | None = None, mixed_groups: bool = False,
 ) -> dict[str, Any]:
     """Measure complete beds in their front=foot, back=headboard local frame.
 
     Access is a continuous clear strip, not center distance. Rugs and supported
     objects do not obstruct floor access. Only associated bedside furniture in
     the head zone is exempt from a side strip; other blockers remain measured.
-    Storage clearance is a service band, not a model-specific drawer envelope.
+    A bed at least BED_TWO_SIDED_MIN_WIDTH_M wide needs both sides clear unless
+    the room is compact; the foot needs the main-path width when it is the
+    route to a door (bed_foot_access_m). Storage clearance is a service band,
+    not a model-specific drawer envelope. Desk chair pull-out is measured in
+    every room, with or without a bed.
     """
     room = room_polygon(room_area, boundary)
     room_cover = room.buffer(1e-7)
@@ -62,8 +80,6 @@ def bedroom_layout_measurements(
     beds = [r for r in records if r["category"] == "bed"]
     result = {"beds": [], "bedsides": [], "storage": [], "tv_viewing": [], "workstations": [],
               "violations": {key: [] for key in BEDROOM_ISSUE_KEYS}}
-    if not beds:
-        return result
 
     def local_point(record, forward, lateral):
         yaw, pos = record["yaw"], record["pos"]
@@ -82,7 +98,7 @@ def bedroom_layout_measurements(
 
     bedside_parents = {}
     for record in records:
-        if not is_bedside_asset(record["asset"]):
+        if not beds or not is_bedside_asset(record["asset"]):
             continue
         bed = min(beds, key=lambda b: b["poly"].distance(record["poly"]))
         dx, dy = record["pos"][0] - bed["pos"][0], record["pos"][1] - bed["pos"][1]
@@ -103,7 +119,7 @@ def bedroom_layout_measurements(
         else:
             result["violations"]["bedside_violations"].append({**row, "kind": "bedside_not_at_head"})
 
-    def strip_clearance(record, side, *, exempt_bedside=False):
+    def strip_clearance(record, side, minimum, *, exempt_bedside=False):
         half_w, half_d = record["width"] / 2, record["depth"] / 2
         head_zone = local_rect(record, -half_d, -half_d + BEDSIDE_HEAD_ZONE_M,
                                -half_w - 2.0, half_w + 2.0)
@@ -138,13 +154,39 @@ def bedroom_layout_measurements(
                 low = mid
             else:
                 high = mid
-        required = strip(BED_ACCESS_MIN_M)
-        return {"gap": round(low, 4), "min_gap": BED_ACCESS_MIN_M,
-                "clear": low + 1e-5 >= BED_ACCESS_MIN_M,
+        required = strip(minimum)
+        return {"gap": round(low, 4), "min_gap": minimum,
+                "clear": low + 1e-5 >= minimum,
                 "blockers": blockers(required), "boundary_blocked": not room_cover.covers(required),
                 "region": list(required.exterior.coords)[:-1], "center_xy": record["pos"][:2],
                 "center_bounds_for_room_bbox": service_center_bounds(room, record["poly"], required, record["pos"])}
 
+    desks = [r for r in records if r["category"] == "desk"]
+    for chair in records:
+        if chair["category"] not in {"office_chair", "task_chair", "desk_chair"} or not desks:
+            continue
+        desk = min(desks, key=lambda d: d["poly"].distance(chair["poly"]))
+        dx, dy = chair["pos"][0] - desk["pos"][0], chair["pos"][1] - desk["pos"][1]
+        forward = dx * math.cos(desk["yaw"]) + dy * math.sin(desk["yaw"])
+        lateral = -dx * math.sin(desk["yaw"]) + dy * math.cos(desk["yaw"])
+        # Shared task-chair validation owns desk distance and facing.
+        # Reserve the chair's swept footprint as it pulls away from the desk.
+        pullout = strip_clearance(chair, "back", BED_ACCESS_MIN_M)
+        row = {"uid": chair["uid"], "desk": desk["uid"],
+               "forward_offset_m": round(forward, 4), "lateral_offset_m": round(lateral, 4),
+               "in_front": forward >= desk["depth"] / 2 and abs(lateral) <= desk["width"] / 2,
+               "pullout": pullout}
+        result["workstations"].append(row)
+        if not row["in_front"]:
+            result["violations"]["bed_workstation_violations"].append({**row, "kind": "chair_not_serving_desk_front"})
+        if not pullout["clear"]:
+            result["violations"]["bed_workstation_violations"].append({
+                **row, **pullout, "kind": "chair_pullout_blocked"})
+    if not beds:
+        return result
+
+    doors = _blocker_polygons(room_doors, None, boundary=boundary, room_area=room_area)
+    compact = room_scale(room.area, "studio" if mixed_groups else "bedroom") == "compact"
     walls = list(room.exterior.coords)
     for bed in beds:
         head = local_point(bed, -bed["depth"] / 2, 0)
@@ -168,11 +210,17 @@ def bedroom_layout_measurements(
                        "max_wall_gap": BED_HEADBOARD_MAX_GAP_M, "max_delta_deg": 12.0}
         if wall["wall_gap"] > BED_HEADBOARD_MAX_GAP_M + 1e-6 or wall["delta_deg"] > 12.0:
             result["violations"]["bed_headboard_violations"].append({**orientation, "kind": "headboard_not_at_wall"})
-        sides = {side: strip_clearance(bed, side, exempt_bedside=side != "foot")
-                 for side in ("left", "right", "foot")}
-        result["beds"].append({**orientation, "access": sides,
+        sides = {side: strip_clearance(bed, side, BED_ACCESS_MIN_M, exempt_bedside=True) for side in ("left", "right")}
+        sides["foot"] = strip_clearance(bed, "foot", bed_foot_access_m(bed["pos"], bed["yaw"], bed["depth"], doors))
+        two_sided = bed["width"] >= BED_TWO_SIDED_MIN_WIDTH_M - 1e-6 and not compact
+        result["beds"].append({**orientation, "access": sides, "two_sided_required": two_sided,
                                "dual_side_access": sides["left"]["clear"] and sides["right"]["clear"]})
-        if not (sides["left"]["clear"] or sides["right"]["clear"]):
+        if two_sided:
+            for side in ("left", "right"):
+                if not sides[side]["clear"]:
+                    result["violations"]["bed_access_violations"].append({
+                        "uid": bed["uid"], "kind": "side_access_blocked", "side": side, **sides[side]})
+        elif not (sides["left"]["clear"] or sides["right"]["clear"]):
             best_side = max((sides["left"], sides["right"]), key=lambda row: row["gap"])
             result["violations"]["bed_access_violations"].append({
                 "uid": bed["uid"], "kind": "no_usable_side", **best_side,
@@ -184,7 +232,7 @@ def bedroom_layout_measurements(
     for record in records:
         if record["category"] not in {"dresser", "cabinet", "wardrobe", "storage_unit", "sideboard"}:
             continue
-        access = {"uid": record["uid"], "kind": "storage_front_blocked", **strip_clearance(record, "foot")}
+        access = {"uid": record["uid"], "kind": "storage_front_blocked", **strip_clearance(record, "foot", STORAGE_FRONT_M)}
         result["storage"].append(access)
         if not access["clear"]:
             result["violations"]["storage_access_violations"].append(access)
@@ -205,25 +253,4 @@ def bedroom_layout_measurements(
             result["violations"]["bed_tv_viewing_violations"].append({
                 **viewing, "kind": "tv_not_viewable_from_bed"})
 
-    desks = [r for r in records if r["category"] == "desk"]
-    for chair in records:
-        if chair["category"] not in {"office_chair", "task_chair", "desk_chair"} or not desks:
-            continue
-        desk = min(desks, key=lambda d: d["poly"].distance(chair["poly"]))
-        dx, dy = chair["pos"][0] - desk["pos"][0], chair["pos"][1] - desk["pos"][1]
-        forward = dx * math.cos(desk["yaw"]) + dy * math.sin(desk["yaw"])
-        lateral = -dx * math.sin(desk["yaw"]) + dy * math.cos(desk["yaw"])
-        # Shared task-chair validation owns desk distance and facing.
-        # Reserve the chair's swept footprint as it pulls away from the desk.
-        pullout = strip_clearance(chair, "back")
-        row = {"uid": chair["uid"], "desk": desk["uid"],
-               "forward_offset_m": round(forward, 4), "lateral_offset_m": round(lateral, 4),
-               "in_front": forward >= desk["depth"] / 2 and abs(lateral) <= desk["width"] / 2,
-               "pullout": pullout}
-        result["workstations"].append(row)
-        if not row["in_front"]:
-            result["violations"]["bed_workstation_violations"].append({**row, "kind": "chair_not_serving_desk_front"})
-        if not pullout["clear"]:
-            result["violations"]["bed_workstation_violations"].append({
-                **row, **pullout, "kind": "chair_pullout_blocked"})
     return result

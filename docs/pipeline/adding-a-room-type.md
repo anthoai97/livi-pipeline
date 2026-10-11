@@ -67,7 +67,7 @@ gets living-room behavior, without it.
 | 2 | Room policy | `pipeline/app/rules/room_policy.py:7-8`, `:28` | Name in `RoomType` and `SUPPORTED_ROOM_TYPES`; a policy string like `DINING_FURNISHING_GUIDANCE` | Required |
 | 3 | Room policy | `room_policy.py:93` `excluded_room_categories` | Categories the room may never hold | Required |
 | 4 | Interpret | `pipeline/app/shared_stages.py:116` `_intent_prompt` | A policy bullet, like the dining one | Required |
-| 5 | Feasibility digest | `pipeline/app/rules/planner/feasibility_digest.py:151-336` | Anchor role, required groups, optional categories, caps, notes | Required |
+| 5 | Feasibility digest | `pipeline/app/rules/planner/feasibility_digest.py:151-336`; `planner/_util.py` `ROOM_SCALE_CUTOFFS_SQM` | Anchor role, required groups, optional categories, caps, notes; the compact and medium size cutoffs | Required |
 | 6 | Fit estimate | `pipeline/app/rules/planner/fit_check.py:160` `_recommend_counts` | Categories the estimate must never cut | Optional |
 | 7 | Seed guidance | `pipeline/app/rules/planner/seed_guidance.py:169` `build_seed_guidance` | `room_mode` and `primary_anchor_uid` | Required |
 | 8 | Catalog slots | `pipeline/app/rules/selection/validation.py:134` `room_requirements` | Required items | Required |
@@ -122,7 +122,10 @@ gets living-room behavior, without it.
    the `excluded_room_categories` block; the anchor role (for example
    `"desk"` with `{"desk"}`); companion groups, as dining adds
    `dining_seating`; whether a living-room `surface` group applies;
-   `optional_categories`; caps; completion notes.
+   `optional_categories`; caps; completion notes. Give the room its size
+   classes in `ROOM_SCALE_CUTOFFS_SQM` (`planner/_util.py`), for example
+   `"home_office": (8.0, 12.0)`: compact below the first, medium below the
+   second. `room_scale` has no default, so a room without an entry fails.
 
 5. **Set the seed room mode** in `build_seed_guidance`, for
    example `"work"` with the desk as `primary_anchor_uid`. `desk` and
@@ -178,7 +181,8 @@ gets living-room behavior, without it.
     returns `{"violations": {key: [] for key in HOME_OFFICE_ISSUE_KEYS}}`. Call
     it from `analyze_layout`, then register the keys (row 16). A desk and task
     chair are already checked in every room by
-    `compute_task_chair_orientation_violations` (`validation_functional.py`).
+    `compute_task_chair_orientation_violations` (`validation_functional.py`),
+    and the chair's 0.60 m pull-out by `bedroom_layout_measurements`.
 
 13. **Teach the solver only what it misses.** `_groups` already builds a `work`
     group from `desk` and `office_chair` (`solver.py`). Add

@@ -183,8 +183,8 @@ CEILING_MOUNTED_CATEGORIES = (
     "pendant_light",
 )
 
-WALL_MOUNT_Z = 1.6  # meters (~63") — center height for wall-mounted fixtures
-CEILING_HEIGHT_M = 2.8  # meters — room ceiling height; matches scene3d.js wallH
+WALL_MOUNT_Z = 1.5  # meters (~59", gallery eye level) — center height for wall-mounted fixtures
+DEFAULT_WALL_HEIGHT_M = 2.8  # meters — ceiling height when the request gives no wall_height; matches scene3d.js wallH
 
 WALL_ALIGNED_CATEGORY_KEYWORDS = (
     "sofa",
@@ -306,6 +306,6 @@ def requires_window_clearance(
     )
 
 
-def ceiling_mount_z(asset_height: float | None) -> float:
-    """Z (bottom of asset) so the asset top sits flush with the ceiling."""
-    return max(0.0, CEILING_HEIGHT_M - float(asset_height or 0.3))
+def ceiling_mount_z(asset_height: float | None, ceiling: float) -> float:
+    """Z (bottom of asset) so the asset top sits flush with the room's ceiling."""
+    return max(0.0, float(ceiling) - float(asset_height or 0.3))

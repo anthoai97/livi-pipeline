@@ -262,9 +262,10 @@ def build_fit_check(
         room_facts=room_facts,
         feasibility_digest=feasibility_digest,
     )
-    room_scale = str((feasibility_digest or {}).get("room_scale") or "").strip() or _room_scale(area_sqm)
+    room_type = normalize_room_type(room_type or (feasibility_digest or {}).get("room_type"))
+    room_scale = str((feasibility_digest or {}).get("room_scale") or "").strip() or _room_scale(area_sqm, room_type)
     if room_scale not in ROOM_THRESHOLDS:
-        room_scale = _room_scale(area_sqm)
+        room_scale = _room_scale(area_sqm, room_type)
 
     average_loads = _average_loads(loads)
     selected_adjusted_sqm = sum(float(load["clearance_adjusted_sqm"]) for load in loads)
@@ -287,7 +288,7 @@ def build_fit_check(
         room_scale=room_scale,
         available_area_sqm=available_area_sqm,
         average_loads=average_loads,
-        room_type=normalize_room_type(room_type or (feasibility_digest or {}).get("room_type")),
+        room_type=room_type,
     )
     excess = {
         category: count - int(recommended.get(category, 0))

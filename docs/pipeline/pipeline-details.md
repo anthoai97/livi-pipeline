@@ -92,6 +92,9 @@ It computes:
 
 - Walls, doors, windows, and blocked zones near openings.
 - Protected walking paths that furniture must keep clear.
+- A size class (compact, medium, or spacious) by floor area per room type:
+  living room below 18 and 30 m², bedroom 11 and 16 m², dining room 10 and
+  16 m², studio 25 and 40 m². A 15 m² bedroom is medium.
 - A density budget: the minimum and maximum furniture footprint for the room.
 - Maximum counts per category for this room size.
 - A fit estimate. If the requested items will probably not fit, it sets
@@ -316,26 +319,32 @@ The solver (`app.rules.layout.solver`) splits the selection into groups:
 - each other piece alone
 
 Each group has a few arrangements taken from the existing rules. For example,
-the sofa stands 0.1 m off its wall, the coffee table 0.47 or 0.54 m in front of
-it, and accent chairs beside the table or across from the sofa.
+the sofa stands 0.08 m off its wall, the coffee table 0.39 or 0.44 m in front of
+it (the check allows 0.38 to 0.50 m), and accent chairs beside the table or
+across from the sofa.
 [Adding a product category](adding-a-product-category.md) explains how a
 category's role decides its group, and when a new category needs its own.
 
 The solver tries each group against every wall, facing into the room, and the
 dining table on a grid of positions. It drops a position that overlaps placed
 furniture, blocks a door or a protected path, or takes the space a bed side, a
-chair pull-out, or a cabinet front needs. When a TV faces the sofa, the sofa can
+chair pull-out, or a cabinet front needs: 0.60 m beside a bed and past its foot
+(0.91 m when the foot strip is the way to a door), 0.46 m behind a dining chair,
+0.60 m behind a desk chair, 0.76 m in front of storage, and 0.56 m in front of a
+sofa. A door's clear zone is as deep as the door is wide. It also keeps the
+whole dining group, chairs included, 0.76 m from the sofa group. When a TV faces the sofa, the sofa can
 also move forward off its wall, so that the viewing distance fits the TV size.
 
 A TV that fits no selected stand hangs on the wall that faces its viewer, with
-its screen center at 1.1 m (seated eye level) and above any stand under it.
+its screen center at 1.1 m (seated eye level), or 1.3 m when it serves a bed,
+and above any stand under it.
 Its viewing distance is still measured and costed. A TV that fits a stand
 stands on it, as before.
 
 In a studio, the TV stand can also stand free as a divider, on the sofa's axis
-and facing it, with the screen near the middle of its viewing range (1.2 to 3.5
+and facing it, with the screen near the middle of its viewing range (1.5 to 2.8
 times the TV width). For example, a 1.2 m TV that the far wall puts 5.3 m from
-the sofa stands 2.8 m from it instead. The checker notes a free-standing stand,
+the sofa stands 2.6 m from it instead. The checker notes a free-standing stand,
 so a wall-backed TV within its range still wins. A floor lamp goes beside the
 sofa or an accent chair; dining chairs count as seats only in a room without
 one.
@@ -382,7 +391,9 @@ displays sit on their supports. It is then analyzed into findings by severity:
   walking paths.
 - **Critical P2:** function problems that block a layout, such as a broken
   seating group.
-- **Other P2:** quality notes that do not block.
+- **Other P2:** quality notes that do not block, such as a piece taller than
+  the sill in front of a window, or a dining light more than 0.90 m above the
+  table.
 
 ### 4d. Review, check, and send
 

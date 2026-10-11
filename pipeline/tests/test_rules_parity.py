@@ -5,6 +5,7 @@ with the legacy uid kept as asset_id so recorded messages still match.
 """
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -17,17 +18,25 @@ from app.rules.layout.cleanup import (
     run_deterministic_p0_cleanup,
     satisfy_sofa_table_gaps,
 )
+from app.rules.layout.metrics import has_blocking_issues
 from app.rules.layout.normalization import normalize_layout
+from app.rules.planner._util import room_scale
 from app.rules.planner.intent_packet import coerce_intent_packet
 from app.rules.planner.room_facts import build_room_context
 from app.rules.planner.seed_guidance import build_seed_guidance
 from app.rules.selection.catalog import catalog_asset
 from app.rules.selection.fit import capped_counts
-from app.rules.selection.validation import validate_selection
+from app.rules.selection.preflight import _layout_preflight_for_assets
+from app.rules.selection.validation import build_instances, validate_selection
 
+# Recorded digests, blocking findings and validity are re-measured at the issue #54 phase 1 rules: per-room size classes
+# (these 20.8 m2 dining rooms are spacious), a door clear zone as deep as the door is wide, a 0.46 m chair pull-out
+# (0.56 m with a path behind) and 0.76 m storage fronts.
 RUNS = json.loads((Path(__file__).parent / "fixtures" / "legacy_runs.json").read_text())
 # Legacy seed and cleanup outputs (livinit_pipeline @ 8ec38ae) on the RUNS variants
-# and on synthetic living, bedroom, studio, and door-to-door rooms built as runtime instances.
+# and on synthetic living, bedroom, studio, and door-to-door rooms built as runtime instances,
+# re-recorded at the issue #54 phase 1 rules (the door clear zone, 1.5 m wall mounts, the new clearances and TV
+# range, TV support checks, the desk check in every room, and the window_front count).
 GOLDEN = json.loads((Path(__file__).parent / "fixtures" / "legacy_seed_cleanup.json").read_text())
 
 
@@ -255,7 +264,7 @@ def test_clear_protected_paths_moves_blocker_off_the_path():
 
 
 def test_satisfy_sofa_table_gaps_moves_table_into_range():
-    # 0.73 m sofa-to-table gap; the valid range is 0.46..0.61 m.
+    # 0.73 m sofa-to-table gap; the valid range is 0.38..0.50 m.
     layout = {
         "sofa_1": {"position": [3.5, 0.5, 0.0], "rotation": [0.0, 0.0, 1.5707963267948966]},
         "coffee_table_1": {"position": [3.5, 2.0, 0.0], "rotation": [0.0, 0.0, 1.5707963267948966]},
@@ -264,3 +273,119 @@ def test_satisfy_sofa_table_gaps_moves_table_into_range():
     assert before["sofa_coffee_table_violations"]
     assert not after["sofa_coffee_table_violations"]
     assert report["planned_moves"][0]["uid"] == "coffee_table_1"
+
+
+# --- issue #54 phase 1: thresholds and bugs, measured on the fixture rooms
+
+
+def _pose(x, y, yaw, z=0.0, **fields):
+    return {"position": [x, y, z], "rotation": [0.0, 0.0, yaw], **fields}
+
+
+def _measure(name, layout, *extra):
+    """analyze_layout on a fixture room, selecting only the placed pieces; `extra` instances are added, or replace
+    the fixture's of the same uid."""
+    _, room, assets = _golden_inputs({"room": name})
+    assets = [asset for asset in [*(asset for asset in assets if asset["uid"] not in {item["uid"] for item in extra}), *extra]
+              if asset["uid"] in layout]
+    room_area, boundary, doors, windows, paths = _room_args(room)
+    return analyze_layout(layout, assets, boundary, doors, room_area, room_windows=windows, protected_paths=paths,
+                          room_type=room["room_type"], wall_height=room["wall_height"])
+
+
+@pytest.mark.parametrize(("gap", "flagged"), [(0.42, False), (0.55, True)])
+def test_sofa_to_coffee_table_gap_is_0_38_to_0_50_m(gap, flagged):
+    # Sofa back on the left wall, front at x = 0.95; the table's near face `gap` beyond it.
+    layout = {"sofa_1": _pose(0.475, 2.25, 0.0), "coffee_table_1": _pose(0.95 + gap + 0.3, 2.25, 0.0)}
+    assert bool(_measure("living", layout)["sofa_coffee_table_violations"]) is flagged
+
+
+@pytest.mark.parametrize(("back_gap", "flagged"), [(0.0, False), (0.2, True)])
+def test_a_flush_sofa_passes_the_wall_gap(back_gap, flagged):
+    layout = {"sofa_1": _pose(0.475 + back_gap, 2.25, 0.0)}
+    assert bool(_measure("living", layout)["sofa_wall_gap_violations"]) is flagged
+
+
+@pytest.mark.parametrize(("front", "flagged"), [(0.60, True), (0.80, False)])
+def test_storage_needs_0_76_m_in_front(front, flagged):
+    # Dresser on the bottom wall facing up, the desk `front` metres in front of it, the bed against the top wall.
+    layout = {"bed_1": _pose(1.2, 2.95, 3 * math.pi / 2), "dresser_1": _pose(3.2, 0.25, math.pi / 2),
+              "desk_1": _pose(3.2, 0.5 + front + 0.3, 3 * math.pi / 2)}
+    issues = _measure("bedroom", layout)
+    assert [row["uid"] for row in issues["storage_access_violations"]] == (["dresser_1"] if flagged else [])
+
+
+def test_a_tv_on_a_stand_gets_the_support_checks():
+    # A tv_stand used to count as a display too, which skipped every TV-to-support check.
+    tv = {**next(asset for asset in GOLDEN["rooms"]["living"]["instances"] if asset["uid"] == "tv_1"),
+          "placement_mode": "tabletop", "paired_support_uid": "tv_stand_1"}
+    layout = {"tv_stand_1": _pose(2.5, 4.275, 3 * math.pi / 2),
+              "tv_1": _pose(2.5, 4.275, 0.0, 0.55, on_top_of="tv_stand_1")}  # turned a quarter off its stand
+    kinds = [row.get("kind") for row in _measure("living", layout, tv)["media_group_violations"]]
+    assert "display_support_rotation" in kinds
+
+
+def test_a_studio_without_a_dining_table_gets_no_dining_findings_and_one_storage_front():
+    # The sofa stands 0.3 m in front of a cabinet; the studio has no dining group.
+    cabinet = {"uid": "cabinet_1", "category": "cabinet", "width": 1.0, "depth": 0.45, "height": 0.9, "placement_mode": "floor"}
+    layout = {"bed_1": _pose(4.5, 5.65, 3 * math.pi / 2), "sofa_1": _pose(5.0, 1.2, math.pi / 2),
+              "cabinet_1": _pose(5.0, 0.225, math.pi / 2)}
+    issues = _measure("studio", layout, cabinet)
+    assert not any(findings for key, findings in issues.items() if key.startswith("dining_"))
+    assert [row["uid"] for row in issues["storage_access_violations"]] == ["cabinet_1"]
+
+
+def test_room_size_classes_follow_the_room_type():
+    _, room = _bedroom((3.75, 4.0), {"bed": 1}, {"bed"})
+    assert room["digest"]["room_scale"] == "medium"  # 15 m2: a normal bedroom
+    assert room_scale(15.0, "living_room") == "compact"
+
+
+def test_a_piece_taller_than_the_sill_in_front_of_a_window_is_a_non_blocking_finding():
+    # The living room's window is on the top wall, x 2.45 to 3.55, sill 0.9 m: a 1.8 m bookcase and a 0.85 m sofa under it.
+    layout = {"bookcase_1": _pose(3.0, 4.3, 3 * math.pi / 2), "sofa_1": _pose(1.2, 4.025, 3 * math.pi / 2)}
+    issues = _measure("living", layout)
+    assert [row["uid"] for row in issues["window_front_violations"]] == ["bookcase_1"]
+    assert not has_blocking_issues(issues)
+
+
+def test_ceiling_mounts_hang_from_the_rooms_wall_height():
+    pendant = {"uid": "pendant_1", "category": "pendant_light", "width": 0.5, "depth": 0.5, "height": 0.6,
+               "placement_mode": "ceiling_mounted"}
+    _, room, assets = _golden_inputs({"room": "living"})
+    room = {**room, "wall_height": 3.2}
+    layout = normalize_layout({"pendant_1": _pose(2.5, 2.25, 0.0)}, [*assets, pendant], room["room_vertices"],
+                              wall_height=room["wall_height"])
+    assert layout["pendant_1"]["position"][2] == pytest.approx(3.2 - 0.6)
+
+    def ceiling_findings(z):
+        return analyze_layout({"pendant_1": _pose(2.5, 2.25, 0.0, z)}, [*assets, pendant], room["room_vertices"], [],
+                              tuple(room["room_area"]), wall_height=room["wall_height"])["ceiling_mount_violations"]
+
+    assert ceiling_findings(2.6) == [] and ceiling_findings(2.8 - 0.6) == ["pendant_1"]
+
+
+@pytest.mark.parametrize("with_table", [True, False])
+def test_a_generic_chair_with_a_dining_table_is_a_dining_chair(with_table):
+    def record(asset_id, category):
+        return {"asset_id": asset_id, "category": category, "width_m": 0.5, "depth_m": 0.5, "height_m": 0.8}
+
+    items = [{"asset": record("chair_7", "chair"), "quantity": 2}]
+    if with_table:
+        items.append({"asset": record("table_3", "dining_table"), "quantity": 1})
+    instances = build_instances(items, {"room_type": "dining_room" if with_table else "living_room"})
+    chairs = [instance for instance in instances if instance["asset_id"] == "chair_7"]
+    expected = "dining_chair" if with_table else "accent_chair"
+    assert [instance["uid"] for instance in chairs] == [f"{expected}_1", f"{expected}_2"]
+
+
+@pytest.mark.parametrize(("height", "error", "warning"), [(1.3, True, False), (0.6, False, True)])
+def test_a_studio_dining_light_hangs_0_76_to_0_90_m_above_the_table(height, error, warning):
+    # Top flush with the 2.7 m ceiling over a 0.75 m table: 0.65 m (too low, blocks) or 1.35 m (too high, advisory).
+    selected = [{"uid": "dining_table_1", "category": "dining_table", "width": 1.2, "depth": 0.8, "height": 0.75},
+                {"uid": "pendant_1", "category": "pendant_light", "width": 0.4, "depth": 0.4, "height": height,
+                 "functional_group": "dining"}]
+    result = _layout_preflight_for_assets(selected_assets=selected, budget=1000.0, total_cost=500.0,
+                                          room={"room_type": "studio", "room_area": (6.0, 6.0), "wall_height": 2.7})
+    assert any("dining light pendant_1" in text for text in result["errors"]) is error
+    assert any("dining light pendant_1" in text for text in result["warnings"]) is warning

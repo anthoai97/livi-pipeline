@@ -1,6 +1,7 @@
 """Aggregate deterministic layout analysis."""
 
 from typing import Any
+from app.rules.pipeline_shared import DEFAULT_WALL_HEIGHT_M
 from app.rules.layout.bedroom import bedroom_layout_measurements
 from app.rules.layout.dining import dining_layout_measurements
 from app.rules.layout.studio import studio_layout_measurements
@@ -11,6 +12,7 @@ from app.rules.layout.constants import (
     ISSUE_KEYS_BY_TIER,
 )
 from app.rules.layout.metrics import has_blocking_issues, issue_counts, serialize_layout_issues
+from app.rules.planner.taxonomy import normalize_category
 
 from app.rules.layout.validation_functional import (
     compute_coffee_table_axis_violations,
@@ -36,6 +38,7 @@ from app.rules.layout.validation_geometry import (
     compute_protected_path_violations,
     compute_wall_aligned_violations,
     compute_wall_mount_violations,
+    compute_window_front_violations,
 )
 
 def analyze_layout(
@@ -48,8 +51,14 @@ def analyze_layout(
     protected_paths: list[dict[str, Any]] | None = None,
     tiers: tuple[str, ...] = ("P0", "P1", "P2"),
     room_type: str = "living_room",
+    wall_height: float = DEFAULT_WALL_HEIGHT_M,
 ) -> dict[str, Any]:
-    """Measure a layout. Returns every issue key, each holding its findings (empty when clean)."""
+    """Measure a layout. Returns every issue key, each holding its findings (empty when clean).
+
+    wall_height is the room's ceiling, for wall and ceiling mounts. The desk chair
+    pull-out (bed_workstation_violations) is measured in every room; a studio's
+    dining checks run only when it has a dining table.
+    """
     issues = {
         "overlaps": [],
         "boundary_violations": [],
@@ -73,6 +82,7 @@ def analyze_layout(
         "floor_lamp_reach_violations": [],
         "table_lamp_support_violations": [],
         "service_corridor_violations": [],
+        "window_front_violations": [],
     }
     if "P0" in tiers:
         issues["overlaps"] = compute_overlaps(layout, assets)
@@ -99,10 +109,12 @@ def analyze_layout(
             layout,
             assets,
             boundary,
+            wall_height,
         )
         issues["ceiling_mount_violations"] = compute_ceiling_mount_violations(
             layout,
             assets,
+            wall_height,
         )
     if "P1" in tiers:
         issues["wall_aligned_violations"] = compute_wall_aligned_violations(
@@ -116,10 +128,15 @@ def analyze_layout(
             protected_paths or [],
         )
     if "P2" in tiers:
-        if room_type in {"bedroom", "studio"}:
-            issues.update(bedroom_layout_measurements(layout, assets, boundary, room_area, mixed_groups=room_type == "studio")["violations"])
-        if room_type in {"dining_room", "studio"}:
-            issues.update(dining_layout_measurements(layout, assets, boundary, room_area, mixed_groups=room_type == "studio")["violations"])
+        studio = room_type == "studio"
+        bedroom = bedroom_layout_measurements(layout, assets, boundary, room_area, room_doors=room_doors,
+                                              mixed_groups=studio)["violations"]
+        issues.update(bedroom if room_type in {"bedroom", "studio"}
+                      else {"bed_workstation_violations": bedroom["bed_workstation_violations"]})
+        if room_type == "dining_room" or (studio and any(
+                normalize_category(asset.get("category")) == "dining_table" for asset in assets)):
+            issues.update(dining_layout_measurements(layout, assets, boundary, room_area, room_doors=room_doors,
+                                                     protected_paths=protected_paths, mixed_groups=studio)["violations"])
         if room_type == "studio":
             issues.update(studio_layout_measurements(layout, assets)["violations"])
         issues["sofa_coffee_table_violations"] = compute_sofa_coffee_table_violations(
@@ -171,6 +188,12 @@ def analyze_layout(
         issues["service_corridor_violations"] = (
             compute_service_corridor_violations(layout, assets)
         )
+        issues["window_front_violations"] = compute_window_front_violations(
+            layout,
+            assets,
+            room_windows,
+            boundary,
+        )
         for key, findings in comfort_layout_measurements(layout, assets, room_type, boundary=boundary)["violations"].items():
             issues[key].extend(findings)
     return issues
@@ -205,6 +228,7 @@ def final_layout_check(
     room_doors: list[dict[str, Any]],
     room_windows: list[dict[str, Any]] | None = None,
     protected_paths: list[dict[str, Any]] | None = None,
+    wall_height: float = DEFAULT_WALL_HEIGHT_M,
 ) -> dict[str, Any]:
     """Final validation from render_scene: every selected instance placed exactly once and no blocking finding.
 
@@ -224,6 +248,7 @@ def final_layout_check(
     issues = analyze_layout(
         layout, assets, room_vertices, room_doors, tuple(room_area),
         room_windows=room_windows or [], protected_paths=protected_paths or [], room_type=room_type,
+        wall_height=wall_height,
     )
     valid = not has_blocking_issues(issues)
     counts = issue_counts(issues)

@@ -114,15 +114,23 @@ def build_instances(items: list[dict[str, Any]], intent: dict[str, Any]) -> list
     items: [{"asset": <pipeline_assets_v2 record>, "quantity": int, optional
     reason/functional_group/functional_role/viewing_target}]. Each instance is
     the record plus catalog_asset fields, keyed uid = instance_key =
-    "<normalized category>_<n>" (n counts per category from 1). A TV that fits a
-    selected media support becomes tabletop with paired_support_uid, any other
-    TV wall_mounted; studio media gets its viewing_target.
+    "<normalized category>_<n>" (n counts per category from 1). A generic
+    `chair` selected with a dining table, and not marked living seating, is a
+    dining_chair. A TV that fits a selected media support becomes tabletop with
+    paired_support_uid, any other TV wall_mounted; studio media gets its
+    viewing_target, and a bedroom TV serves the bed.
     """
     counts: Counter[str] = Counter()
     instances: list[dict[str, Any]] = []
+    dining = any(normalize_category(item["asset"].get("category")) == "dining_table" for item in items)
     for item in items:
         asset = catalog_asset(item["asset"])
         extras = {key: item[key] for key in _ITEM_FIELDS if item.get(key)}
+        if (dining and str(asset.get("category") or "").strip().lower() == "chair"
+                and extras.get("functional_role", "dining_seating") == "dining_seating"):
+            asset["category"] = "dining_chair"
+        if intent.get("room_type") == "bedroom" and normalize_category(asset.get("category")) == "tv":
+            asset.setdefault("viewing_target", "bed")
         category = normalize_category(asset.get("category")) or "asset"
         for _ in range(int(item.get("quantity") or 0)):
             counts[category] += 1
@@ -412,7 +420,7 @@ def validate_selection(
             normalize_category(assets_by_uid[uid].get("category")) == "bed"
             for uid in canonical_uids if uid in assets_by_uid
         )
-        if bed_count > 1 or bed_count != 1:
+        if bed_count != 1:
             errors.append(
                 "BED COUNT: A sleeping room requires exactly one complete adult bed (category=bed)."
             )

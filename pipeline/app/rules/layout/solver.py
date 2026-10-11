@@ -9,7 +9,7 @@ from the ported rules: the canonical living-group poses, the dining fit envelope
 and chair offsets, and the seed's bedside, side-table and desk-chair targets. They
 also name the service bands their members need clear (bed sides and foot, chair
 pull-out, desk-chair pull-out, sofa front, storage fronts where the room measures
-them), built like comfort's sofa band.
+them), built like comfort's sofa band, each as wide as its check asks.
 
 Wall groups take the seed's wall candidates for the group's footprint box, facing
 into the room. The sofa keeps the wall gap sofa_wall_gap accepts, so a TV reaches
@@ -33,13 +33,14 @@ Groups are placed in order: sleeping and sitting (largest first), the left-out
 seats, media, dining, work, floor lamps, wall pieces, floor pieces. A candidate
 must first pass the seed's cheap checks (inside the room, clear of placed
 furniture, door clearances, protected paths, windows for TV items) plus the
-reserved bands and the living-dining gap. The best SHORTLIST candidates of each
-partial layout are measured with analyze_layout, and the best BEAM_WIDTH partial
-layouts continue, the best of each zone plan first: the wall each sleeping,
-sitting, media, or work group backs onto (or a divider TV) and the room quadrant
-of the dining table. Then the best of each zone plan and set of walls the wall
-pieces back onto, so with fewer zone plans than beam slots the kept layouts
-differ in where a wardrobe or dresser stands. A dining table prefers the room
+reserved bands and the living-dining gap (to the dining table and its chairs).
+The best SHORTLIST candidates of each partial layout are measured with
+analyze_layout, and the best BEAM_WIDTH partial layouts continue, the best of
+each zone plan first: the wall each sleeping, sitting, media, or work group
+backs onto (or a divider TV) and the room quadrant of the dining table. Then
+the best of each zone plan and set of walls the wall pieces back onto, so with
+fewer zone plans than beam slots the kept layouts differ in where a wardrobe or
+dresser stands. A dining table prefers the room
 center, except in a studio or living room, where it prefers a wall.
 
 Each complete group layout then gets its accessories (table
@@ -97,11 +98,12 @@ from app.rules.geometry.primitives import (
     room_polygon,
 )
 from app.rules.layout.analysis import analyze_layout
-from app.rules.layout.bedroom import BED_ACCESS_MIN_M, is_bedside_asset
-from app.rules.layout.comfort import TV_VIEW_WIDTH_RANGE
+from app.rules.layout.bedroom import BED_ACCESS_MIN_M, STORAGE_FRONT_M, bed_foot_access_m, is_bedside_asset
+from app.rules.layout.comfort import SOFA_MEDIA_ACCESS_MIN_M, TV_VIEW_WIDTH_RANGE
 from app.rules.layout.constants import (
     COFFEE_TABLE_ROLE_KEYWORDS,
     CRITICAL_LIVING_GROUP_KINDS,
+    DINING_PULLOUT_M,
     FLOOR_LAMP_REACH_RANGE_M,
     FLOOR_LAMP_WALL_MAX_GAP_M,
     LIVING_DINING_CLEARANCE_M,
@@ -156,7 +158,6 @@ DINING_UNBALANCED_COST = 0.5  # template cost of a chair arrangement other than 
 # The middle and low end of the sofa-to-table range, as legacy repack_living_group tries.
 SOFA_TABLE_GAPS_M = (sum(SOFA_COFFEE_TABLE_DISTANCE_RANGE_M) / 2, SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[0] + 0.01)
 SOFA_WALL_GAP_M = sum(SOFA_BACK_WALL_DISTANCE_RANGE_M) / 2
-ACCESS_M = BED_ACCESS_MIN_M  # every service band; the bed, dining, storage, and sofa-console checks all use 0.56 m
 MEDIA_PULL_M = WALL_FLUSH_MAX_GAP_M - _SEED_MARGIN - 0.01  # a pulled media group stays inside the wall-flush gap
 ZONE_KINDS = ("sleeping", "sitting", "media", "dining", "work")  # the functional groups a zone plan names
 DINING_WALL_COST = 0.1  # per metre from a studio or living-room dining group to its nearest wall
@@ -172,7 +173,9 @@ _STORAGE_FRONTS = {  # storage whose front band the room's checker measures (bed
 class _Template:
     name: str
     poses: dict[str, Pose]  # in the group frame: wall groups face +y with the wall behind y = 0
-    bands: tuple[tuple[str, str], ...] = ()  # (uid, front | back | left | right) bands other furniture leaves clear
+    # (uid, front | back | left | right | foot, width) bands other furniture leaves clear; a bed's foot band
+    # takes its width from bed_foot_access_m at the bed's pose
+    bands: tuple[tuple[str, str, float], ...] = ()
     penalty: float = 0.0
 
 
@@ -235,14 +238,15 @@ class _Room:
     def mount_z(self, uid: str) -> float:
         """The bottom z of a wall-mounted item, above the support under a wall TV."""
         support = self.mounted.get(uid)
-        return _wall_mount_z(self.assets[uid], float(self.assets[support].get("height") or 0) if support else 0.0)
+        return _wall_mount_z(self.assets[uid], self.room["wall_height"],
+                             float(self.assets[support].get("height") or 0) if support else 0.0)
 
     def analyze(self, layout: Record) -> Record:
         room = self.room
         self.stats["scored"] += 1
         return analyze_layout(layout, self.instances, room["room_vertices"], room["room_doors"], self.area,
                               room_windows=room["room_windows"], protected_paths=room["protected_paths"],
-                              room_type=room["room_type"])
+                              room_type=room["room_type"], wall_height=room["wall_height"])
 
 
 def solve_layout(instances: list[Record], room: Record, intent: Record) -> tuple[Record, Record]:
@@ -272,7 +276,8 @@ def solve_layout(instances: list[Record], room: Record, intent: Record) -> tuple
     complete = []
     for partial in beam:
         layout, skipped = _accessorize(ctx, partial)
-        layout = normalize_layout(layout, instances, room["room_vertices"], room_windows=None, rehome_service_items=False)
+        layout = normalize_layout(layout, instances, room["room_vertices"], room_windows=None, rehome_service_items=False,
+                                  wall_height=room["wall_height"])
         issues = ctx.analyze(layout)
         unplaceable = sorted({*partial.unplaceable, *skipped})
         score = (layout_issue_score(issues), layout_issue_magnitudes(issues), len(unplaceable), partial.preference)
@@ -413,7 +418,7 @@ def _groups(ctx: _Room) -> list[_Group]:
             continue
         mode = ctx.plan["placement_mode_by_uid"].get(uid)
         kind = "lamp" if mode == "beside_seat" else "wall" if mode in _WALL_MODES else "free"
-        bands = ((uid, "front"),) if category[uid] in fronts else ()
+        bands = ((uid, "front", STORAGE_FRONT_M),) if category[uid] in fronts else ()
         singles.append(_Group(kind, (_Template(uid, {uid: (0.0, 0.0, 0.0)}, bands),)))
     seat_groups = [_Group("seat", (_Template(uid, {uid: (0.0, 0.0, 0.0)}),)) for uid in seats]
     sitting = next((n + 1 for n, group in enumerate(groups) if group.kind == "sitting"), 0)
@@ -434,7 +439,8 @@ def _sleeping_templates(ctx: _Room, bed: str, bedsides: list[str]) -> tuple[_Tem
     """Headboard on the wall line; bedside pieces at the seed's beside_bed_head targets.
 
     The bed needs its foot band and at least one side band clear; a one-sided
-    template costs a little more, so both sides stay clear when the room allows.
+    template costs a little more, so both sides stay clear when the room allows
+    (the checker needs both for a wide bed outside a compact room).
     """
     width, depth = ctx.dims(bed)
     sides = [(1, -1)] if len(bedsides) != 1 else [(1,), (-1,)]
@@ -445,7 +451,8 @@ def _sleeping_templates(ctx: _Room, bed: str, bedsides: list[str]) -> tuple[_Tem
             # Seed beside_bed_head: head-aligned, 0.05 m beside the bed, lateral (-sin, cos) of the bed yaw.
             poses[uid] = (-sign * (width / 2 + ctx.dims(uid)[0] / 2 + 0.05), ctx.dims(uid)[1] / 2, math.pi / 2)
         for name, penalty, bands in (("both", 0.0, ("left", "right")), ("left", 0.5, ("left",)), ("right", 0.5, ("right",))):
-            templates.append(_Template(f"bed {signs} {name}", poses, ((bed, "front"), *((bed, side) for side in bands)), penalty))
+            templates.append(_Template(f"bed {signs} {name}", poses,
+                                       ((bed, "foot", BED_ACCESS_MIN_M), *((bed, side, BED_ACCESS_MIN_M) for side in bands)), penalty))
     return tuple(templates)
 
 
@@ -492,7 +499,7 @@ def _sitting_templates(
         facing = sum(1 for uid in seats if uid in relative and relative[uid][2] == -math.pi / 2)
         # Without its seats (they then take the seed's around-anchor candidates), only when nothing else fits.
         penalty = 1.0 if name == "core" else (0.3 * facing if media else 0.0) + (0.05 if name.endswith(" slid") else 0.0)
-        templates.append(_Template(name, poses, ((sofa, "front"),), penalty))
+        templates.append(_Template(name, poses, ((sofa, "front", SOFA_MEDIA_ACCESS_MIN_M),), penalty))
     return tuple(templates)
 
 
@@ -535,7 +542,7 @@ def _dining_templates(ctx: _Room, table: str, chairs: list[str], lights: list[st
                 normal = offsets[uid]["front_or_back" if edge in {"front", "back"} else "left_or_right"]
                 poses[uid] = {"front": (along, normal, 3 * math.pi / 2), "back": (along, -normal, math.pi / 2),
                               "left": (-normal, along, 0.0), "right": (normal, along, math.pi)}[edge]
-        templates.append(_Template(f"dining {option['chairs_per_edge']}", poses, tuple((uid, "back") for uid in chairs),
+        templates.append(_Template(f"dining {option['chairs_per_edge']}", poses, tuple((uid, "back", DINING_PULLOUT_M) for uid in chairs),
                                    DINING_UNBALANCED_COST if rank else 0.0))
     return tuple(templates)
 
@@ -546,7 +553,7 @@ def _work_templates(ctx: _Room, desk: str, chair: str | None) -> tuple[_Template
     poses = {desk: (0.0, depth / 2, math.pi / 2)}
     if chair:
         poses[chair] = (0.0, depth + 0.35 + ctx.dims(chair)[1] / 2, 3 * math.pi / 2)
-    return (_Template("desk", poses, ((chair, "back"),) if chair else ()),)
+    return (_Template("desk", poses, ((chair, "back", BED_ACCESS_MIN_M),) if chair else ()),)
 
 
 # --- candidates and checks ---------------------------------------------------
@@ -664,13 +671,15 @@ def _ray_hit(ctx: _Room, x: float, y: float, yaw: float) -> tuple[float, float] 
 def _bands(ctx: _Room, template: _Template, poses: dict[str, Pose]) -> list[Polygon]:
     """Service bands, built like comfort's sofa band: the member's footprint frame, offset past one edge."""
     bands = []
-    for uid, side in template.bands:
+    for uid, side, access in template.bands:
         x, y, yaw = poses[uid]
         width, depth = ctx.dims(uid)
-        forward, lateral = {"front": ((depth + ACCESS_M) / 2, 0.0), "back": (-(depth + ACCESS_M) / 2, 0.0),
-                            "left": (0.0, (width + ACCESS_M) / 2), "right": (0.0, -(width + ACCESS_M) / 2)}[side]
+        if side == "foot":
+            side, access = "front", bed_foot_access_m([x, y], yaw, depth, ctx.doors)
+        forward, lateral = {"front": ((depth + access) / 2, 0.0), "back": (-(depth + access) / 2, 0.0),
+                            "left": (0.0, (width + access) / 2), "right": (0.0, -(width + access) / 2)}[side]
         center = [x + forward * math.cos(yaw) - lateral * math.sin(yaw), y + forward * math.sin(yaw) + lateral * math.cos(yaw), 0.0]
-        bands.append(asset_polygon(center, yaw, *((width, ACCESS_M) if side in {"front", "back"} else (ACCESS_M, depth))))
+        bands.append(asset_polygon(center, yaw, *((width, access) if side in {"front", "back"} else (access, depth))))
     return bands
 
 
@@ -734,7 +743,8 @@ def _living(ctx: _Room, poses: dict[str, Pose]) -> set[str]:
 
 
 def _is_dining_table(ctx: _Room, uid: str) -> bool:
-    return normalize_category(ctx.assets[uid].get("category")) == "dining_table"
+    """A dining table or chair: the living-dining gap keeps the whole seated group clear of living pieces."""
+    return normalize_category(ctx.assets[uid].get("category")) in {"dining_table", "dining_chair"}
 
 
 def _preference(ctx: _Room, parent: _Partial, group: _Group, template: _Template, key: tuple,
@@ -849,7 +859,7 @@ def _placement(ctx: _Room, uid: str, x: float, y: float, yaw: float) -> Record:
         entry["position"][2] = support_top_z(ctx.assets[ctx.supports[uid]], 0.0)
         entry["on_top_of"] = ctx.supports[uid]
     elif placement_mode_for_asset(asset) == "ceiling_mounted":
-        entry["position"][2] = ceiling_mount_z(asset.get("height"))
+        entry["position"][2] = ceiling_mount_z(asset.get("height"), ctx.room["wall_height"])
     elif placement_mode_for_asset(asset) == "wall_mounted":
         entry["position"][2] = ctx.mount_z(uid)
     return entry
@@ -942,7 +952,7 @@ def _accessorize(ctx: _Room, partial: _Partial) -> tuple[Record, list[str]]:
     layout, report = generate_deterministic_layout_with_report(
         instances, ctx.area, room_vertices=room["room_vertices"], room_doors=room["room_doors"],
         room_windows=room["room_windows"], planner_guidance=ctx.guidance, protected_paths=room["protected_paths"],
-        placed=partial.layout,
+        placed=partial.layout, wall_height=room["wall_height"],
     )
     skipped = [outcome["uid"] for outcome in report["skipped"]]
     for uid in skipped:

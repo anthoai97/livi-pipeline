@@ -299,6 +299,23 @@ above 3.0 by more than chance (0.5), studio overall and use of space above
 3.0, no case's layout quality down by more than 0.5, every design delivered,
 selection turns not up by more than one on average.
 
+## Changes during implementation
+
+Phase 1:
+
+- The dining light's 0.90 m maximum is advisory: a non-critical
+  `light_too_high_over_table` finding and a preflight warning. Pendants hang
+  flush to the ceiling, so a blocking maximum would reject most catalog
+  pendants. Below 0.76 m stays critical and a preflight error.
+- The solver's living-dining gap measures the dining chairs as well as the
+  table, so the seated group stays clear of the sofa. The new thresholds had
+  tipped a tie in the golden studio toward chairs beside the sofa.
+- `WALL_MOUNT_Z` (now 1.5 m) is the bottom of wall art, not its center, as it
+  was before; switching to a center height conflicts with the wall-mount
+  check's 1.2 m minimum. Left for a later change.
+- Not done: the solver costs for a rug 0.3 m wider than the sofa and a 0.65 m
+  seat pitch.
+
 ## Unresolved questions
 
 None. The values were chosen from design practice as asked; any row above can

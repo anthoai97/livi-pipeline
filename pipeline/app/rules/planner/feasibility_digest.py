@@ -157,7 +157,7 @@ def build_feasibility_digest(
     area_sqm = float(summary.get("area") or room_facts.get("area") or 0.0)
     door_count = int(opening_counts.get("doors") or 0)
     window_count = int(opening_counts.get("windows") or 0)
-    room_scale = _room_scale(area_sqm)
+    room_scale = _room_scale(area_sqm, room_type)
 
     blocked_zones = room_facts.get("blocked_zones") or []
     door_clearance_area_sqm = sum(

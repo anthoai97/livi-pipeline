@@ -31,7 +31,7 @@ UNFIT = ("run0", "1")
 def blocking(layout, assets, room):
     issues = analyze_layout(layout, assets, room["room_vertices"], room["room_doors"], tuple(room["room_area"]),
                             room_windows=room["room_windows"], protected_paths=room["protected_paths"],
-                            room_type=room["room_type"])
+                            room_type=room["room_type"], wall_height=room["wall_height"])
     levels = findings_by_level(issues)
     return {**levels["P0"], **levels["P1"], **levels["critical_p2"]}
 
@@ -81,10 +81,11 @@ def test_solver_keeps_a_protected_path_and_its_doorways_clear():
 
 
 def test_media_pulls_off_its_wall_to_bring_the_tv_into_its_viewing_range():
-    # A 1.2 m TV prefers 1.44 to 4.2 m; across the 5 m side of the benchmark living room a flush stand sees it from about 4.3 m.
+    # A 1.52 m TV prefers 2.28 to 4.26 m (1.5 to 2.8 x its width); across the 5 m side of the benchmark living room a
+    # flush stand sees it from about 4.37 m.
     request = BENCHMARK["living_room"]
     spec = GOLDEN["rooms"]["living"]
-    assets = [{**asset, "width": 1.2, "placement_mode": "tabletop", "paired_support_uid": "tv_stand_1"}
+    assets = [{**asset, "width": 1.52, "placement_mode": "tabletop", "paired_support_uid": "tv_stand_1"}
               if asset["category"] == "tv" else asset for asset in spec["instances"]]
     intent = coerce_intent_packet(spec["intent"], room_type="living_room")
     room = build_room_context(room_type="living_room", room_area=request["room_area"], room_vertices=request["room_vertices"],
@@ -101,7 +102,7 @@ def test_media_pulls_off_its_wall_to_bring_the_tv_into_its_viewing_range():
 
 
 def test_studio_tv_stands_free_on_the_sofa_axis_when_the_far_wall_is_out_of_range():
-    # Across the 6.4 m studio a wall-backed 1.2 m TV is seen from 5.3 m, past its 1.44 to 4.2 m range.
+    # Across the 6.4 m studio a wall-backed 1.2 m TV is seen from 5.3 m, past its 1.8 to 3.36 m range.
     intent, room, assets = _golden_inputs({"room": "studio"})
     assets = [{**asset, "placement_mode": "tabletop", "paired_support_uid": "tv_stand_1"}
               if asset["category"] == "tv" else asset for asset in assets]
@@ -219,10 +220,11 @@ def test_studio_layouts_on_offer_differ_in_their_zone_plans():
 
 
 def test_a_bed_that_fits_one_wall_leaves_layouts_that_differ_in_a_storage_wall():
-    # 2.6 m wide with the door on a short wall: the bed backs onto the far wall in every layout, so only the storage can move.
+    # 2.6 x 4.0 m with the door on a short wall: the bed backs onto the far wall in every layout, so only the storage can move.
+    # (At 3.6 m deep the 0.76 m storage fronts leave the storage a single arrangement.)
     intent = coerce_intent_packet({"normalized_prompt": "a calm bedroom", "requested_categories": ["bed", "dresser", "wardrobe"]},
                                   room_type="bedroom")
-    room = build_room_context(room_type="bedroom", room_area=[2.6, 3.6], room_vertices=[[0, 0], [2.6, 0], [2.6, 3.6], [0, 3.6]],
+    room = build_room_context(room_type="bedroom", room_area=[2.6, 4.0], room_vertices=[[0, 0], [2.6, 0], [2.6, 4.0], [0, 4.0]],
                               wall_height=2.7, room_doors=[{"center": [1.3, 0.0], "width": 0.8, "depth": 0.05, "height": 2.08}],
                               room_windows=[], intent=intent)
     assets = [item("bed_1", "bed", 1.4, 2.0, 1.0), item("dresser_1", "dresser", 1.0, 0.45, 0.8),

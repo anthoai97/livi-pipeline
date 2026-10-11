@@ -15,6 +15,7 @@ from app.rules.layout_rules import WALL_FLUSH_MAX_GAP_M
 from app.rules.layout.studio import is_freestanding_studio_media_support
 from app.rules.planner.taxonomy import SEATING_ROLE_KEYWORDS, SOFA_ROLE_KEYWORDS
 from app.rules.pipeline_shared import (
+    DEFAULT_WALL_HEIGHT_M,
     RoomWall,
     ceiling_mount_z,
     clamp,
@@ -155,6 +156,7 @@ def _snap_wall_mounted_positions(
     layout: dict[str, Any],
     assets: list[dict[str, Any]],
     boundary: list[list[float]],
+    wall_height: float,
 ) -> dict[str, Any]:
     result = {uid: dict(placement) for uid, placement in layout.items()}
     for uid, placement in result.items():
@@ -171,7 +173,7 @@ def _snap_wall_mounted_positions(
             continue
         result[uid] = {
             **placement,
-            "position": [flush[0], flush[1], _wall_mount_z(asset)],
+            "position": [flush[0], flush[1], _wall_mount_z(asset, wall_height)],
             "rotation": [0, 0, _inward_rotation_for_wall(wall.name)],
         }
     return result
@@ -551,6 +553,7 @@ def _rehome_service_items(
 def _correct_z(
     layout: dict[str, Any],
     assets: list[dict[str, Any]],
+    wall_height: float = DEFAULT_WALL_HEIGHT_M,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {uid: {**placement} for uid, placement in layout.items()}
     support_child_counts: dict[str, int] = {}
@@ -597,7 +600,7 @@ def _correct_z(
                 )
             pos[2] = support_top_z(parent_asset, p_pos[2])
         elif ceiling_mounted:
-            pos[2] = ceiling_mount_z(asset.get("height", 0.3))
+            pos[2] = ceiling_mount_z(asset.get("height", 0.3), wall_height)
         elif floor_only:
             pos[2] = 0.0
         elif wall_mounted:
@@ -605,7 +608,7 @@ def _correct_z(
             footprint = asset_polygon(pos, rot_z, width, depth)
             below = max((float(item.asset.get("height") or 0) for item in floor_assets(result, assets, skip_rugs=True)
                          if item.uid != uid and item.poly.distance(footprint) <= WALL_TV_SUPPORT_GAP_M), default=0.0)
-            pos[2] = _wall_mount_z(asset, below)
+            pos[2] = _wall_mount_z(asset, wall_height, below)
 
         normalized = {**placement, "position": pos}
         if parent_placement and not ceiling_mounted and not floor_only:
@@ -621,16 +624,18 @@ def normalize_layout(
     boundary: list[list[float]],
     room_windows: list[dict[str, Any]] | None = None,
     rehome_service_items: bool = True,
+    wall_height: float = DEFAULT_WALL_HEIGHT_M,
 ) -> dict[str, Any]:
     """Canonicalize a layout within the room polygon.
 
     Snaps wall-aligned and wall-mounted items, fits rugs, shifts sofas clear of
     windows, seats displays on their supports, rehomes side tables and floor
-    lamps, and sets heights. Returns a new layout keyed like the input. Legacy
-    fresh designs pass room_windows=None and rehome_service_items=False.
+    lamps, and sets heights under the room's wall_height. Returns a new layout
+    keyed like the input. Legacy fresh designs pass room_windows=None and
+    rehome_service_items=False.
     """
     result = _snap_wall_aligned_placements(layout, assets, boundary)
-    result = _snap_wall_mounted_positions(result, assets, boundary)
+    result = _snap_wall_mounted_positions(result, assets, boundary, wall_height)
     result = _fit_rugs_to_room(result, assets, boundary)
     result = _shift_sofas_clear_of_windows(
         result,
@@ -641,7 +646,7 @@ def normalize_layout(
     result = _align_media_displays_to_supports(result, assets)
     if rehome_service_items:
         result = _rehome_service_items(result, assets, boundary)
-    return _correct_z(result, assets)
+    return _correct_z(result, assets, wall_height)
 
 def move_asset_with_supports(
     layout: dict[str, Any],

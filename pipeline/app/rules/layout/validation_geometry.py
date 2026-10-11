@@ -9,7 +9,7 @@ from app.rules.layout_rules import WALL_FLUSH_MAX_GAP_M
 from app.rules.layout.studio import is_freestanding_studio_media_support
 from app.rules.planner.taxonomy import SOFA_ROLE_KEYWORDS
 from app.rules.pipeline_shared import (
-    CEILING_HEIGHT_M,
+    DEFAULT_WALL_HEIGHT_M,
     ceiling_mount_z,
     is_wall_aligned_asset,
     matches_category_keywords,
@@ -38,6 +38,7 @@ from app.rules.layout.relations import (
     _matches_item,
     _supported_parent_uid,
     _wall_mount_z,
+    _window_seating_clearance_poly,
     floor_assets,
 )
 
@@ -114,7 +115,7 @@ def wall_mount_placement_facts(
             continue
         width, depth = float(asset.get("width") or 0), float(asset.get("depth") or 0)
         height = float(asset.get("height") or 0)
-        z = float((placement.get("position") or [0, 0, _wall_mount_z(asset)])[2])
+        z = float((placement.get("position") or [0, 0, _wall_mount_z(asset, DEFAULT_WALL_HEIGHT_M)])[2])
         walls = []
         for wall in room_walls(boundary):
             yaw = _inward_rotation_for_wall(wall.name)
@@ -247,6 +248,7 @@ def compute_wall_mount_violations(
     layout: dict[str, Any],
     assets: list[dict[str, Any]],
     boundary: list[list[float]],
+    wall_height: float = DEFAULT_WALL_HEIGHT_M,
 ) -> list[str]:
     room_poly = Polygon([(point[0], point[1]) for point in boundary])
     exterior = room_poly.exterior
@@ -262,9 +264,9 @@ def compute_wall_mount_violations(
         height = float(asset.get("height", 0.0) or 0.0)
         if (
             exterior.distance(point) > WALL_MOUNT_WALL_THRESHOLD
-            or (pos[2] < 1.2 and height <= CEILING_HEIGHT_M - 1.2 and not _is_media_display_asset(asset, uid))
+            or (pos[2] < 1.2 and height <= wall_height - 1.2 and not _is_media_display_asset(asset, uid))
             or pos[2] < 0
-            or pos[2] + height > CEILING_HEIGHT_M + 1e-6
+            or pos[2] + height > wall_height + 1e-6
             or not _is_near_cardinal(rotation_z)
             or _back_wall_name(rotation_z) != nearest_wall(pos, boundary).name
         ):
@@ -274,6 +276,7 @@ def compute_wall_mount_violations(
 def compute_ceiling_mount_violations(
     layout: dict[str, Any],
     assets: list[dict[str, Any]],
+    wall_height: float = DEFAULT_WALL_HEIGHT_M,
 ) -> list[str]:
     violations = []
     for uid, placement in layout.items():
@@ -281,9 +284,28 @@ def compute_ceiling_mount_violations(
         if not _is_ceiling_mounted_layout_asset(asset, uid):
             continue
         pos, _, _, _, _ = extract_placement(placement, asset)
-        expected = ceiling_mount_z(asset.get("height", 0.3))
+        expected = ceiling_mount_z(asset.get("height", 0.3), wall_height)
         if abs(pos[2] - expected) > 0.05:
             violations.append(uid)
+    return violations
+
+def compute_window_front_violations(
+    layout: dict[str, Any],
+    assets: list[dict[str, Any]],
+    room_windows: list[dict[str, Any]] | None,
+    boundary: list[list[float]],
+) -> list[dict[str, Any]]:
+    """Floor pieces taller than a window's sill standing in the strip in front of it (advisory)."""
+    violations = []
+    for index, window in enumerate(room_windows or []):
+        sill = window.get("sill_height")
+        sill = 0.9 if sill is None else float(sill)
+        strip = _window_seating_clearance_poly(window, boundary)
+        for item in floor_assets(layout, assets, skip_rugs=True):
+            height = float(item.asset.get("height") or 0.0)
+            if height > sill + 1e-6 and item.poly.intersection(strip).area > 1e-6:
+                violations.append({"uid": item.uid, "window": index, "kind": "tall_piece_in_front_of_window",
+                                   "height_m": height, "sill_height_m": sill})
     return violations
 
 def compute_wall_aligned_violations(

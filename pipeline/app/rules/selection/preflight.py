@@ -3,7 +3,7 @@
 from typing import Any
 from app.rules.geometry.primitives import room_polygon
 from app.rules.layout.dining import dining_fit_envelopes
-from app.rules.layout.constants import DINING_LIGHT_TABLE_MIN_GAP_M
+from app.rules.layout.constants import DINING_LIGHT_TABLE_MAX_GAP_M, DINING_LIGHT_TABLE_MIN_GAP_M
 from app.rules.categories import is_ceiling_mounted_asset
 from app.rules.pipeline_shared import ceiling_mount_z
 
@@ -697,17 +697,26 @@ def _layout_preflight_for_assets(
                 "select smaller dining pieces if circulation is tight."
             )
 
-    if dining_tables and room.get("room_type") == "dining_room":
+    studio = room.get("room_type") == "studio"
+    if dining_tables and (studio or room.get("room_type") == "dining_room"):
         tabletop_z = max(float(table.get("height") or 0) for table in dining_tables)
         for asset in selected_assets:
             if not is_ceiling_mounted_asset(asset.get("category", ""), asset.get("uid", "")):
                 continue
-            gap = ceiling_mount_z(float(asset.get("height") or 0)) - tabletop_z
+            if studio and asset.get("functional_group") != "dining":
+                continue  # A studio's other ceiling lights do not hang over the table.
+            gap = ceiling_mount_z(float(asset.get("height") or 0), room["wall_height"]) - tabletop_z
             if gap < DINING_LIGHT_TABLE_MIN_GAP_M - 1e-6:
                 errors.append(
                     f"{LAYOUT_PREFLIGHT_PREFIX}: dining light {_asset_uid(asset)} leaves only {gap:.2f}m "
                     f"above the tabletop; at least {DINING_LIGHT_TABLE_MIN_GAP_M:.2f}m is required. "
                     "Choose a shorter model or omit this optional fixture. Its hanger cannot be shortened by layout."
+                )
+            elif gap > DINING_LIGHT_TABLE_MAX_GAP_M + 1e-6:
+                warnings.append(
+                    f"{LAYOUT_PREFLIGHT_PREFIX}: dining light {_asset_uid(asset)} hangs {gap:.2f}m above the tabletop "
+                    f"under this {float(room['wall_height']):.2f}m ceiling; {DINING_LIGHT_TABLE_MIN_GAP_M:.2f}-"
+                    f"{DINING_LIGHT_TABLE_MAX_GAP_M:.2f}m is best. A taller model hangs lower."
                 )
 
     floor_lamps = [

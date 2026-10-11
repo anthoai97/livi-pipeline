@@ -49,6 +49,8 @@ INSTANCE_KEYS = {
     "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4": "planter_1",
 }
 PLACEMENTS = {INSTANCE_KEYS[uid]: pose for uid, pose in LAYOUT.items()}
+# The recorded sideboard faced the table across 0.60 m; the 0.76 m storage front slides it along its wall past the table.
+PLACEMENTS["sideboard_1"] = {**PLACEMENTS["sideboard_1"], "position": [PLACEMENTS["sideboard_1"]["position"][0], 3.6, 0.0]}
 TABLE_CENTER = PLACEMENTS["dining_table_1"]["position"]
 
 

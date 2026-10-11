@@ -29,10 +29,11 @@ designs built from real catalog products in about 30 seconds.
 
 ## Demo
 
-The last 40 seconds of a living room session. The user compares the designs,
-inspects their products, rotates the room and saves a design to Studio.
+The first 40 seconds of a living room session. The user fills in the brief,
+the pipeline reads the room and picks the products, and the first design loads
+into the room while the other two finish.
 
-![Living room design comparison and Studio view](docs/demo.gif)
+![Living room brief and design generation](docs/demo.gif)
 
 ## Technical stack
 

@@ -3,7 +3,7 @@
 Issue: [#5](https://github.com/anthoai97/livi-pipeline/issues/5). Parent: [#1](https://github.com/anthoai97/livi-pipeline/issues/1).
 Status: stage 1 is implemented and benchmarked, and it misses the 60-second target. It is
 checkpointed in draft PR [#9](https://github.com/anthoai97/livi-pipeline/pull/9), and its
-results are in [phase 4 benchmark](../pipeline/phase-4-benchmark.md). Stage 2, the
+results are in phase 4 benchmark (removed on 2026-10-11). Stage 2, the
 [three-step flow](#stage-2-three-step-flow), is ready for implementation on branch
 `issue-5-three-step-flow`. Phase 3 ([#4](https://github.com/anthoai97/livi-pipeline/issues/4)) is implemented.
 
@@ -17,7 +17,7 @@ under the current rules, so that a request returns three valid layouts in under
 
 ## Current behavior
 
-Measured on the four phase 3 runs ([phase 3 local runs](../pipeline/phase-3-local-runs.md),
+Measured on the four phase 3 runs (phase 3 local runs (removed on 2026-10-11),
 records in `pipeline/.data/runs/`):
 
 - Full requests took 44 to 154 s. Interpretation (6.5 to 8.6 s) and retrieval
@@ -484,7 +484,7 @@ rules do not catch. Fixes in progress:
 | [pipeline/app/llm.py](../../pipeline/app/llm.py) | Edit | Duplicate slow calls. | Caps thinking tails. |
 | [pipeline/app/jev.py](../../pipeline/app/jev.py) | Edit | Read `PLACEMENT` with the other switches. Phase 5 drops `check` and `REFINEMENT`. | Switches. |
 | [pipeline/app/rules/planner/seed_guidance.py](../../pipeline/app/rules/planner/seed_guidance.py), [pipeline/app/rules/geometry/candidates.py](../../pipeline/app/rules/geometry/candidates.py) | Edit if needed | Expose group roles and candidate generators to the solver. | Reuse the seed rules. |
-| [pipeline/README.md](../../pipeline/README.md), [docs/pipeline/pipeline-overview.md](../pipeline/pipeline-overview.md), [docs/pipeline/phase-4-benchmark.md](../pipeline/phase-4-benchmark.md) | Edit | New flow, switches, and results. | Docs. |
+| [pipeline/README.md](../../pipeline/README.md), [docs/pipeline/pipeline-overview.md](../pipeline/pipeline-overview.md), docs/pipeline/phase-4-benchmark.md (removed on 2026-10-11) | Edit | New flow, switches, and results. | Docs. |
 
 ### Acceptance criteria
 

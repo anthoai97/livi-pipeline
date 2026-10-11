@@ -7,8 +7,7 @@ studios.
 ## Objective
 
 From a short brief, a floor plan and a budget, Livinit returns three furnished
-designs built from real catalog products in about 30 seconds. Every piece can
-be bought, and every layout can be lived in.
+designs built from real catalog products in about 30 seconds.
 
 - **Every room type, with its own rules.** Living rooms, bedrooms, dining rooms
   and studios each follow their own furnishing rules: what the room must have

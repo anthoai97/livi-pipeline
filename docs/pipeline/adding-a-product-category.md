@@ -113,7 +113,7 @@ or placed as a generic floor piece without it.
 | 16 | Room exclusions | `pipeline/app/rules/room_policy.py:74`, `:93` `excluded_room_categories` | Rooms that may never hold it | Optional |
 | 17 | Budget | `taxonomy.py:59` `NON_SELLABLE_CATEGORIES` (`BUDGET_EXCLUDED_CATEGORIES` in `selection/constants.py:13`) | Only for pieces never bought, like `tv` | Optional |
 | 18 | Decor slots | `pipeline/app/shared_stages.py:273` `DECOR_CATEGORIES` | Decor that gets a slot without a request | Optional |
-| 19 | Taste | `pipeline/app/rules/layout_rules.py:51` `DESIGN_RULES` | A sentence for the final review | Optional |
+| 19 | Taste | `pipeline/app/rules/layout_rules.py:73` `DESIGN_RULES` | A sentence for the final review | Optional |
 | 20 | Tests, benchmark | `pipeline/tests/test_solver.py`, `pipeline/scripts/benchmark_requests.json` | Solver tests; a case for a new room composition | Required |
 
 ## Add a credenza (case a)

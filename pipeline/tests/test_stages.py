@@ -606,7 +606,7 @@ def test_each_design_takes_a_different_tied_layout(tmp_path, searches, monkeypat
         assert REQUEST["user_intent"] in prompt and "planter_1 (planter)" in prompt and "door_0" in prompt
         assert "REQUESTED ITEMS: light wood dining table for four x1, soft neutral dining chairs x4" in prompt
         assert "STYLE HINTS: scandinavian, cozy, minimalist" in prompt
-        assert "P0 — ARCHITECTURE" in prompt and "DINING ROOM APPLICABILITY" in prompt and "COORDINATES:" in prompt
+        assert "P0 — ARCHITECTURE" in prompt and "DINING ROOM RULES" in prompt and "COORDINATES:" in prompt
     poses = [json.loads(prompt.split("POSES (instance key: [x, y, rotation_z]):\n")[1].split("\n")[0]) for prompt in genai.of("Arrangement")]
     assert sorted(pose["planter_1"][:2] for pose in poses) == [[0.5, 2.3], [0.6, 0.6], [3.6, 0.6]]
     assert [(data["review"], data["valid"]) for data in stage_data(events, "render_scene")] == [(REVIEW, True)] * 3
@@ -1107,3 +1107,27 @@ def test_select_swaps_a_tv_too_wide_for_the_selected_stand_for_one_that_fits():
     assert "selection turn 1: replaced TV tv_wide with tv_fits" in notes
     [tv] = [instance for instance in update["instances"] if instance["category"] == "tv"]
     assert tv["placement_mode"] == "tabletop" and tv["paired_support_uid"] == "tv_stand_1"
+
+
+@pytest.mark.parametrize(("room_type", "header"), [
+    ("living_room", "MEDIA COMFORT AND RUG COMPOSITION:"), ("bedroom", "BEDROOM RULES"),
+    ("dining_room", "DINING ROOM RULES"), ("studio", "STUDIO RULES"),
+])
+def test_prompts_carry_no_retired_edit_or_infeasibility_instructions(room_type, header):
+    request = PipelineRequest(**{**REQUEST, "room_type": room_type})
+    intent = coerce_intent_packet({**RUN["intent"], "room_type": room_type}, room_type=room_type)
+    room = build_room_context(room_type=room_type, room_area=request.room_area, room_vertices=REQUEST["room_vertices"],
+                              wall_height=request.wall_height, room_doors=REQUEST["room_doors"],
+                              room_windows=REQUEST["room_windows"], intent=intent)
+    slot = {"id": "all", "kind": "optional", "category": None, "label": "all", "gap": False, "relaxed": False}
+    state = {"direction": "", "pool": {"all": POOL}, "instances": [], "layout": {}, "findings": [],
+             "shared": {"request": request, "intent": intent, "room": room, "slots": [slot]}}
+    rules = variant_stages.build_rules_block(room_type=room_type)
+    prompts = [shared_stages._intent_prompt(REQUEST["user_intent"], room_type),
+               variant_stages._selection_prompt(state, intent, None, 1.0), rules,
+               variant_stages._arrangement_prompt(state, b"")[0]]
+
+    assert [[phrase for phrase in ("existing-room", "frozen", "infeasib", "explain") if phrase in prompt.lower()]
+            for prompt in prompts] == [[]] * 4
+    block = rules.split(f"{header}")[1].split("\n\n")[0]
+    assert "\n1. " in block and "\n2. " in block

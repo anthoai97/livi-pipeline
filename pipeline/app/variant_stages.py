@@ -460,10 +460,7 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
         "Choose a standalone bed, not a bedroom set with integrated, built-in or bundled nightstands. "
         "Embedded bedside furniture cannot count as separate selected nightstands or justify adding a duplicate pair; "
         "the whole model footprint does not establish reach from the actual sleeping surface. "
-        "Plan useful bedside surfaces, lighting and clothing storage as part of the bedroom's everyday functions. "
-        "For a normal spacious bedroom, prefer a coordinated bedside pair where both sides are usable, "
-        "purposeful clothing storage and a coherent use of the remaining zones. Honor explicit sparse, "
-        "single-bedside and storage-exclusion requests; compact rooms need fewer pieces and clear access. "
+        "Honor explicit sparse, single-bedside and storage-exclusion requests; compact rooms need fewer pieces and clear access. "
         "Wardrobes are opt-in; do not add one to a generic bedroom. When requested, a dresser is not a substitute. "
         "A dresser provides folded-clothes storage, not hanging storage. Claim hanging storage only "
         "when product metadata confirms that capability; never relabel a generic cabinet as a wardrobe. "
@@ -525,7 +522,7 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
             "Judge bedroom completeness across the usable room, including bedside support, lighting and "
             "clothing storage. A fitting dressing or reading zone may justify additional furniture "
             "in a spacious room even after the sparse floor is met. Respect user exclusions and minimal "
-            "briefs; an extra piece needs a purpose, not unused budget. Explain deliberate omissions."
+            "briefs; an extra piece needs a purpose, not unused budget."
         )
         selection_size_guidance = (
             "Choose a coherent, functionally complete bedroom set scaled to the usable room. "
@@ -533,11 +530,11 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
         )
     if dining:
         optional_piece_guidance = (
-            "Beyond the required pieces, apply the conditional dining furnishing suggestions above after seating and access fit; "
+            "Beyond the required pieces, add the dining policy's optional pieces only after seating and access fit; "
             "they do not impose counts or a floor-fill target. Respect minimal briefs and exclusions."
         )
         selection_size_guidance = (
-            "Choose a complete dining group at the requested or default capacity, then consider useful conditional additions"
+            "Choose a complete dining group at the requested or default capacity, then the room's required and useful optional pieces"
         )
     rug_guidance = (
         "Rugs are optional in a dining room; include one only when requested and large enough for the table and chair movement."

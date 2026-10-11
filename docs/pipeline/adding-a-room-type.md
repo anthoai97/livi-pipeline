@@ -69,7 +69,7 @@ gets living-room behavior, without it.
 | # | Stage | File | What to add | Need |
 | --- | --- | --- | --- | --- |
 | 1 | Request contract | `pipeline/app/contracts.py:16` | Name in `RoomType` | Required |
-| 2 | Room policy | `pipeline/app/rules/room_policy.py:7-8`, `:28` | Name in `RoomType` and `SUPPORTED_ROOM_TYPES`; a policy string like `DINING_FURNISHING_GUIDANCE` | Required |
+| 2 | Room policy | `pipeline/app/rules/room_policy.py:9-10`, `:26` | Name in `RoomType` and `SUPPORTED_ROOM_TYPES`; a policy string like `DINING_FURNISHING_GUIDANCE` | Required |
 | 3 | Room policy | `room_policy.py:93` `excluded_room_categories` | Categories the room may never hold | Required |
 | 4 | Interpret | `pipeline/app/shared_stages.py:116` `_intent_prompt` | A policy bullet, like the dining one | Required |
 | 5 | Feasibility digest | `pipeline/app/rules/planner/feasibility_digest.py:151-336`; `planner/_util.py` `ROOM_SCALE_CUTOFFS_SQM` | Anchor role, required groups, optional categories, caps, notes; the compact and medium size cutoffs | Required |
@@ -77,15 +77,15 @@ gets living-room behavior, without it.
 | 7 | Seed guidance | `pipeline/app/rules/planner/seed_guidance.py:169` `build_seed_guidance` | `room_mode` and `primary_anchor_uid` | Required |
 | 8 | Catalog slots | `pipeline/app/rules/selection/validation.py:134` `room_requirements` | Required items | Required |
 | 9 | Selection prompt | `pipeline/app/variant_stages.py:387` `_selection_prompt` | Anchor name, role guidance, size, optional-piece and rug text | Required |
-| 10 | Selection guidance | `pipeline/app/rules/layout_rules.py:250` `build_selection_guidance_block` | A `FIT FOR SELECTION` block | Optional |
+| 10 | Selection guidance | `pipeline/app/rules/layout_rules.py:319` `build_selection_guidance_block` | A `FIT FOR SELECTION` block of numbered lines | Optional |
 | 11 | Selection validation | `validation.py:253` `validate_selection` | Room flag, group errors, opt out of living-room requirements | Required |
 | 12 | Anchors | `variant_stages.py:673` `_ANCHOR_CATEGORIES` | Anchor category sets in priority order | Required |
 | 13 | Variant directions | `variant_stages.py:113` `_ROOM_DIRECTIVES` | Two direction texts, variants 1 and 2 | Optional |
-| 14 | Layout rules text | `layout_rules.py:178` `build_rules_block` | An `APPLICABILITY` block, like the dining one | Required |
+| 14 | Layout rules text | `layout_rules.py:216` `ROOM_LAYOUT_RULES` | A header and numbered rules, like the dining entry | Required |
 | 15 | Layout checks | `pipeline/app/rules/layout/analysis.py:119-124`, new `layout/home_office.py` | A measurement function and its issue keys | Optional |
 | 16 | Issue tiers | `layout/constants.py:98`, `:152`; `layout/formatting.py`; `layout/metrics.py:100` | Register the new issue keys | Required with 15 |
 | 17 | Solver | `pipeline/app/rules/layout/solver.py:164`, `:321`, `:740` | `_STORAGE_FRONTS`, `_groups`, `_preference` | Optional |
-| 18 | Final review prompt | `variant_stages.py:1291` `_arrangement_prompt` | Nothing: it reads the room's `DESIGN_RULES` key (`layout_rules.py:51`) | Optional |
+| 18 | Final review prompt | `variant_stages.py:1291` `_arrangement_prompt` | Nothing: it reads the room's `DESIGN_RULES` key (`layout_rules.py:73`) | Optional |
 | 19 | Web brief | `web/src/lib/types.ts:4`, `web/src/lib/room.ts:102`, `:111` | `RoomType`, `ROOM_TYPES`, four `PROMPT_STARTERS` with sizes | Required |
 | 20 | Benchmark, tests | `pipeline/scripts/benchmark_requests.json`, `pipeline/tests/` | One case and focused tests | Required |
 
@@ -181,9 +181,11 @@ gets living-room behavior, without it.
     applies, for example "The desk faces the room or a window, not a wall
     corner." A room type without a key gets only the shared rules.
 
-11. **Write the layout rules text.** Add `elif room_type == "home_office":` to
-    `build_rules_block`: what anchors the room, what is not required, and the
-    access rules. Selection and the final review prompt both read it.
+11. **Write the layout rules text.** Add a `"home_office"` entry to
+    `ROOM_LAYOUT_RULES` in `layout_rules.py`: a header and short rules on what
+    anchors the room, what is not required, and the access rules, built from
+    the constants. `build_rules_block` numbers them; selection and the final
+    review prompt both read it.
 
 12. **Add layout checks** when the room has geometry rules no shared check
     covers. Model them on `layout/dining.py`: a read-only function that

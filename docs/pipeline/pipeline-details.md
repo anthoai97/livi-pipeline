@@ -442,7 +442,9 @@ breaks them.
    design rules (`DESIGN_RULES` in `app/rules/layout_rules.py`: shared rules such
    as clear zones, a TV whose back does not face another zone, nothing tall in
    front of a window, a floor lamp at the seat it lights, plus rules per room
-   type), writes two or three sentences on
+   type, such as a bed seen from the door but not in line with it, and a
+   studio's bed in the corner farthest from the door, its sofa back or a shelf
+   between sitting and sleeping, and dining by the entry wall), writes two or three sentences on
    what is wrong with it, and returns new poses that fix those problems. It
    does not choose among layouts: place already dealt each design its own.
 2. **Adjust.** Code rejects poses for unknown items, with non-finite values, or

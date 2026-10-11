@@ -123,13 +123,13 @@ Operation: NEW_DESIGN
 
 Return JSON only. Use canonical categories from the schema.
 Rules:
-- The selected or saved room purpose is authoritative: room_type must be {room_type}.
+- The selected room purpose is authoritative: room_type must be {room_type}.
 - Studio furnishing policy:
   {STUDIO_FURNISHING_GUIDANCE if room_type == "studio" else "Not applicable to this room type."}
   For studio TV requests, use functional_hints `tv_from_bed` when only bed viewing is requested,
   `tv_shared_viewing` when viewing from both bed and sofa is requested, or `tv_from_sitting` when
-  sofa/sitting viewing is explicitly requested. Unrelated edits preserve the saved viewing target;
-  a new TV defaults to sitting. Do not fabricate user counts from studio furnishing defaults.
+  sofa/sitting viewing is explicitly requested. A TV defaults to sitting. Do not fabricate
+  requested items or counts from studio furnishing defaults.
   A conflicting room name in the prose does not change this selected room purpose.
   Bed frames, bunk beds, separate mattresses and headboards are unsupported.
 - This is a new design. requested_items describe the requested room contents.
@@ -161,15 +161,13 @@ Rules:
   a tv and its needed support, not a sofa or coffee table. A working setup or
   study/work-from-home area requests a desk and office_chair as a usable pair;
   preserve explicit desk-only, chair-only, exclusions and optional language.
-  On existing-room turns, reuse suitable current inventory instead of requesting
-  duplicate desks, chairs or media supports. Do not add these functions to a
-  generic bedroom request.
-- For a fresh bedroom, use this furnishing policy:
+  Do not add these functions to a generic bedroom request.
+- For a bedroom, use this furnishing policy:
   {BEDROOM_FURNISHING_GUIDANCE if room_type == "bedroom" else "Not applicable to this room type."}
-  For NEW_DESIGN bedroom TV/support and desk/office_chair requests, mark the group
+  For bedroom TV/support and desk/office_chair requests, mark the group
   optional=true unless the user makes it mandatory (must-have, do not omit, or
   an explicit non-optional exact count). This permits dropping whole lower-priority
-  groups for space. Do not apply this default optionality to existing-room edits.
+  groups for space.
   Wardrobes are also opt-in: extract a wardrobe request only for an explicit wardrobe/armoire
   or hanging-clothes storage request, never from a generic bedroom brief.
 - For a dining room, use this furnishing policy:
@@ -177,13 +175,12 @@ Rules:
   Interpret "seating for six", "a table for six" and "six dining chairs" as dining_chair
   count=6, exact=true. Preserve other explicit seating quantities in the same way.
   A bare request for dining chairs without a stated quantity does not impose count=1;
-  leave it optional=true so the fresh-design default applies. Do not fabricate a
+  leave it optional=true so the default count applies. Do not fabricate a
   user-requested four-chair count when seating quantity is unspecified.
-  Suggested dining storage, overhead lighting and wall art are conditional design
-  choices, not requested_items or requested_categories unless the user asks for them.
+  The sideboard, overhead light and wall art the policy adds are not requested_items
+  or requested_categories unless the user asks for them.
   Preserve explicit minimal-furniture/essentials-only requests in functional_hints
   as minimal_furniture; a minimalist style alone does not mean an unfurnished room.
-  Existing-room requests never reapply fresh-design suggestions or default counts.
   A dining table means a standalone table, not a coffee table, bar table or bundled set.
 - price_constraints should capture per-item catalog price filters. Use max_price
   for under/below/less-than requests, min_price for above/over/more-than

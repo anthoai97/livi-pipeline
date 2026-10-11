@@ -120,7 +120,7 @@ def _room_completion_guidance(
     else:
         strategy = "full_room"
         zone_count = 1
-        notes = ["Use one complete seating group and avoid separate room zones."]
+        notes = ["Use one complete seating group; a reading corner or desk zone may use the extra space."]
 
     if opening_pressure == "high":
         notes.append("Openings reduce usable wall frontage; avoid wall-heavy additions.")
@@ -273,7 +273,7 @@ def build_feasibility_digest(
     if {"cozy", "luxury"} & style_hints:
         optional_categories.extend(["rug", "planter", "floor_lamp"])
     if bedroom:
-        optional_categories = ["nightstand", "dresser", "table_lamp", "rug", "planter"]
+        optional_categories = ["dresser"] if room_scale == "compact" else []
         if "wardrobe" in requested:
             optional_categories.append("wardrobe")
         if room_scale == "spacious":
@@ -289,7 +289,7 @@ def build_feasibility_digest(
                 ) if category not in excluded_optional
             )
     if studio:
-        optional_categories = ["nightstand", "table_lamp", "side_table", "planter", "storage_unit", "floor_lamp", "bookcase"]
+        optional_categories = ["side_table", "planter", "storage_unit", "floor_lamp", "bookcase"]
         optional_categories.extend(sorted(requested - {"bed", "sofa", "loveseat", "dining_table", "dining_chair"}))
 
     optional_categories = [
@@ -324,18 +324,17 @@ def build_feasibility_digest(
     )
     if bedroom:
         room_completion_guidance["notes"] = [
-            "Use one complete adult bed as the sleeping anchor and design a complete bedroom around its everyday functions: useful bedside surfaces, lighting and clothing storage.",
-            "For a normal spacious bedroom, prefer a coordinated bedside pair when both sides are usable, and purposeful clothing storage. Consider a dressing or reading area when it improves the room's composition; explain the purpose of each addition.",
+            "Use one complete adult bed as the sleeping anchor and design a complete bedroom around its everyday functions: bedside surfaces, lighting and clothing storage.",
             BEDROOM_FURNISHING_GUIDANCE,
-            "The density floor only catches extreme sparsity; a bed can satisfy most of it without making the bedroom complete. Assess the whole room's usable zones before stopping.",
-            "These are design choices, not fixed counts. Explicit single-bedside, no-storage, sparse or essentials-only requests take priority. In compact rooms, prioritize access and the most useful bedside support; do not force a pair or a secondary zone.",
-            "Wardrobes/armoires are clothing-storage assets. Dressers store folded clothes; generic cabinets and bookcases do not establish hanging-clothes capability. Claim hanging storage only when the selected product's metadata confirms it, and explain unavailable functions.",
+            "The density floor only catches extreme sparsity; a bed can satisfy most of it without making the bedroom complete.",
+            "In a spacious bedroom, a reading corner or dressing area may use the extra space; a compact bedroom keeps access first.",
+            "A dresser stores folded clothes and a wardrobe or armoire hanging clothes; claim hanging storage only when the product's metadata confirms it.",
             "Preserve bed-side and foot access, opening clearance, and storage-front access.",
         ]
     if dining:
         room_completion_guidance["notes"] = [DINING_FURNISHING_GUIDANCE]
     if studio:
-        room_completion_guidance.update(strategy="three_function_groups", zone_count=3,
+        room_completion_guidance.update(strategy="separate_function_groups", zone_count=3 if studio_dining else 2,
                                         notes=[STUDIO_FURNISHING_GUIDANCE])
 
     if best_anchor_wall:

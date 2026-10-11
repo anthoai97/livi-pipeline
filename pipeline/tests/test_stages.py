@@ -374,6 +374,22 @@ def test_over_budget_selection_is_repaired_with_cheaper_products_from_the_same_s
         assert not [note for note in notes if " failed: " in note]
 
 
+def test_selection_under_the_budget_floor_is_filled_with_pricier_products_from_the_same_slots(tmp_path, monkeypatch):
+    monkeypatch.setattr(variant_stages, "BUDGET_FLOOR_PCT", 0.8)
+    search_pool(monkeypatch, POOL)
+    solve_as(monkeypatch, PLACEMENTS)
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection()})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    # Each design's passing selection now spends at least the floor and never more than the budget.
+    budget = REQUEST["budget"]
+    selections = [event["data"] for event in of_type(events, "node_complete") if "items" in event.get("data", {})]
+    assert len(selections) == 3
+    assert all(data["valid"] and budget * 0.8 <= data["total_cost"] <= budget for data in selections)
+    assert len([note for note in record["notes"] if note["text"].startswith("budget fill: $")]) == 3
+
+
 def test_over_budget_selection_the_repair_cannot_validate_is_retried_keeping_requested_items(tmp_path, monkeypatch):
     # The cheaper chair is not a usable single chair, so the repaired selection fails validation.
     over_budget_chairs(monkeypatch, width_m=2.0)

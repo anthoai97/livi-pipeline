@@ -66,7 +66,14 @@ from app.rules.planner.intent_packet import format_intent_packet_for_prompt, int
 from app.rules.planner.room_facts import format_room_facts_for_prompt
 from app.rules.planner.taxonomy import normalize_category
 from app.rules.selection.catalog import _asset_matches_brand_preferences, _price_constraint_category_matches, catalog_asset
-from app.rules.selection.constants import BUDGET_EXCLUDED_CATEGORIES, BUDGET_FLEX_PCT, FIT_ANCHOR_SEATING, TV_HOST_CATEGORIES
+from app.rules.selection.constants import (
+    BUDGET_EXCLUDED_CATEGORIES,
+    BUDGET_FLEX_PCT,
+    BUDGET_FLOOR_PCT,
+    BUDGET_TARGET_PCT,
+    FIT_ANCHOR_SEATING,
+    TV_HOST_CATEGORIES,
+)
 from app.rules.selection.fit import fit_step_guidance
 from app.rules.selection.preflight import _tv_support_in_selection
 from app.rules.selection.validation import is_decor_plant, requires_spacious_perimeter_storage, validate_selection
@@ -557,7 +564,7 @@ CONSTRAINTS:
 {reuse_guidance}- Use features as supported product capabilities. mount_type=wall_secured requires floor placement against a wall; wall_mounted and ceiling_mounted require those mounting surfaces. An empty mount_type is unknown.
 - {required_role_guidance}
 - {rug_guidance}
-{plant_guidance}- Budget is a spending cap, not a target: total cost must stay at or under ${budget * (1 + BUDGET_FLEX_PCT):.2f} (${budget:.2f} + 10% flex). There is no minimum spend — never inflate item prices to use the budget up.
+{plant_guidance}- Budget target: aim for {BUDGET_TARGET_PCT - 0.05:.0%}-{BUDGET_TARGET_PCT + 0.05:.0%} of ${budget:.2f}. The total must be at least ${budget * BUDGET_FLOOR_PCT:.2f} ({BUDGET_FLOOR_PCT:.0%}) and at most ${budget * (1 + BUDGET_FLEX_PCT):.2f} (${budget:.2f} + 10% flex). Spend first on better versions of the {anchor_name} and the main pieces (better made, better materials, the right size), then on useful pieces the room is missing; never on filler. A design may stay under {BUDGET_FLOOR_PCT:.0%} only when the room is complete and no fitting product would improve it; say why in gaps.
 - Decor: once the room is functionally complete, if the total is under ${budget:.2f}, add up to 2 decor pieces that suit the room (a sculpture, a plant, a floor mirror), keeping the total at or under ${budget:.2f}. Decor UIDs: {', '.join(decor_uids) or 'none available'}. A required decor plant does not count toward these. Skip decor for minimal briefs.
 - Furnish the room: total footprint (width x depth x 2 per asset, rugs excluded) must be at least {footprint_floor:.2f} sqm and at most {furniture_area:.2f} sqm. The comfortable load of {comfortable_load:.2f} sqm is an upper reference, not a target. Once the requested functions and density floor are satisfied, do not add pieces merely to approach it.
 {perimeter_storage_guidance}- Physical layout preflight must pass: rugs must fit the room; every tabletop asset must fit an eligible selected support surface; desk/dining clusters must fit with their chairs; and tiny rooms must not receive extra seating or floor lamps.
@@ -568,11 +575,11 @@ CONSTRAINTS:
 - You MUST return the exact UID list as selected_assets (one entry per unit); the accepted response is the final result
 
 STRATEGY:
-- Functional completeness over spend: furnish the room's functions with a coherent set. Unspent budget is acceptable; apart from the decor rule above, never add an item solely because budget remains.
+- Completeness, then quality: furnish the room's functions with a coherent set, then reach the budget target with better versions of those pieces before adding new ones. Apart from the decor rule above, never add an item solely because budget remains.
 - The {anchor_name}/anchor piece sets the style direction for all other picks
 - Primary goal: aesthetic coherence — select assets whose brand, color, style, shape, and description match the intent
 - Treat intent-packet brand constraints as strong preferences, not hard requirements. For each needed category, use the preferred brand when a catalog option also satisfies category, fit, budget, and every required attribute. If none does, select the best eligible option from another brand and identify that category-level fallback in gaps. Never sacrifice a required role, physical fit, budget, or explicit non-brand attribute to preserve the brand preference.
-- When multiple assets share a category, pick the best style match at a moderate price; reach for premium versions only after every furnishing role the room needs is covered
+- When multiple assets share a category, pick the best style match whose price suits the budget target; prefer the better-made option over the cheapest
 - Treat every optional piece as a design decision: include it only when it serves a clear requested function or improves the composition in a specific way. {optional_piece_guidance}
 - If the requested set is below the density floor, prefer one or two substantial, useful additions over several small filler pieces.
 - Small room → prioritize essentials; do not add optional extras beyond the room-scale count caps
@@ -580,7 +587,7 @@ STRATEGY:
 - Honor user-stated counts and non-optional inferred count limits. Optional inferred counts are suggestions, not user requests. Never duplicate a category or add a new category purely to burn budget.
 
 PROCESS:
-0. Before selecting, estimate total footprint and cost from the catalog CSV. {selection_size_guidance} while staying under the budget cap. Do not drop coherent requested furniture solely to satisfy budget.
+0. Before selecting, estimate total footprint and cost from the catalog CSV. {selection_size_guidance} while landing in the budget target. Do not drop coherent requested furniture solely to satisfy budget.
 1. Select the {anchor_name} first, then build remaining selection around its style
 2. Before every response, check the proposed exact UID set against every user-stated exact count and every required style, material, color, coordination, and attribute constraint, and replace any violating asset. Brand constraints are advisory.
 3. {invalid_fix_guidance}
@@ -801,12 +808,13 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     marked `shared`. A selection that fails only fit estimates (the
     over-crowded footprint and the layout preflight size checks) is checked
     with the code solver (`_solver_fit`); when the solver places it, the
-    selection passes without them. A selection over the budget allowance is
-    repaired in code (`_budget_repair`) and checked the same way; the repaired
-    selection replaces it only when it passes. On the last turn, a selection
+    selection passes without them. A selection over the budget allowance, or a
+    passing one under BUDGET_FLOOR_PCT of the budget, is repaired in code
+    (`_budget_repair`) and checked the same way; the repaired selection replaces
+    it only when it passes. On the last turn, a selection
     that still fails loses the products that fail it (`_drop_failing`), and the
     graph places it even when errors remain. Notes the fit step applied, an
-    added or replaced TV, the fit estimates the solver overruled, a budget repair, the
+    added or replaced TV, the fit estimates the solver overruled, a budget repair or fill, the
     dropped products, and a failed turn's errors with `ctx.run.note(...)`.
     """
     from app.graph import MAX_SELECTION_TURNS  # the graph owns the turn bound; a module import would be circular
@@ -826,16 +834,27 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
         selected = [asset for asset in selected if asset["uid"].strip() != old] + [{"uid": tv, "functional_group": None}]
         ctx.run.note(f"selection turn {turn}: {f'replaced TV {old} with' if old else 'added TV'} {tv}", ctx.variant_index)
     validation, audit = await _checked(state, ctx, selected, intent, fit_step, reuse_rate)
-    over_budget = not validation["valid"] and any(error.startswith("OVER BUDGET") for error in validation["errors"])
-    if over_budget and (repaired := _budget_repair(state, selected, reuse_rate)):
-        cheaper, swaps = repaired
-        trial, trial_audit = await _checked(state, ctx, cheaper, intent, fit_step, reuse_rate)
-        if trial["valid"]:
-            ctx.run.note(f"budget repair: ${validation['metrics']['total_cost']:.2f} -> "
-                         f"${trial['metrics']['total_cost']:.2f} ({swaps})", ctx.variant_index)
-            selected, validation, audit = cheaper, trial, trial_audit
-        else:
-            ctx.run.note(f"budget repair rejected ({swaps}): {_errors_text(trial['errors'])}", ctx.variant_index)
+    for _ in range(2):  # a repair that lands under the floor gets one fill
+        over_budget = not validation["valid"] and any(error.startswith("OVER BUDGET") for error in validation["errors"])
+        under_budget = validation["valid"] and validation["metrics"]["total_cost"] < shared["request"].budget * BUDGET_FLOOR_PCT
+        name = "budget repair" if over_budget else "budget fill"
+        if not (over_budget or under_budget):
+            break
+        if not (repaired := _budget_repair(state, selected, reuse_rate)):
+            if under_budget:
+                ctx.run.note(f"budget fill: no pricier product fits; ${validation['metrics']['total_cost']:.2f} stays",
+                             ctx.variant_index)
+            break
+        swapped, swaps = repaired
+        trial, trial_audit = await _checked(state, ctx, swapped, intent, fit_step, reuse_rate)
+        if not trial["valid"]:
+            ctx.run.note(f"{name} rejected ({swaps}): {_errors_text(trial['errors'])}", ctx.variant_index)
+            break
+        ctx.run.note(f"{name}: ${validation['metrics']['total_cost']:.2f} -> "
+                     f"${trial['metrics']['total_cost']:.2f} ({swaps})", ctx.variant_index)
+        selected, validation, audit = swapped, trial, trial_audit
+        if name == "budget fill":
+            break
     if not validation["valid"] and turn >= MAX_SELECTION_TURNS and (
             trimmed := await asyncio.to_thread(_drop_failing, state, selected, validation, audit, intent, fit_step, reuse_rate)):
         selected, validation, dropped = trimmed
@@ -950,16 +969,21 @@ def _missing_tv(state: VariantState, selected: list[Record], intent: Record, reu
 
 
 def _budget_repair(state: VariantState, selected: list[Record], reuse_rate: float) -> tuple[list[Record], str] | None:
-    """Swap products for cheaper ones from the same slot until `selected` costs at most the budget allowance.
+    """Swap products for others from the same slot to bring `selected` into the budget range.
 
-    Most expensive purchasable non-anchor products first. Every unit of a product changes, so counts and
-    matched sets stay. The replacement is the first product of the same category in the variant's ranked
-    slot order after the current one, then before it, that is cheaper, purchasable, not already selected,
-    and keeps the reuse limit. Returns the new selection and the swaps as text, or None when the swaps
-    cannot reach the allowance. The caller validates the result again.
+    Over the budget allowance, the most expensive purchasable non-anchor products are swapped for cheaper
+    ones until the total is at most the allowance. Under BUDGET_FLOOR_PCT of the budget, the most expensive
+    purchasable products, anchors included, are swapped for pricier ones that keep the total at most the
+    budget, until it reaches BUDGET_TARGET_PCT. Every unit of a product changes, so counts and matched sets
+    stay. A cheaper replacement is the first fitting product of the same category in the variant's ranked
+    slot order after the current one, then before it; a pricier one is the first in ranked order. Either is
+    purchasable, not already selected, and keeps the reuse limit. Returns the new selection and the swaps as
+    text, or None when nothing is swapped or a cheaper set cannot reach the allowance. The caller validates
+    the result again.
     """
     shared = state["shared"]
-    allowance = shared["request"].budget * (1 + BUDGET_FLEX_PCT)
+    budget = shared["request"].budget
+    allowance = budget * (1 + BUDGET_FLEX_PCT)
     anchors = set().union(*_ANCHOR_CATEGORIES.get(shared["room"]["room_type"], (FIT_ANCHOR_SEATING,)))
     products = _products(state["pool"], selected)
 
@@ -969,31 +993,34 @@ def _budget_repair(state: VariantState, selected: list[Record], reuse_rate: floa
 
     units = Counter(uid for asset in selected if (uid := asset["uid"].strip()) in products)
     total = sum(price(products[uid]) * count for uid, count in units.items())
+    cheaper = total > allowance
     limit = math.floor(round(reuse_rate * len(products), 9))
     shared_count = sum(bool(product.get("shared")) for product in products.values())
     chosen = set(units)
     swaps: dict[str, str] = {}
     for uid in sorted(units, key=lambda uid: -price(products[uid])):
-        if total <= allowance:
+        if (total <= allowance) if cheaper else (total >= budget * BUDGET_TARGET_PCT):
             break
         product = products[uid]
         category = normalize_category(product.get("category"))
-        if category in anchors or price(product) <= 0:
+        if (cheaper and category in anchors) or price(product) <= 0:
             continue
         rows = next(rows for rows in state["pool"].values() if any(str(row["asset_id"]) == uid for row in rows))
         at = next(n for n, row in enumerate(rows) if str(row["asset_id"]) == uid)
-        for record in rows[at + 1:] + rows[:at]:
+        for record in (rows[at + 1:] + rows[:at]) if cheaper else rows:
             replacement, candidate = str(record["asset_id"]), catalog_asset(record)
             added_shared = bool(candidate.get("shared")) - bool(product.get("shared"))
-            if (replacement in chosen or normalize_category(candidate.get("category")) != category
-                    or not 0 < price(candidate) < price(product) or (reuse_rate < 1 and added_shared > 0 and shared_count >= limit)):
+            delta = (price(candidate) - price(product)) * units[uid]
+            if (replacement in chosen or normalize_category(candidate.get("category")) != category or price(candidate) <= 0
+                    or not (delta < 0 if cheaper else 0 < delta <= budget - total)
+                    or (reuse_rate < 1 and added_shared > 0 and shared_count >= limit)):
                 continue
             swaps[uid] = replacement
             chosen = (chosen - {uid}) | {replacement}
             shared_count += added_shared
-            total -= (price(product) - price(candidate)) * units[uid]
+            total += delta
             break
-    if total > allowance or not swaps:
+    if (cheaper and total > allowance) or not swaps:
         return None
     text = ", ".join(f"{old} -> {new}" for old, new in swaps.items())
     return [{**asset, "uid": swaps.get(asset["uid"].strip(), asset["uid"])} for asset in selected], text

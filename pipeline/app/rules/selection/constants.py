@@ -7,6 +7,8 @@ from app.rules.planner.taxonomy import (
 )
 
 BUDGET_FLEX_PCT = 0.10  # allow up to +10% over stated budget
+BUDGET_FLOOR_PCT = 0.80  # a design spends at least this share of the budget
+BUDGET_TARGET_PCT = 0.90  # the share a design aims for
 
 BUDGET_EXCLUDED_CATEGORIES = NON_SELLABLE_CATEGORIES
 

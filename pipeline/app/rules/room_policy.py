@@ -65,6 +65,7 @@ BEDROOM_FURNISHING_GUIDANCE = (
     "Targeted chat edits preserve unrelated existing furniture; never remove it just to follow "
     "this fresh-design priority."
 )
+STUDIO_DINING_MIN_AREA_SQM = 25.0
 # Highest to lowest retention priority; used only for fit recommendations.
 BEDROOM_FIT_GROUPS = (
     ("wardrobe",),
@@ -101,8 +102,9 @@ def excluded_room_categories(room_type: str) -> set[str]:
     return excluded
 
 
-def dining_chair_count(intent_packet: Mapping[str, Any]) -> int:
-    """The fresh-room default yields to structured, user-stated seating counts."""
+def dining_chair_count(intent_packet: Mapping[str, Any], room_scale: str) -> int:
+    """The fresh-room default (2 in a studio, 6 in a spacious dining room, else 4) yields to
+    structured, user-stated seating counts."""
     counts = [
         int(item.get("count") or 0)
         for item in intent_packet.get("requested_items") or []
@@ -110,7 +112,18 @@ def dining_chair_count(intent_packet: Mapping[str, Any]) -> int:
         and item.get("canonical_category") in {"dining_chair", "chair"}
         and (item.get("exact") or int(item.get("count") or 0) > 1)
     ]
-    return sum(counts) if counts else (2 if intent_packet.get("room_type") == "studio" else 4)
+    if counts:
+        return sum(counts)
+    if intent_packet.get("room_type") == "studio":
+        return 2
+    return 6 if room_scale == "spacious" else 4
+
+
+def studio_dining_required(intent_packet: Mapping[str, Any], area_sqm: float) -> bool:
+    """A studio needs its dining group when the brief asks for a dining table or chairs, or
+    the studio is STUDIO_DINING_MIN_AREA_SQM or more; a smaller one may eat at a counter."""
+    requested = set(intent_packet.get("requested_categories") or [])
+    return bool(requested & {"dining_table", "dining_chair"}) or area_sqm >= STUDIO_DINING_MIN_AREA_SQM
 
 
 def studio_viewing_assets(assets: list[dict[str, Any]], intent_packet: Mapping[str, Any]) -> list[dict[str, Any]]:

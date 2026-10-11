@@ -14,12 +14,24 @@ BUDGET_EXCLUDED_CATEGORIES = NON_SELLABLE_CATEGORIES
 
 REQUIRED_CATEGORIES = {
     "anchor_seating": ROLE_CATEGORIES["anchor_seating"],
-    "surface": {"coffee_table", "desk", "side_table"},
-    "lighting": COUNT_GUIDANCE_ROLE_CATEGORIES["lighting"],
+    "surface": {"coffee_table", "side_table"},  # and a desk when work is requested (room_requirements)
     "rug": {"rug"},
 }
 
 BLOCKING_REQUIRED_ROLES = {"anchor_seating", "surface"}
+
+# Completeness pieces (room_requirements), beside a lamp (FIT_LIGHTING).
+LIVING_ACCENT_SEATING = {"accent_chair", "recliner", "swivel_chair"}
+CLOTHES_STORAGE_CATEGORIES = {"dresser", "wardrobe"}
+DINING_SERVING_CATEGORIES = {"sideboard", "cabinet"}
+
+# Selection size rules (issue #54).
+COFFEE_TABLE_HEIGHT_M = (0.35, 0.50)  # seat height or a little under
+COFFEE_TABLE_SOFA_WIDTH_RATIO = (0.5, 0.75)  # x the sofa width
+SIDE_TABLE_HEIGHT_M = (0.45, 0.65)  # within reach of the arm
+DINING_LIGHT_TABLE_INSET_M = 0.15  # a pendant or chandelier stays this far inside each table edge
+BED_RUG_EXTRA_WIDTH_M = 0.90  # a centered bed rug: 0.45 m to step onto on each side
+RUNNER_MAX_WIDTH_M = 0.90  # a narrower rug is a runner beside the bed
 
 RECOMMENDED_CATEGORIES = {
     "media": {"tv_stand", "tv", "media_unit"},
@@ -30,9 +42,9 @@ FIT_ANCHOR_SEATING = REQUIRED_CATEGORIES["anchor_seating"]
 
 FIT_ACCENT_SEATING = ROLE_CATEGORIES["accent_seating"] | {"chair"}
 
-FIT_SURFACES = REQUIRED_CATEGORIES["surface"] | {"end_table", "writing_desk"}
+FIT_SURFACES = REQUIRED_CATEGORIES["surface"] | {"desk", "end_table", "writing_desk"}
 
-FIT_LIGHTING = REQUIRED_CATEGORIES["lighting"]
+FIT_LIGHTING = COUNT_GUIDANCE_ROLE_CATEGORIES["lighting"]
 
 FIT_RUGS = REQUIRED_CATEGORIES["rug"]
 

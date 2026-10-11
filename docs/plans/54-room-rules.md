@@ -316,6 +316,39 @@ Phase 1:
 - Not done: the solver costs for a rug 0.3 m wider than the sofa and a 0.65 m
   seat pitch.
 
+Phase 2:
+
+- The new required pieces (a lamp, accent seats, nightstands, a dresser or
+  wardrobe, a sideboard or cabinet, a pendant or chandelier) are `gap_ok`
+  entries of `room_requirements`, checked by one loop in `validate_selection`
+  that blocks unless a fit step was applied. Lighting is required this way,
+  not through `BLOCKING_REQUIRED_ROLES`, and leaves `REQUIRED_CATEGORIES`.
+- A `gap_ok` slot that finds no product is a gap, and validation never
+  requires a piece the variant's candidates hold none of, so a missing catalog
+  category cannot fail every turn. A count the brief states for a piece's
+  categories caps the count required ("one nightstand" with a queen bed).
+- The accent seats, clothes storage and dining pieces are skipped for a
+  minimal or space-first brief, as the digest already skips the dining
+  suggestions; a piece is skipped when the brief excludes any of its
+  categories or their siblings.
+- No `painting` slot: no catalog product uses the category. `pendant` (9
+  prepared products, against 6 `pendant_light`) is now an alias of
+  `pendant_light`, so the overhead slot finds them.
+- The size checks are errors only when the candidates hold a product that
+  passes, else warnings. The coffee table width against the sofa is always a
+  warning: 44% of catalog coffee tables suit a 2.3 m sofa, 11% a 2.8 m one.
+- The table depth rule is in `dining_fit_envelopes`, so the preflight's edge
+  length error and the solver's chair arrangements both follow it.
+- A spacious dining room with no stated count passes with 4 to 6 chairs; the
+  preflight checks the table seats them. Below 25 m² a studio gets no dining
+  slot unless the brief asks for one; a selected dining group is still
+  checked.
+- A medium living room gets storage as an optional digest category, as the
+  phase list says, not as a required piece.
+- Left for phase 3: the policy strings and the digest still call dining
+  storage and lights suggestions and list the bedside pieces as optional; the
+  selection prompt's new lines state what is required.
+
 ## Unresolved questions
 
 None. The values were chosen from design practice as asked; any row above can

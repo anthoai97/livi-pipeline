@@ -241,8 +241,11 @@ Run from `pipeline/` with `conda activate livinit`.
   `ROLE_CATEGORIES` holds canonical names only; an alias there does nothing.
 - **Some roles get no optional slot.** `COUNT_GUIDANCE_ROLE_CATEGORIES` uses
   fixed sets for `surface`, `lighting` and `media`, and has no `tabletop` or
-  `wall_or_ceiling` entry. A new piece in those roles is searched only when the
-  brief asks for it, unless you add it to the set or to `DECOR_CATEGORIES`.
+  `wall_or_ceiling` entry; of the wall and ceiling pieces only pendants and
+  chandeliers (`overhead_lighting`, dining rooms and studios) and wall art
+  (`DECOR_CATEGORIES`) get a slot. A new piece in those roles is searched only
+  when the brief asks for it, unless you add it to the set or to
+  `DECOR_CATEGORIES`.
 - **A catalog label with no alias is never searched.** A slot searches only its
   canonical names and their aliases. Today `buffet`, `counter_stool`,
   `bar_stool` and `chest_of_drawers` are catalog labels that map to no

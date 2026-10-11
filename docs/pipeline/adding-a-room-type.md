@@ -43,7 +43,12 @@ A new room inherits these without extra work:
   nothing, so the model adds as many as the room size and brief suit, whatever
   budget remains. Retail decor stays at up to 2 pieces (sculpture, plant, floor
   mirror) while the total is under the stated budget. The design-only plant is
-  required unless the room opts out, as the studio does.
+  required unless the room opts out, as the studio does. Wall art has its own
+  decor slot and is an optional piece.
+- **Catalog gaps for completeness pieces.** A required entry marked `gap_ok`
+  in `room_requirements` (a lamp, a nightstand, a sideboard) whose slot finds
+  no product is reported as a gap, and `validate_selection` does not require
+  it, so a missing catalog category never fails every selection turn.
 - **Searchable companions.** When a requested item covers a required role, the
   role's other categories still get searched (`plan_slots`), for example side
   tables beside a requested coffee table.
@@ -136,15 +141,19 @@ gets living-room behavior, without it.
    with no entry is never searched unless the user asks for it.
 
    ```python
-   if room_type in {"dining_room", "studio"}:
+   if room_type == "dining_room" or (room_type == "studio" and studio_dining_required(...)):
        need("dining_table", {"dining_table"})
-       need("dining_seating", {"dining_chair"}, dining_chair_count({**intent, "room_type": room_type}))
+       need("dining_seating", {"dining_chair"}, dining_chair_count({**intent, "room_type": room_type}, scale))
    if room_type == "home_office":
        need("desk", {"desk"})
        need("work_seating", {"office_chair"})
+       need("lighting", COUNT_GUIDANCE_ROLE_CATEGORIES["lighting"], gap_ok=True)
    ```
 
-   Then decide the rug and the design-only plant.
+   Then decide the rug and the design-only plant. Mark a piece that completes
+   the room but is not its core group `gap_ok=True`, as the dining room does
+   with its sideboard and pendant: `validate_selection` then checks it with
+   no code of its own, and a catalog gap does not fail the selection.
 
 7. **Write the selection prompt branches.** In `_selection_prompt`, add the flag
    beside `dining`, then extend `anchor_name`,
@@ -224,7 +233,9 @@ if table_count != 1 or not minimum_count <= chair_count <= target_count:
 
 Advice goes into `warnings`, as `MISSING RECOMMENDED` does. Keep
 `room_requirements` and `validate_selection` in step: each required entry needs
-a matching error, or slots and validation disagree.
+a matching error, or slots and validation disagree. A `gap_ok` entry already
+has one: `MISSING REQUIRED: Select <count> <role> ...`, an error unless a fit
+step was applied or the candidates hold no product for it.
 
 **Layout check.** A measurement returns findings under issue keys; the tier
 lists decide the effect. `findings_by_level` (`analysis.py`) puts keys from
@@ -298,7 +309,7 @@ Run from `pipeline/` with `conda activate livinit`.
     `MISSING REQUIRED: No anchor seating` until you add it.
   - The digest picks `anchor_seating` as the anchor (`feasibility_digest.py`)
     and adds a surface group.
-  - The selection prompt says a sofa and a surface are mandatory
+  - The selection prompt says a sofa, a surface and a lamp are mandatory
     (`variant_stages.py`).
   - `_ANCHOR_CATEGORIES.get(..., (FIT_ANCHOR_SEATING,))` protects a sofa, not
     your anchor.

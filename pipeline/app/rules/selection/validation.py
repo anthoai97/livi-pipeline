@@ -4,17 +4,19 @@ import copy
 import json
 from collections import Counter
 from typing import Any
-from app.rules.categories import normalize_asset_label
+from app.rules.categories import is_ceiling_mounted_asset, normalize_asset_label
+from app.rules.layout.bedroom import BED_TWO_SIDED_MIN_WIDTH_M
 from app.rules.layout.comfort import sitting_rug_selection_errors
 from app.rules.placement_mode import placement_mode_for_asset
 from app.rules.planner.intent_packet import count_constraints_from_intent_packet
 from app.rules.planner.selection_count_guidance import count_guidance_feedback
-from app.rules.planner.taxonomy import COUNT_GUIDANCE_ROLE_CATEGORIES, normalize_category
+from app.rules.planner.taxonomy import COUNT_GUIDANCE_ROLE_CATEGORIES, normalize_category, sibling_categories
 from app.rules.room_policy import (
     asset_is_eligible_for_room,
     dining_chair_count,
     excluded_room_categories,
     normalize_room_type,
+    studio_dining_required,
     studio_viewing_assets,
 )
 
@@ -28,14 +30,23 @@ from app.rules.selection.catalog import (
     catalog_asset,
 )
 from app.rules.selection.constants import (
+    BED_RUG_EXTRA_WIDTH_M,
     BLOCKING_REQUIRED_ROLES,
     BUDGET_EXCLUDED_CATEGORIES,
     BUDGET_FLEX_PCT,
+    CLOTHES_STORAGE_CATEGORIES,
+    COFFEE_TABLE_HEIGHT_M,
+    COFFEE_TABLE_SOFA_WIDTH_RATIO,
+    DINING_LIGHT_TABLE_INSET_M,
+    DINING_SERVING_CATEGORIES,
     FIT_ACCENT_SEATING,
     FIT_ANCHOR_SEATING,
+    LIVING_ACCENT_SEATING,
     PERIMETER_STORAGE_CATEGORIES,
     RECOMMENDED_CATEGORIES,
     REQUIRED_CATEGORIES,
+    RUNNER_MAX_WIDTH_M,
+    SIDE_TABLE_HEIGHT_M,
 )
 from app.rules.selection.fit import (
     FIT_STEP_DECISIONS,
@@ -147,34 +158,65 @@ def room_requirements(
 ) -> dict[str, Any]:
     """Items a fresh design must include, and the optional furniture roles, for a slot planner.
 
-    required: [{"role", "categories", "count", "decor_only"}], the items
-    validate_selection blocks on: anchor seating, a surface, and a rug in a
+    required: [{"role", "categories", "count", "decor_only", "gap_ok"}], the
+    items validate_selection blocks on. Core groups: anchor seating, a surface
+    (coffee or side table; a desk too when work is requested), and a rug in a
     living room; one bed and a rug in a bedroom; one dining table and
-    dining_chair_count chairs in a dining room; bed, sofa/loveseat, dining table
-    and chairs in a studio; perimeter storage in a spacious living room; and a
-    design-only plant outside studios. A rug or plant the intent excludes is
-    not required.
+    dining_chair_count chairs in a dining room; bed and sofa/loveseat in a
+    studio, with the dining table and chairs when studio_dining_required;
+    perimeter storage in a spacious living room; and a design-only plant
+    outside studios. A rug or plant the intent excludes is not required.
+    Completeness pieces (gap_ok): a lamp, and one accent seat in a medium
+    living room or two in a spacious one; a nightstand and a lamp in a bedroom
+    or studio, and a dresser or wardrobe unless the room is compact; a
+    sideboard or cabinet and a pendant or chandelier in a medium or spacious
+    dining room. One is not required when the intent excludes any of its
+    categories or their siblings (sibling_categories), and the accent seats,
+    clothes storage and dining pieces not for a minimal or space-first brief.
+    validate_selection does not require one the candidate pool has no product
+    for: it is a catalog gap.
     optional_roles: {role: categories} from the count-guidance roles, without
     room exclusions (no bed outside bedrooms and studios), intent exclusions,
-    zero-capped categories, and categories already required.
+    zero-capped categories, and categories already required; overhead lighting
+    only in dining rooms and studios, and a desk in a living room only when
+    work is requested.
     """
     room_type = normalize_room_type(room_type)
     excluded = {normalize_category(category) for category in intent.get("excluded_categories") or []}
+    excluded_kinds = set().union(*(sibling_categories(category) for category in excluded))
+    scale = digest.get("room_scale")
+    hints = set(intent.get("functional_hints") or [])
+    furnished = scale != "compact" and intent.get("fit_flexibility") != "space_first" and "minimal_furniture" not in hints
+    work = "desk" in (intent.get("requested_categories") or []) or "work_from_home" in hints
     required: list[dict[str, Any]] = []
 
-    def need(role: str, categories: set[str], count: int = 1, *, decor_only: bool = False) -> None:
-        required.append({"role": role, "categories": sorted(categories), "count": count, "decor_only": decor_only})
+    def need(role: str, categories: set[str], count: int = 1, *, decor_only: bool = False, gap_ok: bool = False) -> None:
+        if not (gap_ok and categories & excluded_kinds):
+            required.append({"role": role, "categories": sorted(categories), "count": count, "decor_only": decor_only,
+                             "gap_ok": gap_ok})
 
     if room_type == "living_room":
         need("anchor_seating", REQUIRED_CATEGORIES["anchor_seating"])
-        need("surface", REQUIRED_CATEGORIES["surface"])
+        need("surface", REQUIRED_CATEGORIES["surface"] | ({"desk"} if work else set()))
+        need("lighting", COUNT_GUIDANCE_ROLE_CATEGORIES["lighting"], gap_ok=True)
+        if furnished:
+            need("accent_seating", LIVING_ACCENT_SEATING, 2 if scale == "spacious" else 1, gap_ok=True)
     if room_type in {"bedroom", "studio"}:
         need("sleeping_anchor", {"bed"})
+        need("bedside", {"nightstand"}, gap_ok=True)
+        need("lighting", COUNT_GUIDANCE_ROLE_CATEGORIES["lighting"], gap_ok=True)
+        if furnished:
+            need("clothes_storage", CLOTHES_STORAGE_CATEGORIES, gap_ok=True)
     if room_type == "studio":
         need("anchor_seating", {"sofa", "loveseat", "sectional", "sleeper_sofa"})
-    if room_type in {"dining_room", "studio"}:
+    if room_type == "dining_room" or (
+        room_type == "studio" and studio_dining_required(intent, float(digest.get("room_area_sqm") or 0.0))
+    ):
         need("dining_table", {"dining_table"})
-        need("dining_seating", {"dining_chair"}, dining_chair_count({**intent, "room_type": room_type}))
+        need("dining_seating", {"dining_chair"}, dining_chair_count({**intent, "room_type": room_type}, scale))
+    if room_type == "dining_room" and furnished:
+        need("serving_storage", DINING_SERVING_CATEGORIES, gap_ok=True)
+        need("overhead_lighting", COUNT_GUIDANCE_ROLE_CATEGORIES["overhead_lighting"], gap_ok=True)
     if room_type in {"living_room", "bedroom"} and "rug" not in excluded:
         need("rug", REQUIRED_CATEGORIES["rug"])
     if room_type == "living_room" and requires_spacious_perimeter_storage(
@@ -188,6 +230,10 @@ def room_requirements(
     blocked = excluded_room_categories(room_type) | excluded | {
         category for category, cap in (digest.get("max_counts_by_category") or {}).items() if int(cap) <= 0
     }
+    if room_type not in {"dining_room", "studio"}:
+        blocked |= COUNT_GUIDANCE_ROLE_CATEGORIES["overhead_lighting"]
+    if room_type == "living_room" and not work:
+        blocked.add("desk")
     optional_roles = {
         role: sorted(categories - blocked - taken)
         for role, categories in COUNT_GUIDANCE_ROLE_CATEGORIES.items()
@@ -258,6 +304,75 @@ def _attribute_errors(selected_assets: list[dict[str, Any]], intent_packet: dict
     return errors
 
 
+def _size_findings(
+    selected_assets: list[dict[str, Any]], pool: list[dict[str, Any]], room_type: str,
+) -> tuple[list[str], list[str]]:
+    """Errors and warnings for piece sizes against the pieces they serve.
+
+    Living room: a coffee table 0.35 to 0.50 m high and 0.5 to 0.75 x the widest
+    selected sofa's width, a side table 0.45 to 0.65 m high. Dining room and
+    studio: a ceiling light over the dining table (in a studio, of the dining
+    group) stays DINING_LIGHT_TABLE_INSET_M inside each table edge. Bedroom: a
+    rug is a runner (at most RUNNER_MAX_WIDTH_M wide) or spans the bed width
+    plus BED_RUG_EXTRA_WIDTH_M. A failing product is an error when the pool
+    holds a product that would pass in its place, else a warning: the model
+    can choose only from the pool. The coffee table width is always a
+    warning, because most catalog coffee tables are narrower than half a long
+    sofa.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+    selected = list({str(asset.get("uid")): asset for asset in selected_assets}.values())
+
+    def of(assets: list[dict[str, Any]], categories: set[str]) -> list[dict[str, Any]]:
+        return [asset for asset in assets if normalize_category(asset.get("category")) in categories]
+
+    def check(asset: dict[str, Any], passes, message: str, alternatives: list[dict[str, Any]] | None) -> None:
+        if not passes(asset):
+            blocking = alternatives is not None and any(passes(product) for product in alternatives)
+            (errors if blocking else warnings).append(f"SIZE: {asset.get('uid')} {message}")
+
+    def size(asset: dict[str, Any]) -> str:
+        width, depth = _asset_width_depth(asset)
+        return f"{width:.2f}m x {depth:.2f}m x {float(asset.get('height') or 0.0):.2f}m"
+
+    def height_in(limits: tuple[float, float]):
+        return lambda asset: limits[0] - 1e-9 <= float(asset.get("height") or 0.0) <= limits[1] + 1e-9
+
+    if room_type == "living_room":
+        for category, limits in (("coffee_table", COFFEE_TABLE_HEIGHT_M), ("side_table", SIDE_TABLE_HEIGHT_M)):
+            for table in of(selected, {category}):
+                check(table, height_in(limits), f"is {size(table)}; a {category.replace('_', ' ')} is "
+                      f"{limits[0]:.2f}-{limits[1]:.2f}m high.", of(pool, {category}))
+        sofa = max(of(selected, FIT_ANCHOR_SEATING), key=lambda asset: max(_asset_width_depth(asset)), default=None)
+        if sofa:
+            narrow, wide = (ratio * max(_asset_width_depth(sofa)) for ratio in COFFEE_TABLE_SOFA_WIDTH_RATIO)
+            for table in of(selected, {"coffee_table"}):
+                check(table, lambda asset: narrow - 1e-9 <= max(_asset_width_depth(asset)) <= wide + 1e-9,
+                      f"is {size(table)}; beside sofa {sofa.get('uid')} a coffee table is {narrow:.2f}-{wide:.2f}m "
+                      "wide.", None)
+    tables = of(selected, {"dining_table"})
+    if tables and room_type in {"dining_room", "studio"}:
+        table = max(tables, key=lambda asset: _asset_width_depth(asset)[0])
+        width, depth = (side - 2 * DINING_LIGHT_TABLE_INSET_M for side in _asset_width_depth(table))
+        lights = [asset for asset in pool if is_ceiling_mounted_asset(asset.get("category", ""))]
+        for light in selected:
+            if is_ceiling_mounted_asset(light.get("category", ""), light.get("uid", "")) and (
+                    room_type == "dining_room" or light.get("functional_group") == "dining"):
+                check(light, lambda asset: _fits_rect(*_asset_width_depth(asset), width, depth),
+                      f"is {size(light)}; over table {table.get('uid')} a light stays "
+                      f"{DINING_LIGHT_TABLE_INSET_M:.2f}m inside each edge, at most {width:.2f}m x {depth:.2f}m.", lights)
+    beds = of(selected, {"bed"})
+    if beds and room_type == "bedroom":
+        span = _asset_width_depth(beds[0])[0] + BED_RUG_EXTRA_WIDTH_M
+        for rug in of(selected, {"rug"}):
+            check(rug, lambda asset: min(_asset_width_depth(asset)) <= RUNNER_MAX_WIDTH_M + 1e-9
+                  or max(_asset_width_depth(asset)) >= span - 1e-9,
+                  f"is {size(rug)}; a bedroom rug is a runner at most {RUNNER_MAX_WIDTH_M:.2f}m wide, or at least "
+                  f"{span:.2f}m across the bed, {BED_RUG_EXTRA_WIDTH_M / 2:.2f}m past each side.", of(pool, {"rug"}))
+    return errors, warnings
+
+
 def validate_selection(
     *,
     items: list[dict[str, Any]],
@@ -285,8 +400,10 @@ def validate_selection(
     the code solver.
 
     Checks budget (110% allowance), the density floor, category caps and
-    counts, required items, fit targets, layout preflight, and strict
-    attributes. Returns valid, status, errors, warnings, metrics,
+    counts, required items (room_requirements), fit targets, layout
+    preflight, piece sizes (_size_findings), and strict attributes. A
+    completeness piece blocks unless a fit decision was accepted or the pool
+    has no product for it. Returns valid, status, errors, warnings, metrics,
     retry_context (when invalid), feedback (JSON text for the model, with
     asset_id as the uid), and instances (build_instances output).
     """
@@ -319,6 +436,9 @@ def validate_selection(
 
     dining = room_type == "dining_room"
     studio = room_type == "studio"
+    scale = feasibility_digest.get("room_scale")
+    requirements = room_requirements(room_type=room_type, intent=intent_packet, digest=feasibility_digest)["required"]
+    need_categories = {need["role"]: set(need["categories"]) for need in requirements}
     excluded_categories = {
         normalize_category(category)
         for category in (intent_packet.get("excluded_categories") or [])
@@ -428,11 +548,12 @@ def validate_selection(
     if studio and not selected_cats & {"sofa", "loveseat", "sectional", "sleeper_sofa"}:
         errors.append("STUDIO SITTING GROUP: Include separate sofa/loveseat seating; a bed or dining chair does not substitute.")
         is_valid = False
-    if dining or studio:
+    # A studio's dining group is checked when it is required or selected.
+    if "dining_table" in need_categories or (studio and selected_cats & {"dining_table", "dining_chair"}):
         dining_assets = [assets_by_uid[uid] for uid in canonical_uids if uid in assets_by_uid]
         table_count = sum(normalize_category(asset.get("category")) == "dining_table" for asset in dining_assets)
         chair_count = sum(normalize_category(asset.get("category")) == "dining_chair" for asset in dining_assets)
-        target_count = dining_chair_count(intent_packet)
+        target_count = dining_chair_count({**intent_packet, "room_type": room_type}, scale)
         seat_constraints = count_constraints_from_intent_packet(intent_packet)
         seat_request = seat_constraints.get("dining_chair") or seat_constraints.get("chair") or {}
         mandatory_count = not seat_request.get("optional") and (
@@ -446,6 +567,8 @@ def validate_selection(
             )
         )
         minimum_count = min(2, target_count) if flexible_seating else target_count
+        if dining and scale == "spacious" and not mandatory_count:
+            minimum_count = min(minimum_count, 4)  # the six-seat default; the preflight checks the table seats them
         if table_count != 1 or not minimum_count <= chair_count <= target_count:
             seat_range = str(target_count) if minimum_count == target_count else f"{minimum_count}–{target_count}"
             errors.append(
@@ -477,11 +600,11 @@ def validate_selection(
             "A retail planter or another decor category does not satisfy this requirement."
         )
         is_valid = False
-    # Fresh designs require seating and a surface. Lighting stays advisory;
-    # rugs use a separate fresh-design rule so accepted fit decisions keep one.
+    # Fresh living rooms require seating and a surface (a desk only when work is
+    # requested); rugs use a separate fresh-design rule so accepted fit decisions keep one.
     enforce_required_categories = not accepted_fit_decision
     required_categories = {
-        label: cats for label, cats in REQUIRED_CATEGORIES.items()
+        label: need_categories.get(label, cats) for label, cats in REQUIRED_CATEGORIES.items()
         if not dining and not studio and (not bedroom or label not in {"anchor_seating", "surface"})
     }
     for label, cats in required_categories.items():
@@ -519,6 +642,37 @@ def validate_selection(
             "storage/display piece: bookcase, cabinet, or sideboard."
         )
         is_valid = False
+    # Completeness pieces block unless a fit decision was accepted. One the pool has
+    # no product for is a catalog gap, since the model can choose only from the pool;
+    # a count the brief states for its categories caps the count required.
+    stated_counts = count_constraints_from_intent_packet(intent_packet)
+    available = {normalize_category(asset.get("category")) for asset in assets_by_uid.values()}
+    selected_list = [normalize_category(assets_by_uid[uid].get("category")) for uid in canonical_uids if uid in assets_by_uid]
+    two_sided_bed = room_type == "bedroom" and scale != "compact" and any(
+        normalize_category(assets_by_uid[uid].get("category")) == "bed"
+        and _asset_width_depth(assets_by_uid[uid])[0] >= BED_TWO_SIDED_MIN_WIDTH_M - 1e-9
+        for uid in canonical_uids if uid in assets_by_uid
+    )
+    for need in requirements:
+        categories = need_categories[need["role"]]
+        if not need["gap_ok"] or not categories & available:
+            continue
+        count = 2 if need["role"] == "bedside" and two_sided_bed else need["count"]
+        if stated := sum(int(constraint["count"]) for category, constraint in stated_counts.items() if category in categories):
+            count = min(count, stated)
+        pair = need["role"] == "bedside" and count == 2
+        found = sum(category in categories for category in selected_list)
+        if found < count:
+            message = (
+                f"MISSING REQUIRED: Select {count} {need['role'].replace('_', ' ')} "
+                f"({', '.join(need['categories'])}); found {found}."
+                + (f" A bed {BED_TWO_SIDED_MIN_WIDTH_M:.2f}m or wider is used from both sides." if pair else "")
+            )
+            if accepted_fit_decision:
+                warnings.append(message)
+            else:
+                errors.append(message)
+                is_valid = False
     requested_fit_counts, recommended_fit_counts = _fit_warning_counts(room)
     requested_fit_counts = {
         category: count for category, count in requested_fit_counts.items() if category not in waived
@@ -575,6 +729,11 @@ def validate_selection(
         errors.extend(layout_preflight["errors"])
         is_valid = False
     warnings.extend(layout_preflight["warnings"])
+    size_errors, size_warnings = _size_findings(selected_for_fit, list(assets_by_uid.values()), room_type)
+    if size_errors:
+        errors.extend(size_errors)
+        is_valid = False
+    warnings.extend(size_warnings)
 
     if studio:
         for asset in selected_for_fit:

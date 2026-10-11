@@ -18,6 +18,7 @@ from app.rules.layout.constants import (
     DINING_LIGHT_TABLE_MIN_GAP_M,
     DINING_PULLOUT_M,
     DINING_RUG_EXTENSION_M,
+    DINING_TWO_SIDED_MIN_DEPTH_M,
 )
 from app.rules.layout.relations import _functional_group_assets, floor_assets
 from app.rules.planner.taxonomy import normalize_category
@@ -34,6 +35,8 @@ def dining_fit_envelopes(table: dict[str, Any], chairs: list[dict[str, Any]]) ->
 
     These are necessary coarse fit facts, not certification of openings, table
     legs, seat height, or a final arrangement. Width/depth are full model bounds.
+    Two opposite edges seat chairs together only when they are at least
+    DINING_TWO_SIDED_MIN_DEPTH_M apart.
     """
     width, depth = float(table.get("width") or 0), float(table.get("depth") or 0)
     if not chairs or min(width, depth) <= 0:
@@ -45,6 +48,9 @@ def dining_fit_envelopes(table: dict[str, Any], chairs: list[dict[str, Any]]) ->
     options = []
     for sides in product(*(range(capacity + 1) for capacity in capacities)):
         if sum(sides) != count:
+            continue
+        if (sides[0] and sides[1] and depth < DINING_TWO_SIDED_MIN_DEPTH_M - 1e-9
+                or sides[2] and sides[3] and width < DINING_TWO_SIDED_MIN_DEPTH_M - 1e-9):
             continue
         options.append({
             "width": width + allowance * sum(bool(n) for n in sides[2:]),

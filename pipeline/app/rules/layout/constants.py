@@ -95,6 +95,8 @@ DINING_LIGHT_TABLE_MAX_GAP_M = 0.90
 
 DINING_RUG_EXTENSION_M = 0.60  # rug past each table edge, so pulled-out chairs stay on it
 
+DINING_TWO_SIDED_MIN_DEPTH_M = 0.75  # across the table: two place settings face to face
+
 DINING_CRITICAL_ISSUE_KEYS = (
     "dining_completeness_violations",
     "dining_seat_space_violations",

@@ -189,7 +189,7 @@
     "console_table": 6,
     "decor": 8,
     "desk": 6,
-    "dining_chair": 4,
+    "dining_chair": 6,
     "dining_table": 1,
     "dresser": 3,
     "floor_lamp": 5,
@@ -574,8 +574,9 @@
     },
     "valid": false,
     "errors": [
-     "DINING GROUP: Select exactly one standalone dining_table and 4 dining_chairs; found 0 tables and 4 chairs. Preserve the requested seating count.",
-     "SELECTION CONSTRAINT AUDIT: attribute constraint \"woven baskets\" is not satisfied by ['storage_unit_9']"
+     "DINING GROUP: Select exactly one standalone dining_table and 4–6 dining_chairs; found 0 tables and 4 chairs. Preserve the requested seating count.",
+     "SELECTION CONSTRAINT AUDIT: attribute constraint \"woven baskets\" is not satisfied by ['storage_unit_9']",
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0."
     ]
    },
    {
@@ -720,7 +721,8 @@
     },
     "valid": false,
     "errors": [
-     "SELECTION CONSTRAINT AUDIT: attribute constraint \"woven baskets\" is not satisfied by ['storage_unit_9']"
+     "SELECTION CONSTRAINT AUDIT: attribute constraint \"woven baskets\" is not satisfied by ['storage_unit_9']",
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0."
     ]
    },
    {
@@ -872,7 +874,8 @@
     },
     "valid": false,
     "errors": [
-     "COUNT LIMIT: Requested 1 storage_unit; selected 2."
+     "COUNT LIMIT: Requested 1 storage_unit; selected 2.",
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0."
     ]
    },
    {
@@ -1188,7 +1191,8 @@
     },
     "valid": false,
     "errors": [
-     "COUNT LIMIT: Requested 1 storage_unit; selected 2."
+     "COUNT LIMIT: Requested 1 storage_unit; selected 2.",
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0."
     ]
    },
    {
@@ -1329,8 +1333,10 @@
       }
      ]
     },
-    "valid": true,
-    "errors": []
+    "valid": false,
+    "errors": [
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0."
+    ]
    },
    {
     "variant": 1,
@@ -1464,8 +1470,11 @@
       }
      ]
     },
-    "valid": true,
-    "errors": []
+    "valid": false,
+    "errors": [
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0.",
+     "MISSING REQUIRED: Select 1 overhead lighting (chandelier, pendant_light); found 0."
+    ]
    },
    {
     "variant": 2,
@@ -1605,8 +1614,11 @@
       }
      ]
     },
-    "valid": true,
-    "errors": []
+    "valid": false,
+    "errors": [
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0.",
+     "MISSING REQUIRED: Select 1 overhead lighting (chandelier, pendant_light); found 0."
+    ]
    }
   ],
   "layout_assets": {

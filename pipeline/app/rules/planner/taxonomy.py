@@ -84,6 +84,7 @@ CATEGORY_ALIASES = {
     "media_console": "media_unit",
     "media_storage": "media_unit",
     "mirror": "wall_mirror",
+    "pendant": "pendant_light",
     "plant": "planter",
     "print": "wall_art",
     "pub_table": "bar_table",
@@ -188,6 +189,8 @@ COUNT_GUIDANCE_ROLE_CATEGORIES = {
     # Dining chairs belong to the dining cluster, not the lounge seating group.
     "accent_seating": ROLE_CATEGORIES["accent_seating"] - {"dining_chair"},
     "storage": ROLE_CATEGORIES["storage"],
+    # Searched in dining rooms and studios only (room_requirements).
+    "overhead_lighting": {"pendant_light", "chandelier"},
 }
 
 COUNT_CONSTRAINT_EQUIVALENTS = {

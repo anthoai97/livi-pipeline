@@ -421,6 +421,22 @@ def test_required_item_searched_without_its_limits_can_pass_selection(tmp_path, 
     assert all("candidates ignore them" in prompt for prompt in genai.of("Selection"))
 
 
+def test_completeness_piece_with_no_catalog_product_is_a_gap_and_selection_passes(tmp_path, searches, monkeypatch):
+    solve_as(monkeypatch, PLACEMENTS)
+    # Without the minimal brief this spacious dining room also needs a sideboard (the pool has one) and a
+    # pendant or chandelier (it has none).
+    packet = {**intent_packet(), "functional_hints": [], "fit_flexibility": "balanced"}
+    genai = FakeGenai({"IntentPacket": packet, "Selection": selection()})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    [slot] = [slot for slot in record["slots"] if slot["slot"] == "overhead_lighting"]
+    assert slot["gap"] and slot["candidates"] == 0 and "reported as a gap" in slot["note"]
+    assert all("(overhead_lighting)" in prompt.split("CATALOG GAPS")[1] for prompt in genai.of("Selection"))
+    assert [stage_runs(record, "select", index) for index in range(3)] == [1, 1, 1]
+    assert len(of_type(events, "variant_ready")) == 3
+
+
 def test_layout_that_still_fails_the_final_check_loses_the_failing_item_and_is_delivered(tmp_path, searches, monkeypatch):
     solve_as(monkeypatch, OVERLAPPING)
     genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Arrangement": arrangement()})
@@ -949,7 +965,8 @@ def test_retrieve_applies_the_checks_after_each_slot_search(monkeypatch):
     assert tv_filters["price_exempt"] == ["television", "tv"]
     assert all(f["max_price"] <= 4400 and f["known_price"] for f in calls)
     assert all(f["price_exempt"] == [] for f in calls if f is not tv_filters)
-    assert not any(slot["gap"] for slot in slots.values())
+    # No requested slot is a gap; the living room's required lamp has no product in these rows, so it is a catalog gap.
+    assert [slot_id for slot_id, slot in slots.items() if slot["gap"]] == ["lighting"]
     assert {entry["slot"]: entry["candidates"] for entry in run.slots}["sofa"] == 2
 
 
@@ -963,9 +980,9 @@ def test_retrieve_merges_categories_round_robin_and_keeps_up_to_fetch(monkeypatc
         monkeypatch, "living_room", packet, lambda filters: [row for row in lamps if row["category"] in filters["categories"]]
     )
 
-    assert slots["lighting"]["kind"] == "optional"
+    assert slots["lighting"]["kind"] == "required"  # a living room requires a lamp (issue #54)
     assert pool["lighting"][:5] == ["floor_0", "table_0", "floor_1", "table_1", "floor_2"]
-    assert len(pool["lighting"]) == shared_stages.FETCH > shared_stages.KEEP["optional"]
+    assert len(pool["lighting"]) == shared_stages.FETCH > shared_stages.KEEP["required"]
     assert {entry["slot"]: entry["candidates"] for entry in run.slots}["lighting"] == shared_stages.FETCH
 
 

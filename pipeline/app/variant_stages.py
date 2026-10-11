@@ -42,7 +42,9 @@ from app import contracts
 from app.preview import png_bytes, render_plan
 from app.rules.door_geometry import format_door_for_prompt
 from app.rules.layout.analysis import analyze_layout, final_layout_check, findings_by_level
+from app.rules.layout.bedroom import BED_TWO_SIDED_MIN_WIDTH_M
 from app.rules.layout.comfort import comfort_placement_facts, media_viewing_measurements
+from app.rules.layout.constants import DINING_TWO_SIDED_MIN_DEPTH_M
 from app.rules.layout.metrics import layout_issue_score
 from app.rules.layout.normalization import move_asset_with_supports, normalize_layout
 from app.rules.layout.relations import (
@@ -64,18 +66,25 @@ from app.rules.planner.feasibility_digest import format_feasibility_digest_for_p
 from app.rules.planner.intent_packet import format_intent_packet_for_prompt, intent_prompt_text
 from app.rules.planner.room_facts import format_room_facts_for_prompt
 from app.rules.planner.taxonomy import normalize_category
+from app.rules.room_policy import STUDIO_DINING_MIN_AREA_SQM
 from app.rules.selection.catalog import _asset_matches_brand_preferences, _price_constraint_category_matches, catalog_asset
 from app.rules.selection.constants import (
+    BED_RUG_EXTRA_WIDTH_M,
     BUDGET_EXCLUDED_CATEGORIES,
     BUDGET_FLEX_PCT,
     BUDGET_FLOOR_PCT,
     BUDGET_TARGET_PCT,
+    COFFEE_TABLE_HEIGHT_M,
+    COFFEE_TABLE_SOFA_WIDTH_RATIO,
+    DINING_LIGHT_TABLE_INSET_M,
     FIT_ANCHOR_SEATING,
+    RUNNER_MAX_WIDTH_M,
+    SIDE_TABLE_HEIGHT_M,
     TV_HOST_CATEGORIES,
 )
 from app.rules.selection.fit import fit_step_guidance
 from app.rules.selection.preflight import _tv_support_in_selection
-from app.rules.selection.validation import is_decor_plant, requires_spacious_perimeter_storage, validate_selection
+from app.rules.selection.validation import is_decor_plant, requires_spacious_perimeter_storage, room_requirements, validate_selection
 from app.run import StageContext, describe
 from app.shared_stages import DECOR_CATEGORIES, KEEP, LIMIT_KEYS, RANKED_KEEP
 
@@ -353,7 +362,7 @@ def _candidates(pool: dict[str, list[Record]]) -> list[Record]:
 
 
 def _gap_slots(slots: list[Record]) -> list[Record]:
-    return [slot for slot in slots if slot["gap"] and slot["kind"] == "requested"]
+    return [slot for slot in slots if slot["gap"]]
 
 
 def _selection_intent(intent: Record, slots: list[Record]) -> Record:
@@ -401,21 +410,36 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
     bedroom = room_type == "bedroom"
     dining = room_type == "dining_room"
     studio = room_type == "studio"
-    media_selection_facts = (
-        [{key: value for key, value in row.items() if key != "viewing_target"}
-         for row in comfort_placement_facts(candidates, room_type)["tv_preferred_ranges"]]
-        if studio else []
-    )
+    media_selection_facts = [{key: value for key, value in row.items() if key != "viewing_target"}
+                             for row in comfort_placement_facts(candidates, room_type)["tv_preferred_ranges"]]
     # Planning reference, not a fit verdict: actual eye/screen insets and lateral
     # offsets are checked from poses later. It makes the room-scale tradeoff explicit.
     opposed_wall_reference = max(0.0, min(room_width, room_depth) - 0.6)
     wall_viewing_candidates = [row["uid"] for row in media_selection_facts
                                if row["estimated_view_distance_range_m"][1] >= opposed_wall_reference]
+    needs = {need["role"]: need for need in room_requirements(room_type=room_type, intent=intent, digest=digest)["required"]}
+
+    def required_pieces(*pieces: tuple[str, str]) -> str:
+        """The texts of the pieces whose roles this room requires (room_requirements), joined."""
+        return " and ".join(text for role, text in pieces if role in needs)
+
+    bedside_pieces = required_pieces(("bedside", "a nightstand"), ("lighting", "a lamp"),
+                                     ("clothes_storage", "a dresser or wardrobe"))
+    dining_pieces = required_pieces(("serving_storage", "a sideboard or cabinet"),
+                                    ("overhead_lighting", "a pendant or chandelier over the table"))
+    living_pieces = required_pieces(("lighting", "a lamp (floor_lamp/table_lamp/lamp)"),
+                                    ("accent_seating", f"{needs.get('accent_seating', {}).get('count')} accent chair(s)"))
     anchor_name = "complete bed, compact sofa and dining table" if studio else "complete adult bed" if bedroom else "dining table" if dining else "sofa"
     required_role_guidance = (
-        "Apply the studio furnishing policy in the feasibility digest: preserve one complete standalone bed, "
-        "separate compact sitting group and one dining table with two chairs unless an explicit dining count changes it. "
-        "These three core groups are mandatory even after a fit decision. Accessories do not substitute for a missing group. "
+        ("Apply the studio furnishing policy in the feasibility digest: preserve one complete standalone bed, "
+         "separate compact sitting group and one dining table with two chairs unless an explicit dining count changes it. "
+         "These three core groups are mandatory even after a fit decision. "
+         if "dining_table" in needs else
+         "Apply the studio furnishing policy in the feasibility digest: preserve one complete standalone bed and a "
+         f"separate compact sitting group; both are mandatory even after a fit decision. Below {STUDIO_DINING_MIN_AREA_SQM:.0f} m2 "
+         "a studio has no dining group unless the brief asks for one. ")
+        + (f"The bed also needs {bedside_pieces}. " if bedside_pieces else "")
+        + "Accessories do not substitute for a missing group. "
         "For each selected rug, side table or ceiling light, set functional_group to sleeping, sitting or dining according to "
         "the brief. This association remains fixed during layout; do not use one rug to serve multiple groups. "
         "A side table for bedside lighting belongs to sleeping, not sitting or dining. "
@@ -443,11 +467,22 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
         "Wardrobes are opt-in; do not add one to a generic bedroom. When requested, a dresser is not a substitute. "
         "A dresser provides folded-clothes storage, not hanging storage. Claim hanging storage only "
         "when product metadata confirms that capability; never relabel a generic cabinet as a wardrobe. "
-        "Do not infer mattress size from exterior furniture dimensions. Include fitting lighting."
+        "Do not infer mattress size from exterior furniture dimensions. Include fitting lighting. "
+        + (f"A fresh bedroom needs {bedside_pieces}; a selection missing them fails validation. " if bedside_pieces else "")
+        + f"Unless the room is compact, a bed {BED_TWO_SIDED_MIN_WIDTH_M:.2f}m or wider needs a nightstand on each side. "
+        f"A bedroom rug is a runner at most {RUNNER_MAX_WIDTH_M:.2f}m wide or spans the bed width plus "
+        f"{BED_RUG_EXTRA_WIDTH_M:.2f}m."
         if bedroom else
-        "Apply the dining furnishing policy in the feasibility digest: keep the usable table/chair group and access ahead of optional additions."
+        "Apply the dining furnishing policy in the feasibility digest: keep the usable table/chair group and access ahead of optional additions. "
+        + (f"This room also needs {dining_pieces}; a selection missing them fails validation. " if dining_pieces else "")
+        + f"A table under {DINING_TWO_SIDED_MIN_DEPTH_M:.2f}m deep seats one long side only. A light over the table "
+        f"stays {DINING_LIGHT_TABLE_INSET_M:.2f}m inside each table edge."
         if dining else
-        "Anchor seating (sofa/sectional/loveseat) and a surface (coffee_table/side_table/desk) are mandatory; a selection missing either fails validation. Lighting (floor_lamp/table_lamp/lamp) is expected in every room — include one before adding a second seat or any decor."
+        "Anchor seating (sofa/sectional/loveseat) and a surface (coffee_table/side_table; a desk counts only when work is "
+        "requested) are mandatory" + (f", and this room needs {living_pieces}" if living_pieces else "")
+        + f"; a selection missing any of them fails validation. A coffee table is {COFFEE_TABLE_HEIGHT_M[0]:.2f}-"
+        f"{COFFEE_TABLE_HEIGHT_M[1]:.2f}m high and about {COFFEE_TABLE_SOFA_WIDTH_RATIO[0]}-{COFFEE_TABLE_SOFA_WIDTH_RATIO[1]} "
+        f"x the sofa width; a side table is {SIDE_TABLE_HEIGHT_M[0]:.2f}-{SIDE_TABLE_HEIGHT_M[1]:.2f}m high."
     )
     variant_directive = state["direction"]
     excluded_categories = set(intent.get("excluded_categories") or [])
@@ -498,7 +533,7 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
         )
     if dining:
         optional_piece_guidance = (
-            "Apply the conditional dining furnishing suggestions above after seating and access fit; "
+            "Beyond the required pieces, apply the conditional dining furnishing suggestions above after seating and access fit; "
             "they do not impose counts or a floor-fill target. Respect minimal briefs and exclusions."
         )
         selection_size_guidance = (
@@ -507,6 +542,8 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
     rug_guidance = (
         "Rugs are optional in a dining room; include one only when requested and large enough for the table and chair movement."
         if dining else
+        "Rugs are optional in a studio; when you select one, use one rug per functional group."
+        if studio else
         "Include at least one fitting rug in every fresh design unless the user explicitly excludes rugs. Rugs do not count toward the density floor, but they must physically fit the room."
     )
     reuse_guidance = (
@@ -557,9 +594,9 @@ INTENT: {intent_prompt_text(intent, request.user_intent)}
 CATALOG (grouped by search slot; each slot lists only products that passed its filters):
 {_catalog_block(shared["slots"], state["pool"])}
 
-STUDIO TV SIZE / VIEWING RANGE FACTS (metres; choose for the requested bed/sofa viewers):
+TV SIZE / VIEWING RANGE FACTS (metres; choose for the viewers):
 {json.dumps(media_selection_facts) if media_selection_facts else "Not applicable"}
-{f"For bed/shared viewing across opposing walls, the shorter room span minus a 0.60m combined eye/screen inset gives an approximate {opposed_wall_reference:.2f}m planning reference. Catalog screens whose preferred range reaches it: {wall_viewing_candidates}. Prefer these with a fitting console for a wall-backed arrangement; smaller screens need an intentionally closer arrangement. This is guidance, not a pose or feasibility guarantee." if studio and media_selection_facts else ""}
+{f"For viewing across opposing walls, the shorter room span minus a 0.60m combined eye/screen inset gives an approximate {opposed_wall_reference:.2f}m planning reference. Catalog screens whose preferred range reaches it: {wall_viewing_candidates}. Prefer these with a fitting console for a wall-backed arrangement; smaller screens need an intentionally closer arrangement. This is guidance, not a pose or feasibility guarantee." if media_selection_facts else ""}
 
 CONSTRAINTS:
 {reuse_guidance}- Use features as supported product capabilities. mount_type=wall_secured requires floor placement against a wall; wall_mounted and ceiling_mounted require those mounting surfaces. An empty mount_type is unknown.
@@ -603,8 +640,8 @@ OUTPUT JSON:
     gaps = _gap_slots(shared["slots"])
     if gaps:
         prompt += (
-            "\n\nCATALOG GAPS (no eligible product; these requested items are not required):\n"
-            + "\n".join(f'- {slot["label"]} ({slot["category"]})' for slot in gaps)
+            "\n\nCATALOG GAPS (no eligible product; these items are not required):\n"
+            + "\n".join(f'- {slot["label"]} ({slot["category"] or slot["id"]})' for slot in gaps)
             + "\nName each one in gaps."
         )
     previous = state.get("selection_validation")
@@ -1083,7 +1120,7 @@ def _validated(state: VariantState, selected: list[Record], intent: Record, fit_
         room=shared["room"],
         budget=shared["request"].budget,
         candidates=candidates,
-        gaps=[slot["category"] for slot in _gap_slots(shared["slots"])],
+        gaps=[slot["category"] for slot in _gap_slots(shared["slots"]) if slot["category"]],
         fit_step=fit_step,
         fit_satisfaction=_fit_satisfaction(uids, shared["slots"], state["pool"]),
         constraint_audit=audit,

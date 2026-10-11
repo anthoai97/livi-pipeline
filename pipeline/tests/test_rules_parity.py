@@ -18,6 +18,7 @@ from app.rules.layout.cleanup import (
     run_deterministic_p0_cleanup,
     satisfy_sofa_table_gaps,
 )
+from app.rules.layout.dining import dining_fit_envelopes
 from app.rules.layout.metrics import has_blocking_issues
 from app.rules.layout.normalization import normalize_layout
 from app.rules.planner._util import room_scale
@@ -27,11 +28,13 @@ from app.rules.planner.seed_guidance import build_seed_guidance
 from app.rules.selection.catalog import catalog_asset
 from app.rules.selection.fit import capped_counts
 from app.rules.selection.preflight import _layout_preflight_for_assets
-from app.rules.selection.validation import build_instances, validate_selection
+from app.rules.selection.validation import _size_findings, build_instances, validate_selection
 
 # Recorded digests, blocking findings and validity are re-measured at the issue #54 phase 1 rules: per-room size classes
 # (these 20.8 m2 dining rooms are spacious), a door clear zone as deep as the door is wide, a 0.46 m chair pull-out
-# (0.56 m with a path behind) and 0.76 m storage fronts.
+# (0.56 m with a path behind) and 0.76 m storage fronts. At the phase 2 rules the first run, which states no seat
+# count, defaults to six chairs (four to six pass), and its turns without a sideboard or cabinet, or without a
+# pendant when the pool holds one, fail; the other two runs are minimal or state their counts and are unchanged.
 RUNS = json.loads((Path(__file__).parent / "fixtures" / "legacy_runs.json").read_text())
 # Legacy seed and cleanup outputs (livinit_pipeline @ 8ec38ae) on the RUNS variants
 # and on synthetic living, bedroom, studio, and door-to-door rooms built as runtime instances,
@@ -389,3 +392,122 @@ def test_a_studio_dining_light_hangs_0_76_to_0_90_m_above_the_table(height, erro
                                           room={"room_type": "studio", "room_area": (6.0, 6.0), "wall_height": 2.7})
     assert any("dining light pendant_1" in text for text in result["errors"]) is error
     assert any("dining light pendant_1" in text for text in result["warnings"]) is warning
+
+
+# --- issue #54 phase 2: completeness and selection sizes
+
+
+def _record(asset_id, category, width=0.5, depth=0.5, height=0.5, **fields):
+    return {"asset_id": asset_id, "category": category, "width_m": width, "depth_m": depth, "height_m": height,
+            "placement_type": "floor", "is_purchasable": True, "price": 100, **fields}
+
+
+PLANT = _record("plant", "planter", source_table="pipeline.decor_items", is_purchasable=False, price=None)
+LAMP = _record("lamp", "floor_lamp", 0.4, 0.4, 1.6)
+NIGHTSTANDS = [_record("nightstand", "nightstand", 0.5, 0.4, 0.55)] * 2
+BED = _record("bed", "bed", 1.6, 2.1, 1.1)
+
+
+def _validate(room_type, room_area, selected, pool=(), **intent):
+    """validate_selection of `selected` (one unit per record) from a pool of `selected` and `pool`."""
+    intent = coerce_intent_packet({"normalized_prompt": "a room", **intent}, room_type=room_type)
+    room = build_room_context(room_type=room_type, room_area=room_area, room_vertices=None, wall_height=2.7,
+                              room_doors=[{"center": [room_area[0] / 2, 0.0], "width": 0.9, "depth": 0.05}],
+                              room_windows=[], intent=intent)
+    return validate_selection(items=[{"asset": record, "quantity": 1} for record in selected], intent=intent, room=room,
+                              budget=100000, candidates=[*selected, *pool])
+
+
+def _missing(result, piece):
+    return any(error.startswith(f"MISSING REQUIRED: Select 1 {piece} ") for error in result["errors"])
+
+
+@pytest.mark.parametrize(("selected", "pool", "missing"), [
+    ([], [LAMP], True),
+    ([LAMP], [], False),
+    ([], [], False),  # no lamp in the pool: a catalog gap, not an error every turn
+])
+def test_a_living_room_requires_a_lamp(selected, pool, missing):
+    living = [_record("sofa", "sofa", 2.0, 0.9, 0.8), _record("table", "coffee_table", 1.1, 0.6, 0.45),
+              _record("rug", "rug", 2.4, 1.7, 0.01), PLANT]
+    result = _validate("living_room", (4.0, 4.0), [*living, *selected], pool)  # 16 m2: compact, no accent seat required
+    assert _missing(result, "lighting") is missing
+    assert not missing or not result["valid"]
+
+
+@pytest.mark.parametrize(("room_area", "missing"), [((3.75, 4.0), True), ((3.0, 3.5), False)])
+def test_a_medium_bedroom_requires_a_dresser_or_wardrobe_and_a_compact_one_does_not(room_area, missing):
+    bedroom = [BED, *NIGHTSTANDS, LAMP, _record("rug", "rug", 2.5, 1.7, 0.01), PLANT]
+    result = _validate("bedroom", room_area, bedroom, [_record("dresser", "dresser", 1.2, 0.5, 0.8)])
+    assert _missing(result, "clothes storage") is missing
+    assert not any(error.startswith("MISSING REQUIRED") for error in result["errors"] if "clothes storage" not in error)
+
+
+def test_a_medium_dining_room_requires_a_sideboard_and_a_pendant():
+    dining = [_record("table", "dining_table", 1.8, 0.9, 0.75), *[_record("chair", "dining_chair", 0.5, 0.5, 0.8)] * 4, PLANT]
+    sideboard, pendant = _record("sideboard", "sideboard", 1.6, 0.45, 0.8), _record("pendant", "pendant", 0.4, 0.4, 0.6)
+    bare = _validate("dining_room", (3.5, 4.0), dining, [sideboard, pendant])  # 14 m2: medium
+    furnished = _validate("dining_room", (3.5, 4.0), [*dining, sideboard, pendant])
+    assert _missing(bare, "serving storage") and _missing(bare, "overhead lighting") and not bare["valid"]
+    assert not _missing(furnished, "serving storage") and not _missing(furnished, "overhead lighting")
+
+
+@pytest.mark.parametrize(("chairs", "valid"), [(3, False), (4, True), (6, True), (7, False)])
+def test_a_spacious_dining_room_seats_four_to_six_by_default(chairs, valid):
+    dining = [_record("table", "dining_table", 2.4, 1.0, 0.75), *[_record("chair", "dining_chair", 0.5, 0.5, 0.8)] * chairs,
+              _record("sideboard", "sideboard", 1.6, 0.45, 0.8), _record("pendant", "pendant", 0.4, 0.4, 0.6), PLANT]
+    result = _validate("dining_room", (4.2, 4.8), dining)  # 20 m2: spacious
+    assert any(error.startswith("DINING GROUP") and "4–6 dining_chairs" in error for error in result["errors"]) is not valid
+
+
+@pytest.mark.parametrize(("room_area", "dining_required"), [((4.0, 5.0), False), ((5.0, 6.0), True)])
+def test_a_studio_requires_a_dining_group_from_25_m2(room_area, dining_required):
+    studio = [BED, NIGHTSTANDS[0], LAMP, _record("sofa", "sofa", 1.8, 0.9, 0.8)]
+    pool = [_record("table", "dining_table", 1.0, 0.8, 0.75), _record("chair", "dining_chair", 0.5, 0.5, 0.8)]
+    result = _validate("studio", room_area, studio, pool)
+    assert any(error.startswith("DINING GROUP") for error in result["errors"]) is dining_required
+
+
+def _piece(uid, category, width, depth, height):
+    return {"uid": uid, "asset_id": uid, "category": category, "width": width, "depth": depth, "height": height}
+
+
+SOFA_2M = _piece("sofa_1", "sofa", 2.0, 0.9, 0.8)
+DINING_TABLE = _piece("dining_table_1", "dining_table", 1.8, 0.9, 0.75)
+BED_160 = _piece("bed_1", "bed", 1.6, 2.1, 1.1)
+# A passing product of each kind, so a failing piece is an error rather than a warning.
+PASSING = [_piece("coffee_table_9", "coffee_table", 1.2, 0.6, 0.45), _piece("side_table_9", "side_table", 0.5, 0.5, 0.55),
+           _piece("pendant_9", "pendant_light", 0.4, 0.4, 0.5), _piece("rug_9", "rug", 0.8, 2.0, 0.01)]
+
+
+@pytest.mark.parametrize(("room_type", "piece", "context", "finding"), [
+    ("living_room", _piece("coffee_table_1", "coffee_table", 1.2, 0.6, 0.35), [SOFA_2M], None),
+    ("living_room", _piece("coffee_table_1", "coffee_table", 1.2, 0.6, 0.34), [SOFA_2M], "error"),
+    ("living_room", _piece("coffee_table_1", "coffee_table", 1.2, 0.6, 0.50), [SOFA_2M], None),
+    ("living_room", _piece("coffee_table_1", "coffee_table", 1.2, 0.6, 0.51), [SOFA_2M], "error"),
+    ("living_room", _piece("coffee_table_1", "coffee_table", 1.0, 0.6, 0.45), [SOFA_2M], None),  # 0.5 x the sofa
+    ("living_room", _piece("coffee_table_1", "coffee_table", 0.99, 0.6, 0.45), [SOFA_2M], "warning"),  # width is advisory
+    ("living_room", _piece("coffee_table_1", "coffee_table", 1.5, 0.6, 0.45), [SOFA_2M], None),  # 0.75 x the sofa
+    ("living_room", _piece("coffee_table_1", "coffee_table", 1.51, 0.6, 0.45), [SOFA_2M], "warning"),
+    ("living_room", _piece("side_table_1", "side_table", 0.5, 0.5, 0.45), [], None),
+    ("living_room", _piece("side_table_1", "side_table", 0.5, 0.5, 0.44), [], "error"),
+    ("living_room", _piece("side_table_1", "side_table", 0.5, 0.5, 0.65), [], None),
+    ("living_room", _piece("side_table_1", "side_table", 0.5, 0.5, 0.66), [], "error"),
+    ("dining_room", _piece("pendant_1", "pendant_light", 1.5, 0.6, 0.5), [DINING_TABLE], None),  # 0.15 m inside each edge
+    ("dining_room", _piece("pendant_1", "pendant_light", 0.61, 0.61, 0.5), [DINING_TABLE], "error"),
+    ("bedroom", _piece("rug_1", "rug", 2.5, 1.7, 0.01), [BED_160], None),  # the bed width plus 0.9 m
+    ("bedroom", _piece("rug_1", "rug", 2.49, 1.7, 0.01), [BED_160], "error"),
+    ("bedroom", _piece("rug_1", "rug", 0.9, 2.0, 0.01), [BED_160], None),  # a runner
+])
+def test_selection_size_rules_hold_at_their_boundaries(room_type, piece, context, finding):
+    errors, warnings = _size_findings([piece, *context], [piece, *PASSING], room_type)
+    assert [bool(errors), bool(warnings)] == [finding == "error", finding == "warning"]
+    # With no passing product in the pool, a failing piece is only a warning.
+    errors, warnings = _size_findings([piece, *context], [piece], room_type)
+    assert [bool(errors), bool(warnings)] == [False, finding is not None]
+
+
+@pytest.mark.parametrize(("depth", "seats_five"), [(0.75, True), (0.74, False)])
+def test_a_table_under_0_75_m_deep_seats_one_long_side(depth, seats_five):
+    # 1.2 m long sides seat two each at a 0.60 m pitch, the ends one each: five chairs need both long sides.
+    assert bool(dining_fit_envelopes({"width": 1.2, "depth": depth}, [{"width": 0.5, "depth": 0.5}] * 5)) is seats_five

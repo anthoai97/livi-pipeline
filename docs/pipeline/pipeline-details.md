@@ -112,9 +112,22 @@ One slot is one kind of item the room may need:
 | Slot kind | Source | Example | Kept after Jev rank | Kept without it |
 |---|---|---|---:|---:|
 | Requested | each requested item | sofa, coffee table, floor lamp, TV | 6 | 10 |
-| Required | room rules not covered by a requested item | storage, design-only plant | 6 | 10 |
-| Optional | room roles the model may use, and the other categories of a required role a request covers | accent seating, media unit, storage; side tables beside a requested coffee table | 4 | 6 |
-| Decor | fixed list | planter, sculpture, floor mirror, wall mirror | 4 | 6 |
+| Required | room rules not covered by a requested item (see below) | lamp, nightstand, sideboard, design-only plant | 6 | 10 |
+| Optional | room roles the model may use, and the other categories of a required role a request covers | accent seating, media unit, storage; a pendant or chandelier in a dining room or studio; side tables beside a requested coffee table | 4 | 6 |
+| Decor | fixed list | planter, sculpture, floor mirror, wall mirror, wall art | 4 | 6 |
+
+The required items per room (`room_requirements`):
+
+| Room | Core | Completeness pieces |
+|---|---|---|
+| Living room | sofa; coffee or side table (a desk counts only when work is requested); rug; design-only plant; perimeter storage when spacious | a lamp; one accent chair when medium, two when spacious |
+| Bedroom | one bed; rug; design-only plant | a nightstand and a lamp; a dresser or wardrobe from medium size |
+| Dining room | one table and its chairs (4, or 6 when spacious; 4 to 6 pass); design-only plant | a sideboard or cabinet and a pendant or chandelier from medium size |
+| Studio | bed; sofa or loveseat; a table with 2 chairs when the brief asks for one or the studio is 25 m² or more | a nightstand and a lamp; a dresser or wardrobe from medium size |
+
+A completeness piece is not required when the brief excludes its kind, and the
+accent chairs, clothes storage, and dining pieces are not required for a minimal
+or space-first brief.
 
 Rank (4a) deals each variant up to these sizes from each slot.
 
@@ -145,8 +158,9 @@ For each slot, the stage:
 5. Moves preferred brands to the front and keeps up to 30 products.
 
 If a required slot finds nothing within the user's limits, the stage searches
-again without them and marks the slot as relaxed. A requested item with no
-match is reported as a gap. Gaps do not fail the variants.
+again without them and marks the slot as relaxed. A requested item or a
+completeness piece with no match is reported as a gap and is not required.
+Gaps do not fail the variants.
 
 The result is `slots` (the plan) and `pool` (kept products per slot).
 
@@ -242,7 +256,17 @@ toward the reuse limit. Each variant's selection prompt lists its own pool.
 6. The legacy selection validator checks the result:
    - total cost is at most 110% of the budget, with TVs and design-only decor
      excluded
-   - counts, required items, and requested attributes, plus the Jev results
+   - counts, required items, and requested attributes, plus the Jev results.
+     A missing completeness piece fails the turn unless a fit step was
+     applied or the variant's candidates hold no product for it. A bed 1.4 m
+     or wider in a medium or spacious bedroom needs a nightstand on each side,
+     unless the brief states a nightstand count
+   - piece sizes: a living-room coffee table 0.35 to 0.50 m high and a side
+     table 0.45 to 0.65 m high; a dining light 0.15 m inside each table edge;
+     a bedroom rug that is a runner (at most 0.90 m wide) or reaches 0.45 m
+     past each side of the bed. A failing piece is an error only when the
+     candidates hold one that passes, else a warning. A coffee table 0.5 to
+     0.75 x the sofa width is only a warning
    - footprint reaches the density floor
    - tabletop items have a support (a TV no longer needs a stand)
    - at most `PRODUCT_REUSE_RATE` of the distinct selected products are marked
@@ -254,8 +278,8 @@ or their supports. If the solver leaves items out, the selection fails
 with one `LAYOUT FIT` error that names each item left out, with its size, and
 asks for products from the same slots that fit together. Blocking findings on
 placed items do not fail the selection; the final review (4d) handles them.
-The validator still checks dining table edge length, dining light clearance,
-and tiny-room counts.
+The validator still checks dining table edge length (a table under 0.75 m
+deep seats one long side only), dining light clearance, and tiny-room counts.
 
 Code then moves the spend into the budget range, without another model turn
 (`_budget_repair`). It changes every unit of a product, swaps only within the

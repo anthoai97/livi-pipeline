@@ -3,7 +3,7 @@
 from typing import Any
 from app.rules.geometry.primitives import room_polygon
 from app.rules.layout.dining import dining_fit_envelopes
-from app.rules.layout.constants import DINING_LIGHT_TABLE_MAX_GAP_M, DINING_LIGHT_TABLE_MIN_GAP_M
+from app.rules.layout.constants import DINING_LIGHT_TABLE_MAX_GAP_M, DINING_LIGHT_TABLE_MIN_GAP_M, DINING_TWO_SIDED_MIN_DEPTH_M
 from app.rules.categories import is_ceiling_mounted_asset
 from app.rules.pipeline_shared import ceiling_mount_z
 
@@ -687,7 +687,8 @@ def _layout_preflight_for_assets(
         if not options:
             errors.append(
                 f"{LAYOUT_PREFLIGHT_PREFIX}: dining table {_asset_uid(table)} has insufficient "
-                f"edge length for {chair_count} selected chairs at usable seat spacing; choose a larger "
+                f"edge length for {chair_count} selected chairs at usable seat spacing (a table under "
+                f"{DINING_TWO_SIDED_MIN_DEPTH_M:.2f}m deep seats one long side only); choose a larger "
                 "table or narrower chairs while preserving mandatory seating counts."
             )
         elif room_area_sqm and cluster_area > room_area_sqm * 0.55:

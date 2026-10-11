@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from typing import Any
-from app.rules.room_policy import BEDROOM_FURNISHING_GUIDANCE, DINING_FURNISHING_GUIDANCE, STUDIO_FURNISHING_GUIDANCE, dining_chair_count, normalize_room_type, excluded_room_categories
+from app.rules.room_policy import BEDROOM_FURNISHING_GUIDANCE, DINING_FURNISHING_GUIDANCE, STUDIO_FURNISHING_GUIDANCE, dining_chair_count, normalize_room_type, excluded_room_categories, studio_dining_required
 
 from ._util import clean_list as _clean_list, room_scale as _room_scale, round4 as _round
 from .fit_policy import (
@@ -215,13 +215,14 @@ def build_feasibility_digest(
     if anchor_group:
         required_roles.append(anchor_role)
         required_groups.append(anchor_group)
+    studio_dining = studio and studio_dining_required(intent_packet, area_sqm)
     if studio:
         for role, categories in (("anchor_seating", {"sofa", "loveseat"}), ("dining_table", {"dining_table"})):
             group = _group(role, categories, excluded, blocked_categories)
-            if group:
+            if group and (role != "dining_table" or studio_dining):
                 required_roles.append(role)
                 required_groups.append(group)
-    if dining or studio:
+    if dining or studio_dining:
         dining_seating = _group("dining_seating", {"dining_chair"}, excluded, blocked_categories)
         if dining_seating:
             required_roles.append("dining_seating")
@@ -259,7 +260,7 @@ def build_feasibility_digest(
         optional_categories.extend(["rug", "floor_lamp", "ottoman"])
         discouraged_categories.update({"bookcase", "cabinet"})
     elif room_scale == "medium":
-        optional_categories.extend(["rug", "accent_chair", "floor_lamp", "planter"])
+        optional_categories.extend(["rug", "accent_chair", "floor_lamp", "planter", "storage_unit"])
     else:
         optional_categories.extend(
             ["rug", "accent_chair", "floor_lamp", "planter", "bookcase", "cabinet", "storage_unit"]
@@ -288,7 +289,7 @@ def build_feasibility_digest(
                 ) if category not in excluded_optional
             )
     if studio:
-        optional_categories = ["nightstand", "table_lamp", "side_table", "planter"]
+        optional_categories = ["nightstand", "table_lamp", "side_table", "planter", "storage_unit", "floor_lamp", "bookcase"]
         optional_categories.extend(sorted(requested - {"bed", "sofa", "loveseat", "dining_table", "dining_chair"}))
 
     optional_categories = [
@@ -308,7 +309,7 @@ def build_feasibility_digest(
         max_counts_by_category.pop("nightstand", None)
     if dining or studio:
         max_counts_by_category["dining_table"] = 1
-        max_counts_by_category["dining_chair"] = dining_chair_count(intent_packet)
+        max_counts_by_category["dining_chair"] = dining_chair_count(intent_packet, room_scale)
     density_budget = _density_budget(
         room_scale=room_scale,
         available_furnishing_area_sqm=available_furnishing_area_sqm,

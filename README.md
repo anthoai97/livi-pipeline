@@ -6,31 +6,32 @@ studios.
 
 ## Objective
 
-Give anyone a furnished room they could actually buy and live in: three
-designs from real catalog products, from a short brief, a floor plan and a
-budget, in about half a minute.
+From a short brief, a floor plan and a budget, Livinit returns three furnished
+designs built from real catalog products in about 30 seconds. Every piece can
+be bought, and every layout can be lived in.
 
 - **Every room type, with its own rules.** Living rooms, bedrooms, dining rooms
   and studios each follow their own furnishing rules: what the room must have
   (a bed, a table with its chairs, a sofa with a surface), what it may never
-  have, and how its pieces group. A studio mixes sleeping, sitting and dining
+  have, and how its pieces group. A studio holds sleeping, sitting and dining
   zones in one space.
 - **Layouts that make sense.** Every piece fits and keeps doors, windows and
-  walkways clear. Each zone reads as one area: a sofa faces its TV at a
-  comfortable distance, chairs can pull out, a lamp stands by the seat it
-  lights. Code enforces the physical rules; a design review handles taste.
+  walkways clear. Pieces that belong together form one zone. A sofa faces its
+  TV at a comfortable distance, chairs have room to pull out, and a lamp sits
+  next to the seat it lights. Code enforces the physical rules, and a model
+  review checks taste.
 - **Spend the budget well.** Designs use 80 to 95% of the budget on better
   pieces before extras, and never go more than 10% over.
 - **Fast.** The first design appears in about 20 seconds and all three in about
   30. Shared work runs once, the designs run in parallel, and code does the
-  geometry so that model calls stay few.
-- **Always a result.** A product that fails a check is swapped or removed; a
-  design is still delivered.
+  geometry, so the pipeline makes few model calls.
+- **Always a result.** When a product fails a check, code swaps or removes it,
+  and the design is still delivered.
 
 ## Demo
 
-The final 40 seconds of a living-room flow: compare generated designs, inspect
-products, rotate the room, and save a design into Studio.
+The last 40 seconds of a living room session. The user compares the designs,
+inspects their products, rotates the room and saves a design to Studio.
 
 ![Living room design comparison and Studio view](docs/demo.gif)
 
@@ -48,47 +49,35 @@ products, rotate the room, and save a design into Studio.
 ## How it works
 
 ```text
-            brief + floor plan + budget
-                        |
-                        v
-  1  Interpret   Gemini reads the brief: items, styles, limits      ~7 s
-                        |
-                        v
-  2  Room        code: walls, doors, walkways, size limits         <0.1 s
-                        |
-                        v
-  3  Retrieve    vector search: candidates for each item kind       ~1 s
-                        |
-                        v
-  4a Rank        Jev orders candidates for each design's style     ~0.6 s
-                        |
-           +------------+------------+
-           v            v            v       three designs, in parallel
-       Design 1     Design 2     Design 3
-                        |
-  4b Select      Gemini picks products; code fixes the TV and       ~6 s
-                 checks fit and budget; Jev checks style
-                 (retries with the errors, up to 4 turns)
-                        |
-  4c Place       code solver arranges every piece                  ~0.7 s
-                        |
-  4d Finish      Gemini reviews the layout and adjusts it;          ~5 s
-                 code keeps safe moves and removes failing items
-                        |
-                        v
-            each design streams to the browser when ready
+brief ─▶ Interpret ─▶ Room ─▶ Retrieve ─▶ Rank ─┬─▶ Select ─▶ Place ─▶ Finish ─▶ design 1
+                                                ├─▶ Select ─▶ Place ─▶ Finish ─▶ design 2
+                                                └─▶ Select ─▶ Place ─▶ Finish ─▶ design 3
 ```
 
-Steps 1 to 4a run once and are shared by all three designs. Times are medians
-from the [benchmark](#benchmark-2026-10-11). Full flow, rules and delivery
-format: [pipeline overview](docs/pipeline/pipeline-overview.md).
+The first four steps run once per request and all three designs share their
+results. The designs then run in parallel, and each one streams to the browser
+when it is ready.
+
+| Step | Runs | Done by | What it does |
+| --- | --- | --- | --- |
+| Interpret | once | Gemini | Reads the brief into items, counts, styles and limits. |
+| Room | once | Code | Maps walls, doors, windows, walkways and the furniture the room can hold. |
+| Retrieve | once | Vector search | Finds catalog candidates for each kind of item. |
+| Rank | once | Jev | Orders the candidates for each design's style and deals mostly different products to each design. |
+| Select | per design | Gemini, code, Jev | Gemini picks the products. Code fixes the TV and checks fit and budget, and Jev checks style. A failed pick retries with the errors, up to 4 times. |
+| Place | per design | Code solver | Arranges every piece against the walls and keeps doors and walkways clear. |
+| Finish | per design | Gemini, code | Gemini reviews the layout and moves pieces. Code keeps the moves that pass the checks and removes items that still fail. |
+
+Step times are in the [benchmark](#benchmark-2026-10-11). The full flow, rules
+and delivery format are in the [pipeline overview](docs/pipeline/pipeline-overview.md).
 
 ## Benchmark (2026-10-11)
 
-Six briefs (living room, Scandi living room, bedroom, dining room, studio,
-relaxed studio), 3 runs each: 18 runs, 54 designs, on `main` with
-`gemini-3.8-flash` at low thinking and Jev on. Times are pipeline times, not
-browser 3D loading. Full report: [2026-10-11 report](docs/pipeline/report-2026-10-11.md).
+The benchmark ran six briefs (living room, Scandi living room, bedroom, dining
+room, studio, relaxed studio) 3 times each, for 18 runs and 54 designs. It used
+`main` with `gemini-3.8-flash` at low thinking and Jev on. Times cover the
+pipeline only, not 3D loading in the browser. The full results are in the
+[2026-10-11 report](docs/pipeline/report-2026-10-11.md).
 
 ### Delivery and speed
 
@@ -111,17 +100,18 @@ All 54 designs were delivered, and all 18 runs finished under 60 seconds.
 | 4c Place (code solver) | design | 0.7 s | 1.9 s | 2.7 s |
 | 4d Finish (Gemini review, final check) | design | 4.7 s | 5.8 s | 12.5 s |
 
-Select includes every retry turn; its p90 reflects briefs that need two to four
-turns. The 37 s interpret time is a single slow Gemini response.
+Select includes every retry, so its p90 comes from briefs that need two to four
+turns. The 37 s interpret time is one slow Gemini response.
 
 ### Budget
 
-Designs spend a median of **97%** of the budget. 47 of 54 spend at least 80%,
-and none goes over the budget plus the 10% allowance.
+Designs spend a median of 97% of the budget. 47 of 54 spend at least 80%, and
+none goes more than 10% over.
 
 ### Reviewer scores
 
-Scores from 1 to 5 by `gpt-6.1-sol`, averaged over the 9 designs per brief.
+The reviewer, `gpt-6.1-sol`, scores each design from 1 to 5. Each row averages
+the 9 designs of one brief.
 
 | Case | Prompt match | Style | Budget use | Completeness | Scale | Circulation | Grouping | Use of space | Focal point | Layout quality | Overall | Distinct |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -133,10 +123,8 @@ Scores from 1 to 5 by `gpt-6.1-sol`, averaged over the 9 designs per brief.
 | Relaxed studio | 3.89 | 4.78 | 3.78 | 3.11 | 4.00 | 3.89 | 4.11 | 3.44 | 4.11 | 3.33 | 3.11 | 4.00 |
 | **All cases** | **4.32** | **4.50** | **3.91** | **3.63** | **4.22** | **4.00** | **4.24** | **3.68** | **4.52** | **3.61** | **3.46** | **3.78** |
 
-- **Selection:** prompt match, style, budget use, completeness, scale (pieces
-  sized to the room).
-- **Layout:** circulation, grouping, use of space, focal point, layout quality.
-- **Overall:** the design as a whole. **Distinct:** how different the three
-  designs of one request are.
-
-At 9 designs per brief, differences under about 0.5 can be chance.
+Prompt match, style, budget use, completeness and scale (pieces sized to the
+room) score the product selection. Circulation, grouping, use of space, focal
+point and layout quality score the layout. Overall scores the whole design, and
+distinct scores how different the three designs of one request are. With 9
+designs per brief, a difference under about 0.5 can be chance.

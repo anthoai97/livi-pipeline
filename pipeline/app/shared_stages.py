@@ -268,8 +268,8 @@ async def room(state: PipelineState, ctx: StageContext) -> PipelineState:
 # Each slot's pool holds up to FETCH eligible products. Rank deals each variant up
 # to KEEP of them in embedding order, or up to RANKED_KEEP in Jev's order.
 FETCH = 30
-KEEP = {"requested": 10, "required": 10, "optional": 6, "decor": 4}
-RANKED_KEEP = {"requested": 6, "required": 6, "optional": 4, "decor": 3}
+KEEP = {"requested": 10, "required": 10, "optional": 6, "decor": 6}
+RANKED_KEEP = {"requested": 6, "required": 6, "optional": 4, "decor": 4}
 DECOR_CATEGORIES = ("planter", "sculpture", "floor_mirror", "wall_mirror")
 _ATTRIBUTE_KEYS = ("colors", "styles", "materials")
 # Requested-item limits a slot carries: sizes in metres, then strict prepared attributes.

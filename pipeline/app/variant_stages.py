@@ -78,7 +78,7 @@ from app.rules.selection.fit import fit_step_guidance
 from app.rules.selection.preflight import _tv_support_in_selection
 from app.rules.selection.validation import is_decor_plant, requires_spacious_perimeter_storage, validate_selection
 from app.run import StageContext, describe
-from app.shared_stages import KEEP, LIMIT_KEYS, RANKED_KEEP
+from app.shared_stages import DECOR_CATEGORIES, KEEP, LIMIT_KEYS, RANKED_KEEP
 
 if TYPE_CHECKING:
     from app.graph import PipelineState, Shared, VariantState
@@ -452,7 +452,9 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
     )
     variant_directive = state["direction"]
     excluded_categories = set(intent.get("excluded_categories") or [])
-    decor_uids = [asset["uid"] for asset in candidates if not is_decor_plant(asset)
+    free_decor_uids = [asset["uid"] for asset in candidates if asset["is_decor_item"]
+                       and normalize_category(asset.get("category")) in DECOR_CATEGORIES]
+    decor_uids = [asset["uid"] for asset in candidates if not asset["is_decor_item"]
                   and normalize_category(asset.get("category")) in {"sculpture", "planter", "floor_mirror"}]
     if not studio and "planter" not in excluded_categories:
         plant_uids = [asset["uid"] for asset in candidates if is_decor_plant(asset)]
@@ -565,22 +567,23 @@ CONSTRAINTS:
 - {required_role_guidance}
 - {rug_guidance}
 {plant_guidance}- Budget target: aim for {BUDGET_TARGET_PCT - 0.05:.0%}-{BUDGET_TARGET_PCT + 0.05:.0%} of ${budget:.2f}. The total must be at least ${budget * BUDGET_FLOOR_PCT:.2f} ({BUDGET_FLOOR_PCT:.0%}) and at most ${budget * (1 + BUDGET_FLEX_PCT):.2f} (${budget:.2f} + 10% flex). Spend first on better versions of the {anchor_name} and the main pieces (better made, better materials, the right size), then on useful pieces the room is missing; never on filler. A design may stay under {BUDGET_FLOOR_PCT:.0%} only when the room is complete and no fitting product would improve it; say why in gaps.
-- Decor: once the room is functionally complete, if the total is under ${budget:.2f}, add up to 2 decor pieces that suit the room (a sculpture, a plant, a floor mirror), keeping the total at or under ${budget:.2f}. Decor UIDs: {', '.join(decor_uids) or 'none available'}. A required decor plant does not count toward these. Skip decor for minimal briefs.
+- Non-shoppable decor: once the room is functionally complete, add non-shoppable decor that suits the room (plants, sculptures, floor and wall mirrors) whether or not budget remains; it adds nothing to the total. Decide how many pieces from the room size and the brief: a spacious room takes more than a compact one, within the room caps and without blocking circulation. Non-shoppable decor UIDs: {', '.join(free_decor_uids) or 'none available'}. Skip it for minimal briefs and follow any decor limit in the request. Non-shoppable decor is a finishing layer, not filler: this rule takes priority over the guidance below to omit optional pieces or avoid filler.
+- Retail decor: once the room is functionally complete, if the total is under ${budget:.2f}, add up to 2 retail decor pieces that suit the room (a sculpture, a plant, a floor mirror), keeping the total at or under ${budget:.2f}. Retail decor UIDs: {', '.join(decor_uids) or 'none available'}. A required decor plant does not count toward these. Skip decor for minimal briefs.
 - Furnish the room: total footprint (width x depth x 2 per asset, rugs excluded) must be at least {footprint_floor:.2f} sqm and at most {furniture_area:.2f} sqm. The comfortable load of {comfortable_load:.2f} sqm is an upper reference, not a target. Once the requested functions and density floor are satisfied, do not add pieces merely to approach it.
 {perimeter_storage_guidance}- Physical layout preflight must pass: rugs must fit the room; every tabletop asset must fit an eligible selected support surface; desk/dining clusters must fit with their chairs; and tiny rooms must not receive extra seating or floor lamps.
 - {count_guidance_constraint}
-- Assets with is_decor_item=true are non-shoppable: their zero budget contribution is bookkeeping, not a retail price. is_placeholder=true identifies temporary furniture for layout evaluation; a verified wardrobe placeholder can satisfy clothing storage, but cannot be purchased or count as spending more budget. Other non-shoppable finishing accents remain optional apart from any fresh-design plant requirement stated above. Never describe these items as free products.
+- Assets with is_decor_item=true are non-shoppable: their zero budget contribution is bookkeeping, not a retail price. is_placeholder=true identifies temporary furniture for layout evaluation; a verified wardrobe placeholder can satisfy clothing storage, but cannot be purchased or count as spending more budget. Never describe these items as free products.
 - TVs are normal catalog assets and do not need a media support. A TV stands on a selected tv_stand/media_unit/media_console or console_table it fits (width <= support width - 0.07m and depth <= max(0.08m, support depth - 0.07m)); the server swaps a TV that fits no selected support for one that does when it can, and any other TV hangs on the wall. When the brief asks for a TV, or a media support is selected, and the selection has no TV, the server adds one from the catalog.
 - TVs are non-sellable: exclude TV prices from every budget total while still including the TV UID in selected_assets and the layout.
 - You MUST return the exact UID list as selected_assets (one entry per unit); the accepted response is the final result
 
 STRATEGY:
-- Completeness, then quality: furnish the room's functions with a coherent set, then reach the budget target with better versions of those pieces before adding new ones. Apart from the decor rule above, never add an item solely because budget remains.
+- Completeness, then quality: furnish the room's functions with a coherent set, then reach the budget target with better versions of those pieces before adding new ones. Apart from the decor rules above, never add an item solely because budget remains.
 - The {anchor_name}/anchor piece sets the style direction for all other picks
 - Primary goal: aesthetic coherence — select assets whose brand, color, style, shape, and description match the intent
 - Treat intent-packet brand constraints as strong preferences, not hard requirements. For each needed category, use the preferred brand when a catalog option also satisfies category, fit, budget, and every required attribute. If none does, select the best eligible option from another brand and identify that category-level fallback in gaps. Never sacrifice a required role, physical fit, budget, or explicit non-brand attribute to preserve the brand preference.
 - When multiple assets share a category, pick the best style match whose price suits the budget target; prefer the better-made option over the cheapest
-- Treat every optional piece as a design decision: include it only when it serves a clear requested function or improves the composition in a specific way. {optional_piece_guidance}
+- Treat every optional piece, apart from non-shoppable decor, as a design decision: include it only when it serves a clear requested function or improves the composition in a specific way. {optional_piece_guidance}
 - If the requested set is below the density floor, prefer one or two substantial, useful additions over several small filler pieces.
 - Small room → prioritize essentials; do not add optional extras beyond the room-scale count caps
 - Duplicates are allowed only when the requested or justified count calls for multiples (e.g. 2x accent_chair_5 for a requested pair). Seating multiples must repeat the same UID as a matched set unless the user explicitly asks for variety; for other categories only mix different UIDs if their style, color, and shape are clearly compatible.

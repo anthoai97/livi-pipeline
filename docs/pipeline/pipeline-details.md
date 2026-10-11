@@ -110,7 +110,7 @@ One slot is one kind of item the room may need:
 | Requested | each requested item | sofa, coffee table, floor lamp, TV | 6 | 10 |
 | Required | room rules not covered by a requested item | storage, design-only plant | 6 | 10 |
 | Optional | room roles the model may use, and the other categories of a required role a request covers | accent seating, media unit, storage; side tables beside a requested coffee table | 4 | 6 |
-| Decor | fixed list | planter, sculpture, floor mirror, wall mirror | 3 | 4 |
+| Decor | fixed list | planter, sculpture, floor mirror, wall mirror | 4 | 6 |
 
 Rank (4a) deals each variant up to these sizes from each slot.
 
@@ -210,8 +210,12 @@ toward the reuse limit. Each variant's selection prompt lists its own pool.
    - spend 85 to 95% of the budget, at least 80% and at most 110%, on better
      versions of the main pieces first, then on useful missing pieces, never
      on filler;
-   - add up to 2 decor pieces (sculpture, plant, floor mirror) when the total
-     is under the budget. The design-only plant does not count toward these.
+   - add design-only decor (plant, sculpture, floor or wall mirror) once the
+     room is complete, whatever budget remains, as many as the room size and
+     brief suit. It costs nothing toward the budget;
+   - add up to 2 retail decor pieces (sculpture, plant, floor mirror) when the
+     total is under the budget. The design-only plant does not count toward
+     these.
 2. The model returns one product ID per unit and a note on gaps. It no longer
    writes reasons, a strategy, or a self-audit.
 3. Code fixes the TV before any check. When the brief asks for a TV, or a stand
@@ -481,7 +485,8 @@ completion or cancellation cannot overwrite an accepted timing entry.
 | Run deadline | 300 s |
 | Budget target | 85 to 95% of the stated budget; code fills a passing selection under 80% toward 90% |
 | Budget allowance | 110% of the stated budget |
-| Decor with leftover budget | up to 2 pieces per design |
+| Design-only decor | as many as the room size and brief suit |
+| Retail decor with leftover budget | up to 2 pieces per design |
 | Search fetch per slot | 30 per category, 30 kept |
 
 ## Not in this phase

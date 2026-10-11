@@ -41,8 +41,9 @@ flowchart TD
 ## Selection rules
 
 - **What the model is asked for:** furnish the room to its size, spend 85-95%
-  of the budget on better main pieces before extras, and add up to 2 decor
-  pieces with leftover budget. Minimal briefs stay minimal.
+  of the budget on better main pieces before extras, add design-only decor
+  to suit the room size, and add up to 2 retail decor pieces with leftover
+  budget. Minimal briefs stay minimal.
 - **TV (code):** adds a TV when the brief asks for one or a stand is chosen,
   swaps a TV too wide for its stand, otherwise hangs it on the wall at eye level.
 - **Checks:** budget, counts, required items, footprint floor, tabletop

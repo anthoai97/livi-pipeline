@@ -39,9 +39,11 @@ A new room inherits these without extra work:
   in `_selection_prompt` gets the shared completeness text: a side surface and
   a light by each seat, a complete seating group, long walls used in a spacious
   room, and minimal briefs kept minimal.
-- **Decor with leftover budget.** Up to 2 listed decor pieces (sculpture, plant,
-  floor mirror) while the total stays under the stated budget. The design-only
-  plant is required unless the room opts out, as the studio does.
+- **Decor.** Design-only decor (plant, sculpture, floor or wall mirror) costs
+  nothing, so the model adds as many as the room size and brief suit, whatever
+  budget remains. Retail decor stays at up to 2 pieces (sculpture, plant, floor
+  mirror) while the total is under the stated budget. The design-only plant is
+  required unless the room opts out, as the studio does.
 - **Searchable companions.** When a requested item covers a required role, the
   role's other categories still get searched (`plan_slots`), for example side
   tables beside a requested coffee table.

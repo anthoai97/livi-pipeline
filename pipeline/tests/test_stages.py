@@ -671,7 +671,7 @@ def test_rank_deals_disjoint_pools_with_rotating_first_pick_and_shares_small_slo
                                   ["sofa_11", "sofa_9", "sofa_4", "sofa_2"],
                                   ["sofa_10", "sofa_8", "sofa_6", "sofa_1"]]
     # Five planters are fewer than two per variant: each variant gets its own ranked list.
-    assert ids(pools, "planter") == [["plant_4", "plant_3", "plant_2"]] * 3
+    assert ids(pools, "planter") == [["plant_4", "plant_3", "plant_2", "plant_1"]] * 3
     assert not any(record["shared"] for pool in pools for rows in pool.values() for record in rows)
     assert [note["text"] for note in run.notes] == ["slot planter shared across variants: only 5 eligible products"]
     # One request per slot and direction, each recorded under its direction's variant.

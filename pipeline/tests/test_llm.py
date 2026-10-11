@@ -173,6 +173,7 @@ def test_a_non_gemini_stage_model_calls_the_ai_proxy_with_images_and_the_schema(
     assert plan.note == "ok" and len(bodies) == 2  # the 503 is retried
     body = bodies[-1]
     assert body["model"] == "claude-haiku-5-5" and body["response_format"]["json_schema"]["name"] == "Plan"
+    assert body["reasoning_effort"] == "low"  # the stage's default level
     assert body["messages"][0] == {"role": "system", "content": "be brief"}
     assert body["messages"][1]["content"][1] == {"type": "image_url", "image_url": {"url": "data:image/png;base64,cG5n"}}
     [call] = run.model_calls

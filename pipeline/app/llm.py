@@ -95,7 +95,8 @@ class GeminiModel:
     Tests pass a fake `client`.
 
     Stages listed in LLM_STAGE_MODELS use their own model and thinking level; the
-    rest use LLM_DESIGN_MODEL at low thinking. Proxy models ignore the level.
+    rest use LLM_DESIGN_MODEL at low thinking. Proxy models get the level as
+    `reasoning_effort` (minimal is sent as low).
 
     A call that has not answered after MODEL_HEDGE_AFTER_S (0 turns this off) gets
     a duplicate; the first answer wins and the other call is cancelled. Both calls
@@ -117,7 +118,7 @@ class GeminiModel:
         model, level = self.stages.get(ctx.stage, (self.model, types.ThinkingLevel.LOW))
         if not model.startswith("gemini"):
             def call() -> Coroutine[Any, Any, M]:
-                return self._proxy_call(ctx, schema, contents, model, system)
+                return self._proxy_call(ctx, schema, contents, model, system, level)
         else:
             if not isinstance(contents, str):  # bytes are PNG images, sent as inline image parts
                 contents = [types.Part.from_bytes(data=part, mime_type="image/png") if isinstance(part, bytes) else part
@@ -190,7 +191,7 @@ class GeminiModel:
             )
 
     async def _proxy_call(self, ctx: StageContext, schema: type[M], contents: str | list[str | bytes], model: str,
-                          system: str | None) -> M:
+                          system: str | None, level: types.ThinkingLevel) -> M:
         """One AI proxy chat completion, retried like Gemini calls and recorded like `_call`. Costs are not known."""
         self.proxy = self.proxy or proxy_client()
         parts = [contents] if isinstance(contents, str) else contents
@@ -200,6 +201,7 @@ class GeminiModel:
             "model": model,
             "messages": [*([{"role": "system", "content": system}] if system else []), {"role": "user", "content": content}],
             "response_format": {"type": "json_schema", "json_schema": {"name": schema.__name__, "schema": schema.model_json_schema()}},
+            "reasoning_effort": "low" if level == types.ThinkingLevel.MINIMAL else level.name.lower(),
         }
         attempts, started, data, error = 0, time.monotonic(), None, "cancelled"
         try:

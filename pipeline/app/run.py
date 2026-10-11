@@ -109,6 +109,7 @@ class RunContext:
     notes: list[dict] = field(default_factory=list)
     previews: list[dict] = field(default_factory=list)
     client_timing: list[dict] = field(default_factory=list)
+    layout_plans: dict[str, int] = field(default_factory=dict)  # place: main layout or plan (JSON) -> first variant to take it
     runs_dir: Path = RUNS_DIR
 
     def elapsed(self) -> float:
@@ -203,7 +204,7 @@ class RunContext:
         """`non_blocking_findings` are the issue keys of the noncritical P2 findings at the final layout.
 
         `result` is a ready variant's compact result for benchmark review: `direction`,
-        `total_cost`, `products`, and `layout` (app.graph `_variant_summary`).
+        `total_cost`, `products`, `plan`, and `layout` (app.graph `_variant_summary`).
         """
         now = self.elapsed()
         self.variants[variant_index] = {

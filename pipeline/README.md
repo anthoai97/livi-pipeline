@@ -34,7 +34,7 @@ call never fails a variant: that use falls back to its Jev-off behavior.
 Each request writes one run record, with stage timings, model and Jev calls,
 tokens, cost, switches, notes, and variant outcomes, to
 `pipeline/.data/runs/<run_id>.json`. Each ready variant also keeps its
-direction, total cost, products, and layout poses for review.
+direction, total cost, products, solver plan, and layout poses for review.
 
 ## Browser delivery
 
@@ -47,8 +47,8 @@ Every `node_complete` event includes `data` with facts from that stage:
 | retrieve | Slot and candidate counts, gap labels, and `preview` with the top product per nonempty slot |
 | rank | `ranked_slots`, `shared_products` (distinct products held by multiple variants, including small shared slots) |
 | select | `turn`, `valid`, error count, `fit_step`, `total_cost`, and unique selected `items`, capped at the slot count |
-| place | `placed`, finding and blocking counts, `layout_options` (tied layouts offered to the review) |
-| finish | `valid` and `errors` (blocking findings left), `dropped` item count, `layout_pick` (A to D, or null when the review failed), `review` (text, or null) |
+| place | `placed`, finding and blocking counts, `plans` (distinct plans among the tied best layouts), `plan` (the tied layout this variant took, from 1) |
+| finish | `valid` and `errors` (blocking findings left), `dropped` item count, `review` (text, or null when the review failed) |
 
 After finish builds the delivery, `app/preview.py` draws the layout in a worker thread.
 The PNG is saved to `<runs_dir>/<run_id>/variant_<index>.png`, where `runs_dir`
@@ -92,6 +92,9 @@ dining room, three small rooms and three large rooms. `--runs 3` sends 39 reques
 start one service per port. `--parallel` sends more requests at once to each service,
 but runs on one service share its process and take longer, so compare run times only
 between benchmarks run the same way.
+
+The table's `plans` column counts the distinct solver plans among a run's ready
+variants, and the summary line's `distinct_plans` counts the runs with three.
 
 Set `JEV_USES` or `PRODUCT_REUSE_RATE` on the service to benchmark another option.
 

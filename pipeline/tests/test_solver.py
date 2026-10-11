@@ -13,7 +13,7 @@ from app.rules.geometry.primitives import asset_polygon
 from app.rules.layout.analysis import analyze_layout, findings_by_level
 from app.rules.layout.comfort import media_viewing_measurements
 from app.rules.layout.dining import dining_layout_measurements
-from app.rules.layout.solver import solve_layout
+from app.rules.layout.solver import ZONE_KINDS, solve_layout
 from app.rules.layout.validation_functional import compute_sofa_wall_gap_violations
 from app.rules.layout.validation_geometry import (
     compute_door_violations,
@@ -203,18 +203,38 @@ def test_studio_dining_stands_apart_from_the_sofa_and_the_bed(benchmark):
     assert report["unplaceable"] == [] and blocking(layout, assets, room) == {}
 
 
+def tied(report):
+    """The solve's result and the alternatives that tie its score with no more unplaceable items."""
+    return [report, *(alternative for alternative in report["alternatives"]
+                      if alternative["score"] == report["score"] and len(alternative["unplaceable"]) <= len(report["unplaceable"]))]
+
+
 def test_studio_layouts_on_offer_differ_in_their_zone_plans():
     # The four final layouts used to share one plan (bed, sofa, and dining table in the same places), differing only in the TV stand.
     intent, room, assets = _golden_inputs({"room": "studio"})
 
+    _, report = solve_layout(assets, room, intent)
+
+    assert len({json.dumps([pair for pair in tie["plan"] if pair[0] in ZONE_KINDS]) for tie in tied(report)}) >= 3
+
+
+def test_a_bed_that_fits_one_wall_leaves_layouts_that_differ_in_a_storage_wall():
+    # 2.6 m wide with the door on a short wall: the bed backs onto the far wall in every layout, so only the storage can move.
+    intent = coerce_intent_packet({"normalized_prompt": "a calm bedroom", "requested_categories": ["bed", "dresser", "wardrobe"]},
+                                  room_type="bedroom")
+    room = build_room_context(room_type="bedroom", room_area=[2.6, 3.6], room_vertices=[[0, 0], [2.6, 0], [2.6, 3.6], [0, 3.6]],
+                              wall_height=2.7, room_doors=[{"center": [1.3, 0.0], "width": 0.8, "depth": 0.05, "height": 2.08}],
+                              room_windows=[], intent=intent)
+    assets = [item("bed_1", "bed", 1.4, 2.0, 1.0), item("dresser_1", "dresser", 1.0, 0.45, 0.8),
+              item("wardrobe_1", "wardrobe", 0.9, 0.55, 2.0)]
+
     layout, report = solve_layout(assets, room, intent)
 
-    def plan(layout):
-        x, y, _ = layout["dining_table_1"]["position"]
-        return (*(round(layout[uid]["rotation"][2] / (math.pi / 2)) % 4 for uid in ("bed_1", "sofa_1")), x > 3.2, y > 3.35)
-
-    ties = [alternative["layout"] for alternative in report["alternatives"] if alternative["score"] == report["score"]]
-    assert len({plan(option) for option in (layout, *ties)}) >= 3
+    ties = tied(report)
+    assert {json.dumps([pair for pair in tie["plan"] if pair[0] in ZONE_KINDS]) for tie in ties} == {'[["sleeping", "top"]]'}
+    walls = {tuple(wall for kind, wall in tie["plan"] if kind in {"dresser", "wardrobe"}) for tie in ties}
+    assert len(walls) >= 2
+    assert all(blocking(tie.get("layout", layout), assets, room) == {} for tie in ties)
 
 
 def test_a_floor_planter_never_stands_on_the_dining_table():

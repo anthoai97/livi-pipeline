@@ -14,7 +14,7 @@ Finish then reviews the placed layout, removes the items the final check fails
 on, and delivers the rest. Failed checks never fail a variant. A stage that
 raises fails only its own variant (reason `model_call_failed` for
 ModelCallError, otherwise `variant_error`). Finish catches every error in its
-review instead: a layout already exists, so it keeps the solver's best and goes on.
+review instead: a layout already exists, so it keeps the solver's layout and goes on.
 
 `ctx` is the same as for shared stages (see app.shared_stages); model calls made
 through `ctx.generate` and Jev calls made through `ctx.ask` are recorded under
@@ -34,7 +34,6 @@ import itertools
 import json
 import math
 from collections import Counter
-from string import ascii_uppercase
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
@@ -52,7 +51,7 @@ from app.rules.layout.relations import (
     _gather_floor_seating,
     _nearest_floor_asset,
 )
-from app.rules.layout.solver import solve_layout
+from app.rules.layout.solver import ZONE_KINDS, solve_layout
 from app.rules.layout_rules import (
     LAYOUT_SYSTEM_INSTRUCTION,
     build_rules_block,
@@ -1165,42 +1164,58 @@ def _measure(state: VariantState, layout: Record) -> VariantState:
 async def place(state: VariantState, ctx: StageContext) -> VariantState:
     """Place every selected instance with the code solver (app.rules.layout.solver). No model call.
 
-    Reads: `shared`, `instances`.
-    Returns: `layout`, `issues`, `findings`, `blocking_findings` (P0, P1, and
-    critical P2), `non_blocking_findings`, and `layout_options` (`_solve`'s
-    tied layouts, for finish to pick from).
+    Reads: `shared`, `instances`, `variant_index`.
+    Returns: `layout` (one of the tied best layouts, `_solve`), `layout_plan`
+    (its solver plan), `issues`, `findings`, `blocking_findings` (P0, P1, and
+    critical P2), and `non_blocking_findings`.
 
-    Runs the solver once in a worker thread and notes the solve. Items it
-    leaves out keep their least-violating pose; finish removes the ones the
-    final check fails on.
+    Runs the solver once in a worker thread. The variants take their layouts
+    first come, first served: the best tied layout whose main layout (the zone
+    plan) no other variant of the run has taken, else the best whose full plan
+    none has taken, else the best. Every tied layout has the same score, so no
+    variant gets a worse layout to differ. The claims live in
+    `ctx.run.layout_plans` and are made on the event loop, so two variants
+    never claim at once. Notes the solve, the layout taken, and a repeated main
+    layout. Items the solver leaves out keep their least-violating pose; finish
+    removes the ones the final check fails on.
     """
-    update, options = await asyncio.to_thread(_solve, state, ctx)
-    ctx.data.update(placed=len(update["layout"]), findings=len(update["findings"]),
-                    blocking=len(update["blocking_findings"]), layout_options=len(options))
-    return {**update, "layout_options": options}
+    options, report = await asyncio.to_thread(_solve, state)
+    taken = ctx.run.layout_plans
+    plans = [json.dumps(option["layout_plan"]) for option in options]
+    zones = [json.dumps([pair for pair in option["layout_plan"] if pair[0] in ZONE_KINDS]) for option in options]
+    pick = next((n for n, zone in enumerate(zones) if zone not in taken), None)
+    if pick is None:
+        pick = next((n for n, plan in enumerate(plans) if plan not in taken), 0)
+    repeats = f", repeats the main layout of variant {taken[zones[pick]]}" if zones[pick] in taken else ""
+    for plan in (zones[pick], plans[pick]):
+        taken.setdefault(plan, state["variant_index"])
+    unplaceable = f", unplaceable {', '.join(report['unplaceable'])}" if report["unplaceable"] else ""
+    ctx.run.note(f"solver: score {report['score']}, {report['candidates']} candidates, {report['scored']} scored, "
+                 f"{report['elapsed']:.2f} s{unplaceable}; tied layout {pick + 1} of {len(options)} "
+                 f"({len(set(zones))} main layout{'s' * (len(set(zones)) > 1)}){repeats}", ctx.variant_index)
+    chosen = options[pick]
+    ctx.data.update(placed=len(chosen["layout"]), findings=len(chosen["findings"]),
+                    blocking=len(chosen["blocking_findings"]), plans=len(set(plans)), plan=pick + 1)
+    return chosen
 
 
-def _solve(state: VariantState, ctx: StageContext) -> tuple[VariantState, list[VariantState]]:
-    """`place` in a worker thread: solve once and measure the layout.
+def _solve(state: VariantState) -> tuple[list[VariantState], Record]:
+    """`place` in a worker thread: solve once and measure the tied layouts.
 
-    Also returns the layouts to pick from, measured: the result first, then each
-    alternative of the solve with the same layout_issue_score and no more
-    unplaceable items. Each option holds only `layout` and its findings.
+    Returns the layouts that tie the result's layout_issue_score with no more
+    unplaceable items, the result first, each measured with its `layout_plan`,
+    and the solver report.
     """
     room, intent = state["shared"]["room"], state["shared"]["intent"]
     layout, report = solve_layout(state["instances"], room, intent)
-    unplaceable = f", unplaceable {', '.join(report['unplaceable'])}" if report["unplaceable"] else ""
-    ctx.run.note(f"solver: score {report['score']}, {report['candidates']} candidates, {report['scored']} scored, "
-                 f"{report['elapsed']:.2f} s{unplaceable}", ctx.variant_index)
-    update = _measure(state, layout)
-    best = layout_issue_score(update["issues"])
-    options = [{key: update[key] for key in ("layout", "issues", "findings", "blocking_findings", "non_blocking_findings")}]
+    best = _measure(state, layout)
+    options = [{**best, "layout_plan": report["plan"]}]
     for alternative in report["alternatives"]:
         if len(alternative["unplaceable"]) <= len(report["unplaceable"]):
             option = _measure(state, alternative["layout"])
-            if layout_issue_score(option["issues"]) == best:
-                options.append(option)
-    return update, options
+            if layout_issue_score(option["issues"]) == layout_issue_score(best["issues"]):
+                options.append({**option, "layout_plan": alternative["plan"]})
+    return options, report
 
 
 # --- finish ------------------------------------------------------------------
@@ -1214,18 +1229,16 @@ class Adjustment(BaseModel):
 
 
 class Arrangement(BaseModel):
-    choice: str = Field(description="Label of the chosen variant, such as A.")
-    review: str = Field(description="Two or three sentences on what is wrong with the chosen variant as a room, "
-                                    "or that it works.")
-    adjustments: list[Adjustment] = Field(description="New poses of the chosen variant's pieces that fix the review's "
+    review: str = Field(description="Two or three sentences on what is wrong with the layout as a room, or that it works.")
+    adjustments: list[Adjustment] = Field(description="New poses of the layout's pieces that fix the review's "
                                                       "problems; empty when none help.")
 
 
-def _plan_png(state: VariantState, layout: Record, label: str) -> bytes:
-    """Top-down plan of `layout` as app.graph draws a ready variant, titled "variant <label>"."""
+def _plan_png(state: VariantState) -> bytes:
+    """Top-down plan of the variant's layout as app.graph draws a ready variant, titled with its index."""
     from app.graph import _variant_summary  # a module import would be circular
 
-    plan = {**_variant_summary({**state, "layout": layout}), "variant_index": label,
+    plan = {**_variant_summary(state), "variant_index": state["variant_index"],
             "total_cost": float(state["selection_validation"]["metrics"]["total_cost"])}
     return png_bytes(render_plan({"request": state["shared"]["request"].model_dump()}, plan))
 
@@ -1235,17 +1248,17 @@ FACT_FIELDS = ("gap", "distance", "clearance", "offset", "miss", "delta", "overl
                "required")
 
 
-def _option_facts(state: VariantState, option: VariantState) -> list[str]:
-    """An option's findings, compact, then its measured gaps from the design rules, as prompt lines.
+def _option_facts(state: VariantState) -> list[str]:
+    """The layout's findings, compact, then its measured gaps from the design rules, as prompt lines.
 
     A finding is its level, issue key, kind, the instance keys it names, and its
     FACT_FIELDS numbers. The gaps are edge to edge, as the checks measure them:
     each sofa to its coffee table, each lounge chair to its nearest coffee table,
     each floor lamp to its nearest seat, and each TV's viewing distance.
     """
-    layout, assets = option["layout"], state["instances"]
+    layout, assets = state["layout"], state["instances"]
     lines = []
-    for finding in option["findings"]:
+    for finding in state["findings"]:
         body = finding["finding"] if isinstance(finding["finding"], dict) else {"uid": finding["finding"]}
         uids, numbers = [], []
         for name, value in body.items():
@@ -1280,37 +1293,25 @@ def _option_facts(state: VariantState, option: VariantState) -> list[str]:
     return (lines or ["- no findings"]) + ([f"- gaps: {'; '.join(gaps)}"] if gaps else [])
 
 
-def _arrangement_prompt(state: VariantState, options: list[VariantState], images: list[bytes]) -> list[str | bytes]:
-    """The final review prompt: the request and brief, the layout rules, the room, the pieces, each option's poses
-    and `_option_facts`, then each option's plan image."""
+def _arrangement_prompt(state: VariantState, image: bytes) -> list[str | bytes]:
+    """The final review prompt: the request and brief, the layout rules, the room, the pieces, the layout's poses
+    and `_option_facts`, then its plan image."""
     shared = state["shared"]
     request, room, intent = shared["request"], shared["room"], shared["intent"]
     room_width, room_depth = request.room_area
-    labels = ascii_uppercase[:len(options)]
     requested = [f"{item['label']} x{item['count']}" for item in intent.get("requested_items") or []]
     pieces = [
         f"- {_key(a)} ({normalize_category(a.get('category'))}), W×D×H={float(a.get('width') or 0):.2f}×"
         f"{float(a.get('depth') or 0):.2f}×{float(a.get('height') or 0):.2f}m, mount_type={a.get('mount_type') or 'unknown'}"
         for a in state["instances"]
     ]
-    poses = [
-        f"variant {label}: " + json.dumps({key: [round(pose["position"][0], 2), round(pose["position"][1], 2),
-                                                 round(pose["rotation"][2], 3)] for key, pose in sorted(option["layout"].items())})
-        for label, option in zip(labels, options, strict=True)
-    ]
-    facts = [line for label, option in zip(labels, options, strict=True)
-             for line in (f"variant {label}:", *_option_facts(state, option))]
-    task = (
-        f"The layout solver arranged this room {len(options)} ways with the same pieces, and every arrangement passes "
-        "the layout checks equally well. Choose the variant that reads best as a room, then review it."
-        if len(options) > 1 else
-        "The layout solver arranged this room once, as variant A. Choose A and review it."
-    )
-    text = f"""You are an interior designer giving a room design its final review. {task}
+    poses = json.dumps({key: [round(pose["position"][0], 2), round(pose["position"][1], 2), round(pose["rotation"][2], 3)]
+                        for key, pose in sorted(state["layout"].items())})
+    text = f"""You are an interior designer giving a room design its final review. The layout solver arranged this room as shown. Review it.
 
-Each image is one variant drawn top-down and titled with its label: +x right, +y up, 1 m grid. Walls are dark, doors brown with their swing, windows blue. Each piece is its footprint labeled with its instance key; the line ending in a dot points to its front. Blue: floor furniture; green: items on a support; orange: wall-mounted; tan: rugs; grey outline: ceiling items.
+The image is the layout drawn top-down: +x right, +y up, 1 m grid. Walls are dark, doors brown with their swing, windows blue. Each piece is its footprint labeled with its instance key; the line ending in a dot points to its front. Blue: floor furniture; green: items on a support; orange: wall-mounted; tan: rugs; grey outline: ceiling items.
 
-Review the chosen variant as a room, against the request, these design rules, and the layout rules below:
+Review the layout as a room, against the request, these design rules, and the layout rules below:
 {design_rules_block(room["room_type"])}
 Write two or three sentences on what is wrong with it, or say that it works.
 
@@ -1338,40 +1339,32 @@ PIECES:
 {chr(10).join(pieces)}
 
 POSES (instance key: [x, y, rotation_z]):
-{chr(10).join(poses)}
+{poses}
 
 MEASURED FACTS (the findings the layout checks still report, and edge-to-edge gaps in meters):
-{chr(10).join(facts)}
+{chr(10).join(_option_facts(state))}
 
-Return JSON: {{"choice": "A", "review": "two or three sentences", "adjustments": [{{"uid": "instance key", "x": number, "y": number, "rotation_z": number}}]}}"""
-    parts: list[str | bytes] = [text]
-    for label, image in zip(labels, images, strict=True):
-        parts += [f"variant {label}:", image]
-    return parts
+Return JSON: {{"review": "two or three sentences", "adjustments": [{{"uid": "instance key", "x": number, "y": number, "rotation_z": number}}]}}"""
+    return [text, image]
 
 
-async def _arrange(state: VariantState, ctx: StageContext, options: list[VariantState]) -> VariantState:
-    """Pick one of the `options` (labeled A, B, ...), review it, and apply its adjustments, with one model call.
+async def _arrange(state: VariantState, ctx: StageContext) -> VariantState:
+    """Review the variant's layout and apply the review's adjustments, with one model call.
 
-    The call gets `_arrangement_prompt` with each option's plan image, under
-    LAYOUT_SYSTEM_INSTRUCTION. An unknown label keeps A as it is. Adjustments
-    to unknown items, with non-finite values, or with a rotation that is neither
-    a whole quarter turn from the current one nor aligned with the room axes
-    (floor lamps start off-axis) are rejected. The rest are kept together when
-    layout_issue_score does not get worse; otherwise each is applied in the
-    model's order on top of those kept, and kept when the score does not get
-    worse. Returns the chosen option, measured; notes the pick, the review, and
-    the adjustments kept and reverted. Sets `layout_pick` and `review` in `ctx.data`.
+    The call gets `_arrangement_prompt` with the layout's plan image, under
+    LAYOUT_SYSTEM_INSTRUCTION. Adjustments to unknown items, with non-finite
+    values, or with a rotation that is neither a whole quarter turn from the
+    current one nor aligned with the room axes (floor lamps start off-axis) are
+    rejected. The rest are kept together when layout_issue_score does not get
+    worse; otherwise each is applied in the model's order on top of those kept,
+    and kept when the score does not get worse. Returns the layout and its
+    findings, measured; notes the review and the adjustments kept and reverted.
+    Sets `review` in `ctx.data`.
     """
-    labels = ascii_uppercase[:len(options)]
-    images = await asyncio.to_thread(lambda: [_plan_png(state, option["layout"], label)
-                                              for label, option in zip(labels, options, strict=True)])
-    response = await ctx.generate(Arrangement, _arrangement_prompt(state, options, images), system=LAYOUT_SYSTEM_INSTRUCTION)
-    label = response.choice.strip().upper()
-    if label not in labels:
-        ctx.run.note(f"final review: unknown choice {response.choice!r}, kept A of {len(options)}", ctx.variant_index)
-        return options[0]
-    chosen = options[labels.index(label)]
+    image = await asyncio.to_thread(_plan_png, state)
+    response = await ctx.generate(Arrangement, _arrangement_prompt(state, image), system=LAYOUT_SYSTEM_INSTRUCTION)
+    chosen: VariantState = {key: state[key] for key in ("layout", "issues", "findings", "blocking_findings",
+                                                        "non_blocking_findings")}
     layout = chosen["layout"]
 
     def allowed(adjustment: Adjustment) -> bool:
@@ -1386,7 +1379,7 @@ async def _arrange(state: VariantState, ctx: StageContext, options: list[Variant
     adjustments = [adjustment for adjustment in response.adjustments if allowed(adjustment)]
     rejected = [adjustment.uid for adjustment in response.adjustments if not allowed(adjustment)]
     review = response.review.strip()
-    text = f"final review: {label} of {len(options)}: {review}"
+    text = f"final review: {review}"
     if adjustments:
         def adjust() -> tuple[VariantState, str]:
             """Apply all adjustments, or when that scores worse, each in turn on top of those kept. Returns it and its note."""
@@ -1414,35 +1407,34 @@ async def _arrange(state: VariantState, ctx: StageContext, options: list[Variant
     if rejected:
         text += f"; rejected unknown, non-finite, or off-axis: {', '.join(rejected)}"
     ctx.run.note(text, ctx.variant_index)
-    ctx.data.update(layout_pick=label, review=review)
+    ctx.data.update(review=review)
     return chosen
 
 
 async def finish(state: VariantState, ctx: StageContext) -> VariantState:
     """Review the layout with one model call, run the final check, and deliver. Never fails the variant.
 
-    Reads: `shared`, `instances`, `selection_validation`, and `layout_options`
-    (place's tied layouts, the solver's best first).
+    Reads: `shared`, `variant_index`, `instances`, `selection_validation`, and
+    place's `layout` and its findings.
     Returns: `instances`, `layout` and its findings, `render_manifest`
     (`contracts.render_manifest(request, instances)`), `selected_assets`
     (`contracts.selected_asset` per instance), and `total_cost` (purchasable
     prices only).
 
-    `_arrange` picks one option, reviews it, and adjusts it (stage model
-    `finish`). A failed call, or any other error in the review, keeps the
-    solver's best layout and is noted. Then final_layout_check runs: each
+    `_arrange` reviews the layout and adjusts it (stage model `finish`). A
+    failed call, or any other error in the review, keeps the solver's layout
+    and is noted. Then final_layout_check runs: each
     selected instance placed exactly once, no blocking finding. When it fails,
     `_drop_items` removes the items it fails on, and the rest is delivered,
     even when blocking findings that name no item remain. Notes the removals.
     """
-    options = state["layout_options"]
-    ctx.data.update(layout_pick=None, review=None)
+    ctx.data.update(review=None)
+    current: VariantState = {key: state[key] for key in ("instances", "layout", "issues", "findings", "blocking_findings",
+                                                          "non_blocking_findings")}
     try:
-        chosen = await _arrange(state, ctx, options)
+        current.update(await _arrange(state, ctx))
     except Exception as exc:  # CancelledError is not an Exception, so cancellation still propagates.
-        ctx.run.note(f"final review failed, kept the solver's best: {describe(exc)}", ctx.variant_index)
-        chosen = options[0]
-    current: VariantState = {"instances": state["instances"], **chosen}
+        ctx.run.note(f"final review failed, kept the solver's layout: {describe(exc)}", ctx.variant_index)
     room = state["shared"]["room"]
     check = final_layout_check(
         current["layout"],

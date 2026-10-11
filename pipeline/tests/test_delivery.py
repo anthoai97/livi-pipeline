@@ -16,7 +16,7 @@ from app.llm import GeminiModel
 from app.main import create_app
 from test_runtime import REQUEST, STAGES, FakeGenai, FakeJevClient, of_type, parse, select
 from test_stages import (
-    FIXED, OVERLAPPING, PLACEMENTS, POOL, FakeGenai as StageGenai,
+    FIXED, OVERLAPPING, PLACEMENTS, POOL, REVIEW, FakeGenai as StageGenai,
     intent_packet, run_pipeline, search_pool, selection, solve_as,
 )
 
@@ -44,8 +44,8 @@ def test_real_stage_data_and_preview_delivery(tmp_path, monkeypatch):
         "extract_room": {"room_area", "wall_height", "doors", "windows", "floor_area_sqm", "usable_area_sqm",
                          "protected_paths", "fit", "fit_message"},
         "rag_scope_assets": {"slots", "candidates", "gaps", "preview"},
-        "layout_initial": {"placed", "findings", "blocking", "layout_options"},
-        "render_scene": {"valid", "errors", "dropped", "layout_pick", "review"},
+        "layout_initial": {"placed", "findings", "blocking", "plans", "plan"},
+        "render_scene": {"valid", "errors", "dropped", "review"},
     }
     for event in completed:
         keys = expected.get(event["node"])
@@ -66,7 +66,7 @@ def test_real_stage_data_and_preview_delivery(tmp_path, monkeypatch):
             assert data["total_cost"] == ready_cost[event["variant_index"]]
             assert len(data["items"]) <= retrieval["slots"]
         if event["node"] == "render_scene":
-            assert (data["valid"], data["errors"], data["dropped"], data["layout_pick"]) == (True, 0, 0, "A")
+            assert (data["valid"], data["errors"], data["dropped"], data["review"]) == (True, 0, 0, REVIEW)
     app = create_app(runs_dir=tmp_path)
 
     async def fetch():

@@ -7,9 +7,10 @@
     variant subgraph, one per Send:
       select (repeats until the selection passes, at most 4 turns in all; the last
          turn's selection is placed even when it fails)
-      -- place (code solver; also returns the layouts that tie its best)
-      -- finish (one model call picks a layout, reviews and adjusts it; the final
-         check removes the items it fails on, then delivers the rest) -- END
+      -- place (code solver; each variant takes a different one of the layouts
+         that tie its best)
+      -- finish (one model call reviews and adjusts the layout; the final check
+         removes the items it fails on, then delivers the rest) -- END
 
 Failed checks remove items instead of failing a variant. `variant` runs the
 compiled subgraph and always returns a result: it catches every exception except
@@ -113,7 +114,7 @@ class VariantState(TypedDict, total=False):
     findings: list[Record]  # place, finish: findings for `layout`
     blocking_findings: list[Record]  # place, finish: P0, P1, and critical P2 findings
     non_blocking_findings: list[Record]  # place, finish: the other P2 findings
-    layout_options: list[Record]  # place: measured layouts that tie the best score, the solver's best first
+    layout_plan: list[list[Any]]  # place: the solver plan of `layout`, as [kind, value] pairs
     render_manifest: Record  # finish
     selected_assets: list[Record]  # finish
     total_cost: float  # finish
@@ -170,7 +171,7 @@ def _variant_result(state: VariantState, run_id: str) -> VariantResult:
 
 
 def _variant_summary(state: VariantState) -> Record:
-    """A ready variant's compact result for the run record: products and poses, no URLs."""
+    """A ready variant's compact result for the run record: products, poses, and solver plan, no URLs."""
     layout = state["layout"]
     products = [
         {
@@ -196,6 +197,7 @@ def _variant_summary(state: VariantState) -> Record:
         "direction": state.get("direction", "").strip(),
         "total_cost": state.get("total_cost", 0.0),
         "products": products,
+        "plan": state.get("layout_plan"),
         "layout": {
             key: {"position": pose.get("position"), "rotation": pose.get("rotation"), "on_top_of": pose.get("on_top_of")}
             for key, pose in layout.items()

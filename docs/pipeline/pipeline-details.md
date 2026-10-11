@@ -21,9 +21,10 @@ POST /pipeline
        b. select    model picks products, code adds or swaps the TV, Jev and
                     code check them, code moves spend into the budget range
                     (up to 4 turns)
-       c. place     code solver places every item and keeps its tied layouts
-       d. finish    model picks a layout, reviews and adjusts it; the final
-                    check removes failing items; build the render manifest
+       c. place     code solver places every item; each variant takes a
+                    different one of its tied best layouts
+       d. finish    model reviews and adjusts the layout; the final check
+                    removes failing items; build the render manifest
   -> complete event with every ready variant
 ```
 
@@ -344,6 +345,9 @@ measured with the same checker as validation, go on to the next group. The kept
 layouts differ in their zone plan first: the wall the bed, sofa, TV, or desk
 backs onto (or a divider TV) and the room quarter that holds the dining table.
 So the final layouts are different rooms, not copies that differ in one shelf.
+When the zone plans do not fill the beam, the kept layouts then differ in where
+the wall pieces stand: a wardrobe or dresser on another wall instead of the same
+one slid along it.
 
 A dining table in a dining room prefers the room center. In a studio or living room it prefers a wall (0.1 per metre away),
 so it takes its own part of the room instead of the middle.
@@ -352,12 +356,22 @@ Lamps, tabletop items, and wall art are added last with the seed rules, and the
 complete layout with the fewest findings wins. A solve takes 0.1 to 1.5 s on the
 test rooms (up to 15 items).
 
-Place only solves. An item the solver cannot place keeps its least-violating
-pose, and findings go to the final review (4d).
+Place makes no model call. An item the solver cannot place keeps its
+least-violating pose, and findings go to the final review (4d).
 
-The solver ends with up to 4 complete layouts. Place keeps the result and the
-others that tie its issue score, with no more unplaceable items, for the final
-review. A worse layout is never offered.
+The solver ends with up to 4 complete layouts, each with its plan: the zone
+plan, then the wall each wardrobe, dresser, bookcase, or other wall piece backs
+onto. Place keeps the result and the others that tie its issue score, with no
+more unplaceable items. Each design solves its own products, so the designs take
+layouts first come, first served: the best tied layout whose zone plan no other
+design of the run has taken, else the best whose full plan none has taken, else
+the best. So the designs differ in where the bed, sofa, or dining table stands,
+and when the main piece fits only one wall, in where the storage stands. A
+design never gets a worse layout to be different: every tied layout has the same
+score. When a design repeats another's zone plan, the run record notes
+`repeats the main layout of variant <n>`.
+The record keeps each ready design's `plan`, and `scripts/benchmark.py` prints
+how many distinct plans each run produced.
 
 The layout is then normalized: wall items snap to walls, rugs fit the room, and
 displays sit on their supports. It is then analyzed into findings by severity:
@@ -384,28 +398,27 @@ breaks them.
    `LLM_STAGE_MODELS` sets it) gets the request, the requested items and style
    hints, the layout rules for the room type with their definitions, the
    coordinate system, the room boundary, doors, windows, and protected paths,
-   each piece's key, category, size, and mount type, and each tied layout drawn
-   top-down as variant A, B, C, or D with its poses and measured facts: the
+   each piece's key, category, size, and mount type, and the design's layout
+   drawn top-down with its poses and measured facts: the
    findings the checks still report (issue, items, gaps and limits), and
    edge-to-edge gaps from sofa and lounge chairs to the coffee table, floor
    lamps to their seat, and the TV viewing distance. Acting as an interior
-   designer, the model picks the layout that reads best as a room against the
+   designer, the model reviews the layout as a room against the
    design rules (`DESIGN_RULES` in `app/rules/layout_rules.py`: shared rules such
    as clear zones, a TV whose back does not face another zone, nothing tall in
    front of a window, a floor lamp at the seat it lights, plus rules per room
    type), writes two or three sentences on
-   what is wrong with it, and returns new poses that fix those problems. With
-   one layout, it still reviews and adjusts that one.
+   what is wrong with it, and returns new poses that fix those problems. It
+   does not choose among layouts: place already dealt each design its own.
 2. **Adjust.** Code rejects poses for unknown items, with non-finite values, or
    with a rotation that is neither a whole number of quarter turns from the
    current one nor aligned with the room axes. Moves of any length
    are allowed. The rest are applied together, moving supported items with
    their supports, and kept if the issue score does not get worse. Otherwise
    each move is applied in the model's order on top of the moves kept, and kept
-   if the score does not get worse. A failed call or an unknown label keeps the
-   solver's best layout. The run record notes the pick, the review, and the
-   adjustments kept, reverted, or rejected. The `node_complete` data carries
-   `layout_pick` and `review`.
+   if the score does not get worse. A failed call keeps the design's solver
+   layout. The run record notes the review and the adjustments kept, reverted,
+   or rejected. The `node_complete` data carries `review`.
 3. **Check.** The final layout check runs: every selected unit is placed
    exactly once and no blocking finding remains. When it fails, code removes the
    items it fails on, one named item a round, non-anchor items first, choosing

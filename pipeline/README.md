@@ -19,7 +19,8 @@ events. The service reads these variables from the repository `.env`:
 | --- | --- |
 | `GEMINI_API_KEY` | Gemini model calls and query embeddings. |
 | `LOCAL_CONNECTION_STRING` | Postgres with the prepared catalog and embeddings. |
-| `LLM_DESIGN_MODEL` | Model for the design stages. Defaults to `gemini-3.8-flash`. |
+| `LLM_DESIGN_MODEL` | Model for the design stages. Defaults to `gemini-3.8-flash`. A model whose name does not start with `gemini`, such as `claude-haiku-5-5`, is called through the AI proxy. |
+| `AI_PROXY_BASE_URL`, `AI_PROXY_API_KEY` | The OpenAI-compatible AI proxy (for example `http://127.0.0.1:8317/v1`) used for non-Gemini models. Its calls record tokens but no cost. |
 | `LLM_STAGE_MODELS` | Optional model and thinking level per stage, such as `select=gemini-3.5-flash-lite:minimal,finish=gemini-3.8-flash:low`. Stages: `interpret`, `select`, `finish` (the final layout review). Unlisted stages use `LLM_DESIGN_MODEL` at `low`. |
 | `MODEL_HEDGE_AFTER_S` | Seconds before a slow model call gets a duplicate; the first answer wins and the other call is cancelled. Defaults to `8`; `0` turns it off. |
 | `JEV_API_KEY` | Jev (typesafe-sdk) yes/no questions. |

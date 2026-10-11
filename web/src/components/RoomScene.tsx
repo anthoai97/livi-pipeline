@@ -1,4 +1,4 @@
-import { Edges, Html, Line, OrbitControls, useGLTF } from "@react-three/drei";
+import { Html, Line, OrbitControls, RoundedBox, useGLTF } from "@react-three/drei";
 import { addAfterEffect, Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Component, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
@@ -49,6 +49,8 @@ const PALETTE = {
   door: "#5b3a26",
   frame: "#d9d9d6",
   glass: "#cfe0ee",
+  clay: "#ebe6de",
+  clayMissing: "#cbc4b8",
 };
 
 const S3_HOST = "https://livinit-storage-prod.s3.us-east-2.amazonaws.com";
@@ -427,19 +429,22 @@ function Model({ url, asset, onSettled }: { url: string; asset: ManifestAsset; o
   return <primitive object={object} />;
 }
 
-/** Stands in while a model streams in: an outlined volume of the catalog size that breathes. */
-function Placeholder({ asset }: { asset: ManifestAsset }) {
-  const fill = useRef<THREE.MeshBasicMaterial>(null);
+/**
+ * Stands in for a model: a soft clay block of the catalog size, lit like the room.
+ * It glows gently while the model streams in; a darker, still block marks a model that failed or has no file.
+ */
+function Placeholder({ asset, missing = false }: { asset: ManifestAsset; missing?: boolean }) {
+  const clay = useRef<THREE.MeshStandardMaterial>(null);
   const still = useMemo(prefersReducedMotion, []);
   useFrame(({ clock }) => {
-    if (fill.current && !still) fill.current.opacity = 0.08 + 0.06 * Math.sin(clock.elapsedTime * 3);
+    if (clay.current && !still && !missing) clay.current.emissiveIntensity = 0.12 + 0.1 * Math.sin(clock.elapsedTime * 3);
   });
+  const radius = Math.min(0.04, asset.width / 4, asset.height / 4, asset.depth / 4);
+  const color = missing ? PALETTE.clayMissing : PALETTE.clay;
   return (
-    <mesh position={[0, asset.height / 2, 0]}>
-      <boxGeometry args={[asset.width, asset.height, asset.depth]} />
-      <meshBasicMaterial ref={fill} color={PALETTE.accent} transparent opacity={0.1} depthWrite={false} />
-      <Edges color={PALETTE.accent} />
-    </mesh>
+    <RoundedBox args={[asset.width, asset.height, asset.depth]} radius={radius} smoothness={3} position={[0, asset.height / 2, 0]}>
+      <meshStandardMaterial ref={clay} color={color} emissive={color} emissiveIntensity={missing ? 0 : 0.12} roughness={0.9} />
+    </RoundedBox>
   );
 }
 
@@ -510,9 +515,9 @@ function Piece({ item, center, delay, wall, tracker, onProgress }: {
         <meshBasicMaterial color={PALETTE.accent} transparent opacity={0} depthWrite={false} />
       </mesh>
       <group ref={lift}>
-        <ModelBoundary onFailed={() => onSettled(true)} fallback={<Placeholder asset={asset} />}>
+        <ModelBoundary onFailed={() => onSettled(true)} fallback={<Placeholder asset={asset} missing />}>
           <Suspense fallback={<Placeholder asset={asset} />}>
-            {asset.glb_url ? <Model url={proxied(asset.glb_url)} asset={asset} onSettled={onSettled} /> : <Placeholder asset={asset} />}
+            {asset.glb_url ? <Model url={proxied(asset.glb_url)} asset={asset} onSettled={onSettled} /> : <Placeholder asset={asset} missing />}
           </Suspense>
         </ModelBoundary>
       </group>

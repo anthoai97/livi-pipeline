@@ -6,32 +6,21 @@ studios.
 
 ## Objective
 
-From a short brief, a floor plan and a budget, Livinit returns three furnished
-designs built from real catalog products in about 30 seconds.
+Turn a short brief, a floor plan and a budget into three furnished designs
+built from real catalog products.
 
-- **Every room type, with its own rules.** Living rooms, bedrooms, dining rooms
-  and studios each follow their own furnishing rules: what the room must have
-  (a bed, a table with its chairs, a sofa with a surface), what it may never
-  have, and how its pieces group. A studio holds sleeping, sitting and dining
-  zones in one space.
-- **Layouts that make sense.** Every piece fits and keeps doors, windows and
-  walkways clear. Pieces that belong together form one zone. A sofa faces its
-  TV at a comfortable distance, chairs have room to pull out, and a lamp sits
-  next to the seat it lights. Code enforces the physical rules, and a model
-  review checks taste.
-- **Spend the budget well.** Designs use 80 to 95% of the budget on better
-  pieces before extras, and never go more than 10% over.
-- **Fast.** The first design appears in about 20 seconds and all three in about
-  30. Shared work runs once, the designs run in parallel, and code does the
-  geometry, so the pipeline makes few model calls.
-- **Always a result.** When a product fails a check, code swaps or removes it,
-  and the design is still delivered.
+- **Room types.** Living room, bedroom, dining room and studio. Each type has
+  its own required pieces, banned pieces and groups. A studio holds sleeping,
+  sitting and dining zones in one room.
+- **Sensible layouts.** Every piece fits, doors, windows and walkways stay clear,
+  and each group (sofa and TV, table and chairs, bed and nightstands) forms one
+  zone.
+- **Budget.** Spend 80 to 95% of the budget, and never more than 10% over.
+- **Latency.** The first design in about 20 seconds, all three in about 30.
+- **Reliability.** A piece that fails a check is swapped or removed, so the
+  design is still delivered.
 
 ## Demo
-
-The first 40 seconds of a living room session. The user fills in the brief,
-the pipeline reads the room and picks the products, and the first design loads
-into the room while the other two finish.
 
 ![Living room brief and design generation](docs/demo.gif)
 

@@ -235,21 +235,19 @@ toward the reuse limit. Each variant's selection prompt lists its own pool.
    - total cost is at most 110% of the budget, with TVs and design-only decor
      excluded
    - counts, required items, and requested attributes, plus the Jev results
-   - footprint is within the density budget
-   - tabletop items have a support and rugs fit the room (a TV no longer needs
-     a stand)
+   - footprint reaches the density floor
+   - tabletop items have a support (a TV no longer needs a stand)
    - at most `PRODUCT_REUSE_RATE` of the distinct selected products are marked
      shared (`REUSE LIMIT` error)
 
-When a turn fails only on fit estimates, the code solver (4c) checks the
-selection before the next turn. Fit estimates are the footprint estimate
-(`OVER CROWDED`) and these layout preflight size checks: sofa, bed, rug, desk
-cluster, and dining cluster against the room clear area, and tabletop items
-against their supports. If the solver places every item with no blocking
-findings, the selection passes, and the run record notes
-`fit estimate overruled by the solver: <category counts>; overruled <errors>`.
-All other checks still apply, including dining table edge length, dining
-light clearance, and tiny-room counts.
+A selection that passes these checks goes to the code solver (4c) once. The
+solver decides fit; the validator does not compare piece sizes with the room
+or their supports. If the solver leaves items out, the selection fails
+with one `LAYOUT FIT` error that names each item left out, with its size, and
+asks for products from the same slots that fit together. Blocking findings on
+placed items do not fail the selection; the final review (4d) handles them.
+The validator still checks dining table edge length, dining light clearance,
+and tiny-room counts.
 
 Code then moves the spend into the budget range, without another model turn
 (`_budget_repair`). It changes every unit of a product, swaps only within the
@@ -285,9 +283,9 @@ not fit, the turns step down:
    (`capped`). An item the user asked for that is not optional keeps its
    requested count; only optional items are reduced.
 
-A tabletop item too large for its supports, such as a lamp on a small
-nightstand, does not step down. Its error asks for a smaller tabletop item or a
-larger support from the same slots.
+A fit failure is a turn where the solver leaves out a floor item. A left-out
+tabletop item, such as a lamp too large for a small nightstand, fails the turn
+but does not step down.
 
 After 4 failed turns in all, the last selection loses the products that fail
 it, and the variant goes on to placement. Code removes one product a round,
@@ -296,7 +294,9 @@ budget allowance). It never removes the anchor piece (sofa, bed, or dining
 table). For example, a coffee table that does not match the sofa's style, or a
 lamp with nothing to stand on, is removed instead of failing the design. Errors
 that removal cannot fix, such as a missing required item, stay in the run
-record, and the design is still delivered.
+record, and the design is still delivered. The removal rounds cannot see a
+`LAYOUT FIT` failure, so a selection that fails it goes to placement as it is.
+Finish then removes the items the final check fails on.
 
 ### 4c. Place products
 
@@ -346,14 +346,8 @@ Lamps, tabletop items, and wall art are added last with the seed rules, and the
 complete layout with the fewest findings wins. A solve takes 0.1 to 1.5 s on the
 test rooms (up to 15 items).
 
-If the solver cannot place an item, or blocking findings remain, the stage
-swaps the largest item involved for the next smaller product in the same slot
-that keeps the selection valid, and solves again, up to 2 swaps. If a dining
-table or chair is still involved, it then removes one dining chair at a time,
-up to 2, when the selection stays valid. A request for an exact number of
-seats, or the room's minimum, keeps its chairs. Each swap or removal is kept
-only if the layout gets better, and the run record notes it. Findings that
-remain go to the final review (4d).
+Place only solves. An item the solver cannot place keeps its least-violating
+pose, and findings go to the final review (4d).
 
 The solver ends with up to 4 complete layouts. Place keeps the result and the
 others that tie its issue score, with no more unplaceable items, for the final
@@ -480,8 +474,6 @@ completion or cancellation cannot overwrite an accepted timing entry.
 | Variants | 3 |
 | Selection turns per variant | 4 |
 | Final review calls per variant | 1 |
-| Solver product swaps per layout | 2 |
-| Solver dining chairs removed per layout | 2 |
 | Model call timeout | 60 s, up to 3 attempts |
 | Jev call timeout | 5 s, up to 2 attempts |
 | Run deadline | 300 s |

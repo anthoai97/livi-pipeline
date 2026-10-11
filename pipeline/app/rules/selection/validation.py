@@ -261,7 +261,6 @@ def validate_selection(
     fit_step: str | None = None,
     fit_satisfaction: Any = None,
     constraint_audit: Any = None,
-    fit_estimates: bool = True,
 ) -> dict[str, Any]:
     """Validate a fresh-design selection with the ported legacy rules.
 
@@ -274,17 +273,12 @@ def validate_selection(
     or "capped" (see selection.fit). fit_satisfaction (selected counts per
     requested category) and constraint_audit (code and Jev checks) are built by
     the select stage, shaped like the legacy validate_selection tool arguments,
-    with asset_id as the uid. fit_estimates=False skips the over-crowded
-    footprint estimate and the layout preflight size estimates
-    (_layout_preflight_for_assets fit_checks), for a selection the code solver
-    has placed.
+    with asset_id as the uid. Whether the selection fits the room is left to
+    the code solver.
 
-    Checks budget (110% allowance), footprint and density, category caps and
-    counts, required items, fit targets, layout preflight fit, and strict
-    attributes. Returns valid, status, errors, warnings, fit_failed (an
-    over-crowded footprint or a layout preflight failure other than a
-    tabletop item too large for its supports), support_fit_failed (a
-    tabletop item too large for its supports), metrics,
+    Checks budget (110% allowance), the density floor, category caps and
+    counts, required items, fit targets, layout preflight, and strict
+    attributes. Returns valid, status, errors, warnings, metrics,
     retry_context (when invalid), feedback (JSON text for the model, with
     asset_id as the uid), and instances (build_instances output).
     """
@@ -349,7 +343,6 @@ def validate_selection(
     max_allowed_footprint = furniture_area
     flex_budget = budget * (1 + BUDGET_FLEX_PCT)
     is_over_budget = total_cost > flex_budget
-    is_over_crowded = fit_estimates and total_footprint > max_allowed_footprint
 
     errors = []
     warnings = []
@@ -359,10 +352,6 @@ def validate_selection(
             f"(Flex limit: ${flex_budget:.2f})."
         )
         errors.append(f"OVER BUDGET: {budget_message}")
-    if is_over_crowded:
-        errors.append(
-            f"OVER CROWDED: Footprint is {total_footprint:.2f}m² (Limit: {max_allowed_footprint:.2f}m²)."
-        )
     if not_found:
         errors.append(
             "UNKNOWN ASSET UID: "
@@ -482,10 +471,7 @@ def validate_selection(
         is_valid = False
     # Fresh designs require seating and a surface. Lighting stays advisory;
     # rugs use a separate fresh-design rule so accepted fit decisions keep one.
-    enforce_required_categories = (
-        not is_over_crowded
-        and not accepted_fit_decision
-    )
+    enforce_required_categories = not accepted_fit_decision
     required_categories = {
         label: cats for label, cats in REQUIRED_CATEGORIES.items()
         if not dining and not studio and (not bedroom or label not in {"anchor_seating", "surface"})
@@ -576,7 +562,6 @@ def validate_selection(
         room=room,
         budget=budget,
         total_cost=total_cost,
-        fit_checks=fit_estimates,
     )
     if layout_preflight["errors"]:
         errors.extend(layout_preflight["errors"])
@@ -627,8 +612,6 @@ def validate_selection(
         "status": "PASS" if is_valid else "FAIL - ADJUST SELECTION",
         "errors": errors,
         "warnings": warnings,
-        "fit_failed": is_over_crowded or len(layout_preflight["errors"]) > len(layout_preflight["support_fit_errors"]),
-        "support_fit_failed": bool(layout_preflight["support_fit_errors"]),
         "metrics": {
             "total_cost": round(total_cost, 2),
             "remaining_budget": round(budget - total_cost, 2),

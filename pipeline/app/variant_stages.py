@@ -642,8 +642,8 @@ def _named_items(findings: list[Record], keys: set[str]) -> list[str]:
 
 def _next_fit_step(state: VariantState) -> str | None:
     """Fit step for this turn: compact from the start when the room fit estimate warns,
-    compact after the first fit failure, capped counts after the next. A tabletop
-    item too large for its supports is not a fit failure here (`support_fit_failed`)."""
+    compact after the first selection the solver leaves a floor item out of
+    (`fit_failed`), capped counts after the next. A left-out tabletop item keeps the step."""
     step = state.get("fit_step")
     previous = state.get("selection_validation")
     if previous is None:
@@ -805,17 +805,16 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     that fits no selected support is swapped for one that does (`_missing_tv`).
     The selection also fails
     when more than `ctx.run.product_reuse_rate` of its distinct products are
-    marked `shared`. A selection that fails only fit estimates (the
-    over-crowded footprint and the layout preflight size checks) is checked
-    with the code solver (`_solver_fit`); when the solver places it, the
-    selection passes without them. A selection over the budget allowance, or a
-    passing one under BUDGET_FLOOR_PCT of the budget, is repaired in code
-    (`_budget_repair`) and checked the same way; the repaired selection replaces
-    it only when it passes. On the last turn, a selection
-    that still fails loses the products that fail it (`_drop_failing`), and the
-    graph places it even when errors remain. Notes the fit step applied, an
-    added or replaced TV, the fit estimates the solver overruled, a budget repair or fill, the
-    dropped products, and a failed turn's errors with `ctx.run.note(...)`.
+    marked `shared`. A selection that passes is solved once with the code
+    solver, and fails when the solver leaves items out (`_solver_fit`). A
+    selection over the budget allowance, or a passing one under
+    BUDGET_FLOOR_PCT of the budget, is repaired in code (`_budget_repair`) and
+    checked the same way; the repaired selection replaces it only when it
+    passes. On the last turn, a selection that still fails validation loses the
+    products that fail it (`_drop_failing`), and the graph places it even when
+    errors remain. Notes the fit step applied, an added or replaced TV, a
+    budget repair or fill, the dropped products, and a failed turn's errors
+    with `ctx.run.note(...)`.
     """
     from app.graph import MAX_SELECTION_TURNS  # the graph owns the turn bound; a module import would be circular
 
@@ -855,7 +854,9 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
         selected, validation, audit = swapped, trial, trial_audit
         if name == "budget fill":
             break
-    if not validation["valid"] and turn >= MAX_SELECTION_TURNS and (
+    # The validator cannot see a LAYOUT FIT failure, so removing products would not target it.
+    unfit = any(error.startswith("LAYOUT FIT") for error in validation["errors"])
+    if not validation["valid"] and not unfit and turn >= MAX_SELECTION_TURNS and (
             trimmed := await asyncio.to_thread(_drop_failing, state, selected, validation, audit, intent, fit_step, reuse_rate)):
         selected, validation, dropped = trimmed
         left = "passes" if validation["valid"] else f"still fails: {_errors_text(validation['errors'])}"
@@ -888,16 +889,13 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
 
 async def _checked(state: VariantState, ctx: StageContext, selected: list[Record], intent: Record, fit_step: str | None,
                    reuse_rate: float) -> tuple[Record, Record]:
-    """The `_validated` report for `selected` and its constraint audit. A selection that fails only fit estimates
-    passes when the code solver places it (`_solver_fit`); notes the estimates the solver overruled."""
+    """The `_validated` report for `selected` and its constraint audit. A passing selection fails when the code
+    solver leaves items out (`_solver_fit`); `fit_failed` is set when one of them is a floor item."""
     audit = await _constraint_audit(state, ctx, intent, _products(state["pool"], selected))
     validation = _validated(state, selected, intent, fit_step, audit, reuse_rate)
-    if (validation["fit_failed"] or validation["support_fit_failed"]) and (
-            overruled := await asyncio.to_thread(_solver_fit, state, selected, intent, fit_step, audit, reuse_rate)):
-        counts = sorted(Counter(normalize_category(asset["category"]) for asset in overruled["instances"]).items())
-        ctx.run.note(f"fit estimate overruled by the solver: {', '.join(f'{category} {n}' for category, n in counts)}; "
-                     f"overruled {_errors_text(validation['errors'])}", ctx.variant_index)
-        validation = overruled
+    if validation["valid"] and (unfit := await asyncio.to_thread(_solver_fit, state, validation)):
+        error, validation["fit_failed"] = unfit
+        validation.update(valid=False, status="FAIL - ADJUST SELECTION", errors=[*validation["errors"], error])
     return validation, audit
 
 
@@ -1038,28 +1036,35 @@ def _errors_text(errors: list[str], limit: int = 600) -> str:
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
 
-def _solver_fit(state: VariantState, selected: list[Record], intent: Record, fit_step: str | None, audit: Record,
-                reuse_rate: float) -> Record | None:
-    """The validation of `selected` without fit estimates, when it then passes and the code
-    solver places every instance with no blocking findings; otherwise None."""
-    validation = _validated(state, selected, intent, fit_step, audit, reuse_rate, fit_estimates=False)
-    if not validation["valid"]:
-        return None
+def _solver_fit(state: VariantState, validation: Record) -> tuple[str, bool] | None:
+    """Solve the instances of a passing `validation` once with the code solver.
+
+    Returns None when the solver places every instance. Otherwise returns a
+    `LAYOUT FIT` error and whether a floor item was left out. The error names
+    each left-out product (uid, title, size, and count).
+    """
     shared = state["shared"]
-    layout, report = solve_layout(validation["instances"], shared["room"], shared["intent"])
-    if report["unplaceable"] or _measure({**state, "instances": validation["instances"]}, layout)["blocking_findings"]:
+    _, report = solve_layout(validation["instances"], shared["room"], shared["intent"])
+    by_key = {_key(asset): asset for asset in validation["instances"]}
+    left = [by_key[key] for key in report["unplaceable"]]
+    if not left:
         return None
-    return validation
+    counts = Counter(str(asset["asset_id"]) for asset in left)
+    products = {str(asset["asset_id"]): asset for asset in left}
+    items = [f"{f'{counts[uid]} x ' if counts[uid] > 1 else ''}{uid} ({asset.get('title')}, "
+             f"{asset['width']:.2f}m x {asset['depth']:.2f}m)" for uid, asset in products.items()]
+    error = (f"LAYOUT FIT: the layout solver could not place {', '.join(items)}. "
+             "Choose products from the same slots that fit together, keeping the requested items and counts.")
+    return error, any(placement_mode_for_asset(asset) == "floor" for asset in left)
 
 
 def _validated(state: VariantState, selected: list[Record], intent: Record, fit_step: str | None, audit: Record,
-               reuse_rate: float, *, fit_estimates: bool = True) -> Record:
+               reuse_rate: float) -> Record:
     """validate_selection for `selected` ({uid, functional_group} per unit) from this variant's pool, plus the reuse limit.
 
     Returns the validator report with `instances`, without `feedback`. The
     selection also fails when more than `reuse_rate` of its distinct products
-    are marked `shared`. fit_estimates=False skips the over-crowded footprint
-    estimate and the layout preflight size checks.
+    are marked `shared`.
     """
     shared = state["shared"]
     candidates = _candidates(state["pool"])
@@ -1080,7 +1085,6 @@ def _validated(state: VariantState, selected: list[Record], intent: Record, fit_
         fit_step=fit_step,
         fit_satisfaction=_fit_satisfaction(uids, shared["slots"], state["pool"]),
         constraint_audit=audit,
-        fit_estimates=fit_estimates,
     )
     validation.pop("feedback")
     products = _products(state["pool"], selected)
@@ -1155,28 +1159,17 @@ def _measure(state: VariantState, layout: Record) -> VariantState:
     }
 
 
-MAX_SWAPS = 2
-MAX_DROPS = 2
-
-
 async def place(state: VariantState, ctx: StageContext) -> VariantState:
     """Place every selected instance with the code solver (app.rules.layout.solver). No model call.
 
-    Reads: `shared`, `instances`, `selection_validation`; for a swap also
-    `selection`, `pool`, and `fit_step`.
+    Reads: `shared`, `instances`.
     Returns: `layout`, `issues`, `findings`, `blocking_findings` (P0, P1, and
     critical P2), `non_blocking_findings`, and `layout_options` (`_solve`'s
-    tied layouts, for finish to pick from); after a kept swap also
-    `selection`, `selection_validation`, and `instances`.
+    tied layouts, for finish to pick from).
 
-    Runs in a worker thread: while the layout has unplaceable items or blocking
-    findings, up to MAX_SWAPS times, `_swap` replaces the largest named floor
-    item with the next smaller product of its slot that keeps the selection
-    valid, and the solver runs again. Then, while those items include a dining
-    table or chair, up to MAX_DROPS times, `_drop_chair` removes the last dining
-    chair if the selection stays valid, and the solver runs again. A swap or
-    drop is kept only when the layout scores better. Notes each solve, swap, and
-    drop.
+    Runs the solver once in a worker thread and notes the solve. Items it
+    leaves out keep their least-violating pose; finish removes the ones the
+    final check fails on.
     """
     update, options = await asyncio.to_thread(_solve, state, ctx)
     ctx.data.update(placed=len(update["layout"]), findings=len(update["findings"]),
@@ -1185,110 +1178,26 @@ async def place(state: VariantState, ctx: StageContext) -> VariantState:
 
 
 def _solve(state: VariantState, ctx: StageContext) -> tuple[VariantState, list[VariantState]]:
-    """`place` in a worker thread: solve, then swap products, then drop dining chairs, solving again while that helps.
+    """`place` in a worker thread: solve once and measure the layout.
 
     Also returns the layouts to pick from, measured: the result first, then each
-    alternative of its solve with the same layout_issue_score and no more
+    alternative of the solve with the same layout_issue_score and no more
     unplaceable items. Each option holds only `layout` and its findings.
     """
     room, intent = state["shared"]["room"], state["shared"]["intent"]
-
-    def note(report: Record) -> str:
-        unplaceable = f", unplaceable {', '.join(report['unplaceable'])}" if report["unplaceable"] else ""
-        return (f"solver: score {report['score']}, {report['candidates']} candidates, {report['scored']} scored, "
-                f"{report['elapsed']:.2f} s{unplaceable}")
-
     layout, report = solve_layout(state["instances"], room, intent)
-    ctx.run.note(note(report), ctx.variant_index)
+    unplaceable = f", unplaceable {', '.join(report['unplaceable'])}" if report["unplaceable"] else ""
+    ctx.run.note(f"solver: score {report['score']}, {report['candidates']} candidates, {report['scored']} scored, "
+                 f"{report['elapsed']:.2f} s{unplaceable}", ctx.variant_index)
     update = _measure(state, layout)
-    ctx.data.update(swaps=0, drops=0)
-    for change, limit in ((_swap, MAX_SWAPS), (_drop_chair, MAX_DROPS)):
-        for _ in range(limit):
-            current = {**state, **update}
-            keys = report["unplaceable"] or _named_items(update["blocking_findings"], {_key(asset) for asset in current["instances"]})
-            changed = change(current, keys, ctx.run.product_reuse_rate) if keys else None
-            if changed is None:
-                break
-            selection, text = changed
-            layout, trial_report = solve_layout(selection["instances"], room, intent)
-            trial = _measure({**current, **selection}, layout)
-            before, after = layout_issue_score(update["issues"]), layout_issue_score(trial["issues"])
-            kept = after < before
-            ctx.run.note(f"{text}: {'kept' if kept else 'reverted'}, score {list(before)} -> {list(after)}; "
-                         f"{note(trial_report)}", ctx.variant_index)
-            if not kept:
-                break
-            update, report = {**update, **selection, **trial}, trial_report
-            ctx.data["swaps" if change is _swap else "drops"] += 1
-    current, best = {**state, **update}, layout_issue_score(update["issues"])
+    best = layout_issue_score(update["issues"])
     options = [{key: update[key] for key in ("layout", "issues", "findings", "blocking_findings", "non_blocking_findings")}]
     for alternative in report["alternatives"]:
         if len(alternative["unplaceable"]) <= len(report["unplaceable"]):
-            option = _measure(current, alternative["layout"])
+            option = _measure(state, alternative["layout"])
             if layout_issue_score(option["issues"]) == best:
                 options.append(option)
     return update, options
-
-
-def _swap(state: VariantState, keys: list[str], reuse_rate: float) -> tuple[VariantState, str] | None:
-    """Replace the largest floor item of `keys` with the next smaller product of its slot that keeps the selection valid.
-
-    Every unit of the replaced product changes, so a matched set stays matched.
-    The new selection passes validate_selection and the reuse limit again, with
-    the code-only constraint audit. Returns the `selection`,
-    `selection_validation`, and `instances` update with a description, or None.
-    """
-    shared = state["shared"]
-    by_key = {_key(asset): asset for asset in state["instances"]}
-    intent = _selection_intent(shared["intent"], shared["slots"])
-
-    def area(asset: Record) -> float:
-        return float(asset.get("width") or 0) * float(asset.get("depth") or 0)
-
-    floor = [key for key in keys if key in by_key and placement_mode_for_asset(by_key[key]) == "floor"]
-    for key in sorted(floor, key=lambda key: -area(by_key[key])):
-        uid = str(by_key[key]["asset_id"])
-        slot_id = next((slot_id for slot_id, rows in state["pool"].items() if any(str(r["asset_id"]) == uid for r in rows)), None)
-        if slot_id is None:
-            continue
-        smaller = [record for record in state["pool"][slot_id] if area(catalog_asset(record)) < area(by_key[key]) - 1e-9]
-        for record in sorted(smaller, key=lambda record: -area(catalog_asset(record))):
-            replacement = str(record["asset_id"])
-            selected = [{**asset, "uid": replacement} if asset["uid"].strip() == uid else asset
-                        for asset in state["selection"]["selected_assets"]]
-            validation = _validated(state, selected, intent, state.get("fit_step"), _code_audit(), reuse_rate)
-            if validation["valid"]:
-                instances = validation.pop("instances")
-                update: VariantState = {"selection": {**state["selection"], "selected_assets": selected},
-                                        "selection_validation": validation, "instances": instances}
-                return update, f"swap {uid} -> {replacement} in slot {slot_id}"
-    return None
-
-
-def _drop_chair(state: VariantState, keys: list[str], reuse_rate: float) -> tuple[VariantState, str] | None:
-    """Remove the last dining chair when `keys` name a dining table or chair, if the selection stays valid.
-
-    The re-check is the swap's (validate_selection and the reuse limit), so an
-    exact or minimum seat count is never broken. Returns the `selection`,
-    `selection_validation`, and `instances` update with a description, or None.
-    """
-    shared = state["shared"]
-    by_key = {_key(asset): asset for asset in state["instances"]}
-    dining = [key for key in keys if key in by_key and normalize_category(by_key[key].get("category")) in {"dining_table", "dining_chair"}]
-    chairs = [key for key, asset in by_key.items() if normalize_category(asset.get("category")) == "dining_chair"]
-    if not dining or not chairs:
-        return None
-    uid = str(by_key[chairs[-1]]["asset_id"])  # instances follow the selection order, so this unit is placed last
-    selected = list(state["selection"]["selected_assets"])
-    del selected[max(n for n, asset in enumerate(selected) if asset["uid"].strip() == uid)]
-    intent = _selection_intent(shared["intent"], shared["slots"])
-    validation = _validated(state, selected, intent, state.get("fit_step"), _code_audit(), reuse_rate)
-    if not validation["valid"]:
-        return None
-    instances = validation.pop("instances")
-    update: VariantState = {"selection": {**state["selection"], "selected_assets": selected},
-                            "selection_validation": validation, "instances": instances}
-    return update, f"dropped dining chair {chairs[-1]} ({len(chairs)} -> {len(chairs) - 1} chairs)"
 
 
 # --- finish ------------------------------------------------------------------

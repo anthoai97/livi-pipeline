@@ -44,7 +44,7 @@ def test_real_stage_data_and_preview_delivery(tmp_path, monkeypatch):
         "extract_room": {"room_area", "wall_height", "doors", "windows", "floor_area_sqm", "usable_area_sqm",
                          "protected_paths", "fit", "fit_message"},
         "rag_scope_assets": {"slots", "candidates", "gaps", "preview"},
-        "layout_initial": {"placed", "findings", "blocking", "swaps", "drops", "layout_options"},
+        "layout_initial": {"placed", "findings", "blocking", "layout_options"},
         "render_scene": {"valid", "errors", "dropped", "layout_pick", "review"},
     }
     for event in completed:

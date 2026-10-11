@@ -93,14 +93,9 @@ export function designTask(variant: VariantProgress, index: number): Task {
   if (placed) {
     if (placed.status === "working") return { ...base, status: "working", detail: "Placing every piece in the room" };
     if (reviewing?.status === "working") return { ...base, status: "working", detail: "Reviewing the layout" };
-    const initial = nodeData(variant.nodes, "layout_initial");
-    const blocking = initial?.blocking;
-    const changes = [
-      initial?.swaps ? `${plural(initial.swaps, "product swap")}` : "",
-      initial?.drops ? `${plural(initial.drops, "piece")} removed` : "",
-    ].filter(Boolean).join(", ");
+    const blocking = nodeData(variant.nodes, "layout_initial")?.blocking;
     // Passing the checks is not the end: the final check and delivery are still to come.
-    if (blocking === 0) return { ...base, status: "working", detail: `Layout checks passed${changes ? `; ${changes}` : ""}` };
+    if (blocking === 0) return { ...base, status: "working", detail: "Layout checks passed" };
     return {
       ...base,
       status: "working",

@@ -313,6 +313,8 @@ The solver (`app.rules.layout.solver`) splits the selection into groups:
 Each group has a few arrangements taken from the existing rules. For example,
 the sofa stands 0.1 m off its wall, the coffee table 0.47 or 0.54 m in front of
 it, and accent chairs beside the table or across from the sofa.
+[Adding a product category](adding-a-product-category.md) explains how a
+category's role decides its group, and when a new category needs its own.
 
 The solver tries each group against every wall, facing into the room, and the
 dining table on a grid of positions. It drops a position that overlaps placed

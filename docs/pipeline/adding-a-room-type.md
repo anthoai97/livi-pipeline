@@ -12,7 +12,9 @@ purpose the user picks in the brief. It is sent as `room_type` on
 There is no room registry. Each stage branches on the room name, so a new type
 touches every place below. This guide uses `home_office` as the example and
 `dining_room` as the model to copy. Line numbers in the table are from `main`
-on 2026-10-10 and drift; search for the named symbol.
+on 2026-10-11 and drift; search for the named symbol. To add a kind of
+furniture instead of a room, see
+[Adding a product category](adding-a-product-category.md).
 
 ## Where a room's rules go
 
@@ -67,16 +69,16 @@ gets living-room behavior, without it.
 | 6 | Fit estimate | `pipeline/app/rules/planner/fit_check.py:160` `_recommend_counts` | Categories the estimate must never cut | Optional |
 | 7 | Seed guidance | `pipeline/app/rules/planner/seed_guidance.py:169` `build_seed_guidance` | `room_mode` and `primary_anchor_uid` | Required |
 | 8 | Catalog slots | `pipeline/app/rules/selection/validation.py:134` `room_requirements` | Required items | Required |
-| 9 | Selection prompt | `pipeline/app/variant_stages.py:380` `_selection_prompt` | Anchor name, role guidance, size, optional-piece and rug text | Required |
+| 9 | Selection prompt | `pipeline/app/variant_stages.py:387` `_selection_prompt` | Anchor name, role guidance, size, optional-piece and rug text | Required |
 | 10 | Selection guidance | `pipeline/app/rules/layout_rules.py:250` `build_selection_guidance_block` | A `FIT FOR SELECTION` block | Optional |
 | 11 | Selection validation | `validation.py:253` `validate_selection` | Room flag, group errors, opt out of living-room requirements | Required |
-| 12 | Anchors | `variant_stages.py:666` `_ANCHOR_CATEGORIES` | Anchor category sets in priority order | Required |
-| 13 | Variant directions | `variant_stages.py:106` `_ROOM_DIRECTIVES` | Two direction texts, variants 1 and 2 | Optional |
+| 12 | Anchors | `variant_stages.py:673` `_ANCHOR_CATEGORIES` | Anchor category sets in priority order | Required |
+| 13 | Variant directions | `variant_stages.py:113` `_ROOM_DIRECTIVES` | Two direction texts, variants 1 and 2 | Optional |
 | 14 | Layout rules text | `layout_rules.py:178` `build_rules_block` | An `APPLICABILITY` block, like the dining one | Required |
 | 15 | Layout checks | `pipeline/app/rules/layout/analysis.py:119-124`, new `layout/home_office.py` | A measurement function and its issue keys | Optional |
 | 16 | Issue tiers | `layout/constants.py:98`, `:152`; `layout/formatting.py`; `layout/metrics.py:100` | Register the new issue keys | Required with 15 |
 | 17 | Solver | `pipeline/app/rules/layout/solver.py:162`, `:313`, `:732` | `_STORAGE_FRONTS`, `_groups`, `_preference` | Optional |
-| 18 | Final review prompt | `variant_stages.py:1344` `_arrangement_prompt` | Nothing: it reads the room's `DESIGN_RULES` key (`layout_rules.py:51`) | Optional |
+| 18 | Final review prompt | `variant_stages.py:1280` `_arrangement_prompt` | Nothing: it reads the room's `DESIGN_RULES` key (`layout_rules.py:51`) | Optional |
 | 19 | Web brief | `web/src/lib/types.ts:4`, `web/src/lib/room.ts:102`, `:111` | `RoomType`, `ROOM_TYPES`, four `PROMPT_STARTERS` with sizes | Required |
 | 20 | Benchmark, tests | `pipeline/scripts/benchmark_requests.json`, `pipeline/tests/` | One case and focused tests | Required |
 
@@ -191,8 +193,8 @@ gets living-room behavior, without it.
     ```
 
 15. **Add a benchmark case** to `benchmark_requests.json` with `label`,
-    `geometry` (one sentence on doors and windows), `note` and a full `request`,
-    copied from the `dining_room` case.
+    `geometry` (one sentence on doors and windows), an optional `note` and a
+    full `request`, copied from the `dining_room` case.
 
 ## Writing the room's rules
 

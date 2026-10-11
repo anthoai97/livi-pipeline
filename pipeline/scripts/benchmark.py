@@ -1,19 +1,26 @@
 """Replay the benchmark requests against a running pipeline service and summarize the run records.
 
-Sends each request in benchmark_requests.json `--runs` times, one at a time, to
-POST /pipeline, reads the run ID from the stream's start event, then reads
+Sends each request in benchmark_requests.json `--runs` times to POST /pipeline on
+each `--url` (repeat it to spread runs over several services), up to `--parallel`
+at once per service (default 1), reads the run ID from the stream's start event, then reads
 pipeline/.data/runs/<run_id>.json, which the service writes when the stream ends.
 The service must run on this machine so its run records are readable here.
 
-Run from pipeline/: python scripts/benchmark.py --runs 3
+Run from pipeline/: python scripts/benchmark.py --runs 3 --url http://127.0.0.1:8001 --url http://127.0.0.1:8002
+
+Runs on one service share its process, so `--parallel` above 1 makes run times longer
+than sequential ones. Separate services keep them close; compare times only between
+benchmarks run the same way.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import queue
 import statistics
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -78,22 +85,35 @@ def print_table(rows: list[dict]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Replay the benchmark requests against a running pipeline service")
     parser.add_argument("--runs", type=int, default=3, help="times to send each request")
-    parser.add_argument("--url", default="http://127.0.0.1:8000", help="service base URL")
+    parser.add_argument("--url", action="append", help="service base URL (default http://127.0.0.1:8000); repeat to spread runs over services")
     parser.add_argument("--only", help="send only the request with this label, such as studio or living_room_scandi")
+    parser.add_argument("--parallel", type=int, default=1, help="requests in flight at once on each service")
     args = parser.parse_args()
-    if args.runs < 1:
-        parser.error("--runs must be at least 1")
+    if args.runs < 1 or args.parallel < 1:
+        parser.error("--runs and --parallel must be at least 1")
 
     cases = [case for case in json.loads(REQUESTS.read_text()) if args.only in (None, case["label"])]
     if not cases:
         parser.error(f"no benchmark request labeled {args.only!r}")
 
-    rows = []
-    with httpx.Client(timeout=60) as client:
-        for case in cases:
-            for n in range(1, args.runs + 1):
-                print(f"{case['label']} run {n} of {args.runs}...", flush=True)
-                rows.append(summarize(case["label"], read_record(stream_run(client, args.url.rstrip("/"), case["request"]))))
+    urls = [url.rstrip("/") for url in args.url or ["http://127.0.0.1:8000"]]
+    pending: queue.SimpleQueue[tuple[int, dict, int]] = queue.SimpleQueue()
+    for index, (case, n) in enumerate((case, n) for case in cases for n in range(1, args.runs + 1)):
+        pending.put((index, case, n))
+
+    def work(url: str) -> list[tuple[int, dict]]:
+        """Send queued requests to one service, one at a time, until none are left."""
+        done = []
+        while True:
+            try:
+                index, case, n = pending.get_nowait()
+            except queue.Empty:
+                return done
+            print(f"{case['label']} run {n} of {args.runs} on {url}...", flush=True)
+            done.append((index, summarize(case["label"], read_record(stream_run(client, url, case["request"])))))
+
+    with httpx.Client(timeout=60) as client, ThreadPoolExecutor(len(urls) * args.parallel) as pool:
+        rows = [row for _, row in sorted(pair for done in pool.map(work, urls * args.parallel) for pair in done)]
 
     print()
     print_table(rows)

@@ -4,20 +4,28 @@ Turn a room description, floor plan, and budget into three furnished 3D designs
 using real catalog products. Supports living rooms, bedrooms, dining rooms, and
 studios.
 
-## The problem
+## Objective
 
-Furnishing a room means finding pieces that work together, fit the space, and
-meet a budget. A sofa can match the style but block a doorway. A dining set can
-fit the floor plan but leave too little room to pull out a chair.
+Give anyone a furnished room they could actually buy and live in: three
+designs from real catalog products, from a short brief, a floor plan and a
+budget, in about half a minute.
 
-Livinit combines product selection with layout checks. It reads your brief,
-searches the catalog, and arranges furniture around the room's dimensions,
-doors, and windows. You can compare three designs, inspect their products and
-prices, and save a choice in the browser.
-
-The pipeline checks furniture overlap, access, required items, and cost. It can
-swap or remove pieces that fail checks. Budget handling allows up to 10% over
-the stated amount, with over-budget designs marked in the interface.
+- **Every room type, with its own rules.** Living rooms, bedrooms, dining rooms
+  and studios each follow their own furnishing rules: what the room must have
+  (a bed, a table with its chairs, a sofa with a surface), what it may never
+  have, and how its pieces group. A studio mixes sleeping, sitting and dining
+  zones in one space.
+- **Layouts that make sense.** Every piece fits and keeps doors, windows and
+  walkways clear. Each zone reads as one area: a sofa faces its TV at a
+  comfortable distance, chairs can pull out, a lamp stands by the seat it
+  lights. Code enforces the physical rules; a design review handles taste.
+- **Spend the budget well.** Designs use 80 to 95% of the budget on better
+  pieces before extras, and never go more than 10% over.
+- **Fast.** The first design appears in about 20 seconds and all three in about
+  30. Shared work runs once, the designs run in parallel, and code does the
+  geometry so that model calls stay few.
+- **Always a result.** A product that fails a check is swapped or removed; a
+  design is still delivered.
 
 ## Demo
 

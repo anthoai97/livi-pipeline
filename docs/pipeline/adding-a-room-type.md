@@ -12,7 +12,9 @@ purpose the user picks in the brief. It is sent as `room_type` on
 There is no room registry. Each stage branches on the room name, so a new type
 touches every place below. This guide uses `home_office` as the example and
 `dining_room` as the model to copy. Line numbers in the table are from `main`
-on 2026-10-10 and drift; search for the named symbol.
+on 2026-10-10 and drift; search for the named symbol. To add a kind of
+furniture instead of a room, see
+[Adding a product category](adding-a-product-category.md).
 
 ## Where a room's rules go
 

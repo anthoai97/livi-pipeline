@@ -110,7 +110,7 @@ def strict(schema: dict) -> bool:
 def test_review_runs_reviews_ready_variants_and_reports_failures(tmp_path):
     client = FakeProxy()
 
-    result = review.review_runs([RECORD], client, tmp_path, workers=2)
+    result = review.review_runs([RECORD], client, tmp_path, parallel=2)
 
     assert sorted(name for name, _, _ in client.calls) == ["variant_comparison", "variant_review", "variant_review"]
     assert strict(review.REVIEW_SCHEMA) and strict(review.COMPARE_SCHEMA)

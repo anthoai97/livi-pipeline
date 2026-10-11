@@ -354,5 +354,394 @@
         }
       ]
     }
+  },
+  {
+    "label": "dining_room_tight",
+    "geometry": "The #45 incident request (run f9109392): 3.4 x 3.8 m, door and window on the top wall.",
+    "request": {
+      "user_intent": "A cosy Scandinavian dining room for four with a round light wood table, four soft upholstered chairs, and a rug underneath. Keep the door clear.",
+      "budget": 10000.0,
+      "room_type": "dining_room",
+      "room_area": [
+        3.4,
+        3.8
+      ],
+      "wall_height": 2.7,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          3.4,
+          0.0
+        ],
+        [
+          3.4,
+          3.8
+        ],
+        [
+          0.0,
+          3.8
+        ]
+      ],
+      "room_doors": [
+        {
+          "id": "door-1",
+          "height": 2.08,
+          "center": [
+            2.448,
+            3.8
+          ],
+          "width": 0.9,
+          "depth": 0.05,
+          "wall": "top"
+        }
+      ],
+      "room_windows": [
+        {
+          "id": "window-1",
+          "height": 1.2,
+          "sill_height": 0.9,
+          "center": [
+            0.952,
+            3.8
+          ],
+          "width": 1.1,
+          "depth": 0.05,
+          "wall": "top"
+        }
+      ]
+    }
+  },
+  {
+    "label": "bedroom_small",
+    "geometry": "3 x 3 m, the web build wizard's Small quick pick; door on the top wall, window on the bottom wall.",
+    "request": {
+      "user_intent": "A calm small bedroom with a queen bed, two nightstands, and a dresser.",
+      "budget": 6000.0,
+      "room_type": "bedroom",
+      "room_area": [
+        3.0,
+        3.0
+      ],
+      "wall_height": 2.7,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          3.0,
+          0.0
+        ],
+        [
+          3.0,
+          3.0
+        ],
+        [
+          0.0,
+          3.0
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            2.4,
+            3.0
+          ],
+          "width": 0.8,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            1.5,
+            0.0
+          ],
+          "width": 1.0,
+          "depth": 0.05,
+          "height": 1.2,
+          "sill_height": 0.9
+        }
+      ]
+    }
+  },
+  {
+    "label": "living_room_small",
+    "geometry": "3 x 3 m, the web build wizard's Small quick pick; door on the top wall, window on the bottom wall.",
+    "request": {
+      "user_intent": "A compact living room with a sofa, a coffee table, an armchair, and a TV.",
+      "budget": 5000.0,
+      "room_type": "living_room",
+      "room_area": [
+        3.0,
+        3.0
+      ],
+      "wall_height": 2.7,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          3.0,
+          0.0
+        ],
+        [
+          3.0,
+          3.0
+        ],
+        [
+          0.0,
+          3.0
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            2.4,
+            3.0
+          ],
+          "width": 0.8,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            1.5,
+            0.0
+          ],
+          "width": 1.0,
+          "depth": 0.05,
+          "height": 1.2,
+          "sill_height": 0.9
+        }
+      ]
+    }
+  },
+  {
+    "label": "studio_small",
+    "geometry": "4 x 4.5 m; door on the top wall, window on the bottom wall.",
+    "request": {
+      "user_intent": "A small studio with a full bed, a loveseat facing a TV, and dining for two.",
+      "budget": 8000.0,
+      "room_type": "studio",
+      "room_area": [
+        4.0,
+        4.5
+      ],
+      "wall_height": 2.7,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          4.0,
+          0.0
+        ],
+        [
+          4.0,
+          4.5
+        ],
+        [
+          0.0,
+          4.5
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            3.4,
+            4.5
+          ],
+          "width": 0.8,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            2.0,
+            0.0
+          ],
+          "width": 1.0,
+          "depth": 0.05,
+          "height": 1.2,
+          "sill_height": 0.9
+        }
+      ]
+    }
+  },
+  {
+    "label": "living_room_large",
+    "geometry": "7 x 8 m; door on the top wall, window on the bottom wall.",
+    "request": {
+      "user_intent": "A spacious family living room with a large sectional sofa, two armchairs, a coffee table, a TV, and a reading corner with a floor lamp.",
+      "budget": 15000.0,
+      "room_type": "living_room",
+      "room_area": [
+        7.0,
+        8.0
+      ],
+      "wall_height": 2.8,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          7.0,
+          0.0
+        ],
+        [
+          7.0,
+          8.0
+        ],
+        [
+          0.0,
+          8.0
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            6.0,
+            8.0
+          ],
+          "width": 0.9,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            3.5,
+            0.0
+          ],
+          "width": 1.6,
+          "depth": 0.05,
+          "height": 1.4,
+          "sill_height": 0.8
+        }
+      ]
+    }
+  },
+  {
+    "label": "bedroom_large",
+    "geometry": "5.5 x 6 m; door on the top wall, window on the bottom wall.",
+    "request": {
+      "user_intent": "A large primary bedroom with a king bed, two nightstands, a dresser, a bench at the foot of the bed, and a reading chair.",
+      "budget": 12000.0,
+      "room_type": "bedroom",
+      "room_area": [
+        5.5,
+        6.0
+      ],
+      "wall_height": 2.8,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          5.5,
+          0.0
+        ],
+        [
+          5.5,
+          6.0
+        ],
+        [
+          0.0,
+          6.0
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            4.6,
+            6.0
+          ],
+          "width": 0.9,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            2.75,
+            0.0
+          ],
+          "width": 1.6,
+          "depth": 0.05,
+          "height": 1.4,
+          "sill_height": 0.8
+        }
+      ]
+    }
+  },
+  {
+    "label": "dining_room_large",
+    "geometry": "5.5 x 6.5 m; door on the top wall, window on the bottom wall.",
+    "request": {
+      "user_intent": "A formal dining room for eight with a long wooden table, eight upholstered chairs, a sideboard, and a large rug.",
+      "budget": 15000.0,
+      "room_type": "dining_room",
+      "room_area": [
+        5.5,
+        6.5
+      ],
+      "wall_height": 2.8,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          5.5,
+          0.0
+        ],
+        [
+          5.5,
+          6.5
+        ],
+        [
+          0.0,
+          6.5
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            4.6,
+            6.5
+          ],
+          "width": 0.9,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            2.75,
+            0.0
+          ],
+          "width": 1.6,
+          "depth": 0.05,
+          "height": 1.4,
+          "sill_height": 0.8
+        }
+      ]
+    }
   }
 ]

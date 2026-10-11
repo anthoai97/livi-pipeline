@@ -83,8 +83,13 @@ To compare options, start the service, then replay the benchmark requests and
 summarize their run records from `pipeline/`:
 
 ```sh
-python scripts/benchmark.py --runs 3
+python scripts/benchmark.py --runs 3 --url http://127.0.0.1:8001 --url http://127.0.0.1:8002
 ```
+
+Repeat `--url` to spread runs over several services, one request at a time on each;
+start one service per port. `--parallel` sends more requests at once to each service,
+but runs on one service share its process and take longer, so compare run times only
+between benchmarks run the same way.
 
 Set `JEV_USES` or `PRODUCT_REUSE_RATE` on the service to benchmark another option.
 
@@ -109,4 +114,4 @@ listed but not reviewed.
 | `REVIEW_MODEL` | Reviewer model. Defaults to `gpt-6.1-sol`; `--model` overrides it. |
 | `REVIEW_EFFORT` | Reviewer reasoning effort. Defaults to `medium`; `--effort` overrides it. |
 
-`--workers` sets how many reviewer calls run at once (default 3).
+`--parallel` sets how many reviewer calls run at once (default 20). Each design review takes about 30 s, so this sets the review time.

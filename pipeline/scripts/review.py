@@ -246,11 +246,11 @@ def scores(review: Record | None) -> dict[str, int | None]:
     return {name: (flat.get(name) or {}).get("score") for name in CRITERIA}
 
 
-def review_runs(records: list[Record], client: ProxyClient, out_dir: Path, workers: int = 3) -> Record:
+def review_runs(records: list[Record], client: ProxyClient, out_dir: Path, parallel: int = 20) -> Record:
     """Render, review, and compare every ready variant with a stored result; write images, review.json, and report.md."""
     (out_dir / "images").mkdir(parents=True, exist_ok=True)
     runs, jobs = [], []
-    with ThreadPoolExecutor(max_workers=workers) as pool:
+    with ThreadPoolExecutor(max_workers=parallel) as pool:
         for record in records:
             run = {"run_id": record["run_id"], "room_type": record["request"]["room_type"],
                    "prompt": record["request"]["user_intent"], "budget": record["request"]["budget"],
@@ -369,7 +369,7 @@ def main() -> None:
     runs.add_argument("--latest", type=int, metavar="N", help="review the N most recent run records")
     parser.add_argument("--model", default=os.environ.get("REVIEW_MODEL") or DEFAULT_MODEL)
     parser.add_argument("--effort", default=os.environ.get("REVIEW_EFFORT") or DEFAULT_EFFORT)
-    parser.add_argument("--workers", type=int, default=3, help="reviewer calls in parallel")
+    parser.add_argument("--parallel", type=int, default=20, help="reviewer calls in flight at once")
     args = parser.parse_args()
     load_dotenv(PIPELINE.parent / ".env")
     if args.runs:
@@ -382,7 +382,7 @@ def main() -> None:
     records = sorted((json.loads(path.read_text()) for path in paths), key=lambda record: record["started_at"])
     client = ProxyClient(model=args.model, effort=args.effort)
     out_dir = REVIEWS_DIR / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    review = review_runs(records, client, out_dir, workers=max(1, args.workers))
+    review = review_runs(records, client, out_dir, parallel=max(1, args.parallel))
 
     print_table(*score_rows(review))
     for run in review["runs"]:

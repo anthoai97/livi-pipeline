@@ -175,6 +175,18 @@ reviewer's layout scores and the distinct score with the
 [2026-10-11 report](../pipeline/report-2026-10-11.md); layout quality must not
 drop by more than chance (about 0.5 at 9 designs per brief).
 
+## Change after the first benchmark (2026-10-11)
+
+Decision 1 assumed every design solves the same layouts, so design k could take
+the k-th plan of its own list. Each design solves its own products, so the
+lists differ, and in 5 of 39 benchmark runs two designs took the same zone plan
+while a third was free. Place now takes layouts first come, first served: the
+best tied layout whose zone plan no other design of the run has taken, else the
+best whose full plan none has taken, else the best. The claims are kept per run
+(`RunContext.layout_plans`) and made on the event loop. The note reads
+`tied layout <k> of <m> (<z> main layouts)`, with
+`, repeats the main layout of variant <n>`.
+
 ## Unresolved questions
 
 None. The three questions raised on 2026-10-11 are settled in decisions 2, 3

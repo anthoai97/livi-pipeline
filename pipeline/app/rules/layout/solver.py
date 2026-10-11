@@ -37,8 +37,10 @@ reserved bands and the living-dining gap. The best SHORTLIST candidates of each
 partial layout are measured with analyze_layout, and the best BEAM_WIDTH partial
 layouts continue, the best of each zone plan first: the wall each sleeping,
 sitting, media, or work group backs onto (or a divider TV) and the room quadrant
-of the dining table. A dining table prefers the room center, except in a studio
-or living room, where it prefers a wall.
+of the dining table. Then the best of each zone plan and set of walls the wall
+pieces back onto, so with fewer zone plans than beam slots the kept layouts
+differ in where a wardrobe or dresser stands. A dining table prefers the room
+center, except in a studio or living room, where it prefers a wall.
 
 Each complete group layout then gets its accessories (table
 lamps, tabletop items, wall art, other rugs and ceiling lights, floor TVs) from
@@ -46,7 +48,7 @@ the seed generator, with each table lamp first paired with a free bedside piece,
 side table or, for a desk lamp, desk. It is normalized the way the place stage
 measures layouts and scored with layout_issue_score, then
 layout_issue_magnitudes. The best wins; the others are reported as alternatives,
-from which the place stage may pick a tie. A group with no candidate that passes the checks takes
+each with its plan, from which the place stage deals the ties. A group with no candidate that passes the checks takes
 its least-violating pose, and an accessory the seed skips takes a free spot, so
 the layout is always complete; their instance keys are reported as unplaceable.
 """
@@ -194,6 +196,7 @@ class _Partial:
     score: tuple[int, int, int] = (0, 0, 0)
     unplaceable: tuple[str, ...] = ()
     key: tuple = ()  # the zone plan: (kind, back wall | "divider" | dining table quadrant) per placed zone
+    detail: tuple = ()  # (category, back wall) per placed wall single, in placement order
 
 
 @dataclass
@@ -251,9 +254,12 @@ def solve_layout(instances: list[Record], room: Record, intent: Record) -> tuple
     the place stage's measure; report holds `unplaceable` (instance keys placed
     without a pose that passes the checks), `score` (layout_issue_score of the
     layout), `candidates` (group candidates checked), `scored` (layouts measured
-    with analyze_layout), `elapsed` (seconds), and `alternatives`: the other
-    complete beam layouts, best first, each as {layout, score, unplaceable};
-    a layout identical to one already listed is left out.
+    with analyze_layout), `elapsed` (seconds), `plan`, and `alternatives`: the
+    other complete beam layouts, best first, each as {layout, score,
+    unplaceable, plan}; a layout identical to one already listed is left out.
+    A plan is the zone plan then the wall singles' walls as [kind, value]
+    pairs: [zone kind, back wall | "divider" | [right, back] dining quarter]
+    per zone, then [category, back wall] per wall single.
     """
     started = time.monotonic()
     ctx = _room(instances, room, intent)
@@ -270,15 +276,17 @@ def solve_layout(instances: list[Record], room: Record, intent: Record) -> tuple
         issues = ctx.analyze(layout)
         unplaceable = sorted({*partial.unplaceable, *skipped})
         score = (layout_issue_score(issues), layout_issue_magnitudes(issues), len(unplaceable), partial.preference)
-        complete.append((score, layout, unplaceable))
+        plan = [[kind, list(value) if isinstance(value, tuple) else value] for kind, value in (*partial.key, *partial.detail)]
+        complete.append((score, layout, unplaceable, plan))
     complete.sort(key=lambda row: row[0])  # stable: a tie keeps beam order
-    (score, layout, unplaceable), *others = complete
+    (score, layout, unplaceable, plan), *others = complete
     alternatives: list[Record] = []
-    for other_score, other, other_unplaceable in others:
+    for other_score, other, other_unplaceable, other_plan in others:
         if other != layout and all(other != alternative["layout"] for alternative in alternatives):
-            alternatives.append({"layout": other, "score": list(other_score[0]), "unplaceable": other_unplaceable})
+            alternatives.append({"layout": other, "score": list(other_score[0]), "unplaceable": other_unplaceable,
+                                 "plan": other_plan})
     return layout, {"unplaceable": unplaceable, "score": list(score[0]), **ctx.stats,
-                    "elapsed": round(time.monotonic() - started, 3), "alternatives": alternatives}
+                    "elapsed": round(time.monotonic() - started, 3), "plan": plan, "alternatives": alternatives}
 
 
 def _room(instances: list[Record], room: Record, intent: Record) -> _Room:
@@ -880,7 +888,7 @@ def _expand(ctx: _Room, parent: _Partial, group: _Group) -> list[_Partial]:
     shortlist = LAMP_SHORTLIST if group.kind == "lamp" else SHORTLIST
     min_x, min_y, max_x, max_y = ctx.polygon.bounds
     zone = group.kind in ZONE_KINDS
-    for cost, template, key, poses, floors, bands in _pick(checked, shortlist, key=lambda row: row[0], diversity=lambda row: row[2]):
+    for cost, template, key, poses, floors, bands in _pick(checked, shortlist, key=lambda row: row[0], diversity=lambda row: (row[2],)):
         layout = {**parent.layout, **{uid: _placement(ctx, uid, *pose) for uid, pose in poses.items()}}
         living = _living(ctx, poses)
         x, y, _ = poses[next(iter(template.poses))]
@@ -898,20 +906,24 @@ def _expand(ctx: _Room, parent: _Partial, group: _Group) -> list[_Partial]:
             score=layout_issue_score(ctx.analyze(layout)),
             unplaceable=(*parent.unplaceable, *(sorted(poses) if relaxed else ())),
             key=(*parent.key, (group.kind, plan)) if zone else parent.key,
+            detail=((*parent.detail, (normalize_category(ctx.assets[template.name].get("category")), key[0]))
+                    if group.kind == "wall" else parent.detail),
         )
         children.append(child)
     return children
 
 
-def _pick(items: list, count: int, *, key, diversity=lambda item: item.key) -> list:
-    """The best `count` items, taking the best of each diversity key first."""
+def _pick(items: list, count: int, *, key, diversity=lambda item: (item.key, (item.key, item.detail))) -> list:
+    """The best `count` items: the best of each first-level diversity key, then of each second-level one, then the rest."""
     ordered = sorted(items, key=key)
-    first, seen = [], set()
-    for index, item in enumerate(ordered):
-        if diversity(item) not in seen:
-            first.append(index)
-            seen.add(diversity(item))
-    chosen = (first + [index for index in range(len(ordered)) if index not in set(first)])[:count]
+    first: dict[int, None] = {}
+    for level in range(len(diversity(ordered[0])) if ordered else 0):
+        seen = set()
+        for index, item in enumerate(ordered):
+            if (value := diversity(item)[level]) not in seen:
+                seen.add(value)
+                first.setdefault(index)
+    chosen = ([*first] + [index for index in range(len(ordered)) if index not in first])[:count]
     return [ordered[index] for index in sorted(chosen)]
 
 

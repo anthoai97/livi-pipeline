@@ -79,8 +79,8 @@ gets living-room behavior, without it.
 | 14 | Layout rules text | `layout_rules.py:178` `build_rules_block` | An `APPLICABILITY` block, like the dining one | Required |
 | 15 | Layout checks | `pipeline/app/rules/layout/analysis.py:119-124`, new `layout/home_office.py` | A measurement function and its issue keys | Optional |
 | 16 | Issue tiers | `layout/constants.py:98`, `:152`; `layout/formatting.py`; `layout/metrics.py:100` | Register the new issue keys | Required with 15 |
-| 17 | Solver | `pipeline/app/rules/layout/solver.py:162`, `:313`, `:732` | `_STORAGE_FRONTS`, `_groups`, `_preference` | Optional |
-| 18 | Final review prompt | `variant_stages.py:1280` `_arrangement_prompt` | Nothing: it reads the room's `DESIGN_RULES` key (`layout_rules.py:51`) | Optional |
+| 17 | Solver | `pipeline/app/rules/layout/solver.py:164`, `:321`, `:740` | `_STORAGE_FRONTS`, `_groups`, `_preference` | Optional |
+| 18 | Final review prompt | `variant_stages.py:1291` `_arrangement_prompt` | Nothing: it reads the room's `DESIGN_RULES` key (`layout_rules.py:51`) | Optional |
 | 19 | Web brief | `web/src/lib/types.ts:4`, `web/src/lib/room.ts:102`, `:111` | `RoomType`, `ROOM_TYPES`, four `PROMPT_STARTERS` with sizes | Required |
 | 20 | Benchmark, tests | `pipeline/scripts/benchmark_requests.json`, `pipeline/tests/` | One case and focused tests | Required |
 

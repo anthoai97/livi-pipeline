@@ -60,6 +60,7 @@ def summarize(label: str, record: dict) -> dict:
     totals, variants = record["totals"], record["variants"]
     switches = record.get("switches") or {}
     findings = [variant["non_blocking_findings"] for variant in variants if "non_blocking_findings" in variant]
+    plans = {json.dumps(variant["plan"]) for variant in variants if variant["outcome"] == "ready" and variant.get("plan")}
     return {
         "room": label,
         "status": record["status"],
@@ -69,6 +70,7 @@ def summarize(label: str, record: dict) -> dict:
         "cost_usd": totals["cost_usd"],
         "jev_calls": len(record["jev_calls"]) if "jev_calls" in record else None,
         "findings": sum(len(f) if isinstance(f, list) else f for f in findings) if findings else None,
+        "plans": len(plans) or None,
         **{key: record.get(key, switches.get(key)) for key in SWITCHES},
         "run_id": record["run_id"],
     }
@@ -121,7 +123,8 @@ def main() -> None:
     valid = sum(row["ready_of_3"] == 3 for row in rows)
     print()
     print(f"runs={len(rows)} max_s={max(seconds):.1f} median_s={statistics.median(seconds):.1f}"
-          f" valid={valid}/{len(rows)} ({valid / len(rows):.0%}) under_60s={sum(s < 60 for s in seconds)}/{len(rows)}")
+          f" valid={valid}/{len(rows)} ({valid / len(rows):.0%}) under_60s={sum(s < 60 for s in seconds)}/{len(rows)}"
+          f" distinct_plans={sum(row['plans'] == 3 for row in rows)}/{len(rows)}")
 
 
 if __name__ == "__main__":

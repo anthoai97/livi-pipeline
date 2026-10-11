@@ -239,6 +239,23 @@ def test_a_bed_that_fits_one_wall_leaves_layouts_that_differ_in_a_storage_wall()
     assert all(blocking(tie.get("layout", layout), assets, room) == {} for tie in ties)
 
 
+def test_a_queen_bed_fits_the_compact_benchmark_bedroom():
+    # 3 x 3 m with the door beside the bed: a 2.1 m bed leaves 0.9 m at its foot, short of the 0.91 m main path.
+    # A compact room keeps the 0.60 m foot access, so the bed is placed instead of dropped.
+    request = BENCHMARK["bedroom_small"]
+    intent = coerce_intent_packet({"normalized_prompt": request["user_intent"], "requested_categories": ["bed"]},
+                                  room_type="bedroom")
+    room = build_room_context(room_type="bedroom", room_area=request["room_area"], room_vertices=request["room_vertices"],
+                              wall_height=request["wall_height"], room_doors=request["room_doors"],
+                              room_windows=request["room_windows"], intent=intent)
+    assets = [item("bed_1", "bed", 1.6, 2.1, 1.0), item("nightstand_1", "nightstand", 0.45, 0.4, 0.55),
+              item("nightstand_2", "nightstand", 0.45, 0.4, 0.55)]
+
+    layout, report = solve_layout(assets, room, intent)
+
+    assert report["unplaceable"] == [] and blocking(layout, assets, room) == {}
+
+
 def test_a_floor_planter_never_stands_on_the_dining_table():
     # A recorded run put a 1.66 m potted tree on this table; a floor planter, even one the tabletop fits, stays on the floor.
     intent, room, assets = dining_room(

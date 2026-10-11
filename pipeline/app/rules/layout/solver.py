@@ -142,6 +142,7 @@ from app.rules.layout_rules import (
 )
 from app.rules.pipeline_shared import is_table_lamp_asset, matches_category_keywords
 from app.rules.placement_mode import placement_mode_for_asset
+from app.rules.planner._util import room_scale
 from app.rules.planner.seed_guidance import build_seed_guidance, build_seed_layout_plan
 from app.rules.planner.taxonomy import SEATING_ROLE_KEYWORDS, normalize_category
 from app.rules.protected_paths import protected_path_polygons
@@ -675,7 +676,8 @@ def _bands(ctx: _Room, template: _Template, poses: dict[str, Pose]) -> list[Poly
         x, y, yaw = poses[uid]
         width, depth = ctx.dims(uid)
         if side == "foot":
-            side, access = "front", bed_foot_access_m([x, y], yaw, depth, ctx.doors)
+            compact = room_scale(ctx.polygon.area, "studio" if ctx.room["room_type"] == "studio" else "bedroom") == "compact"
+            side, access = "front", bed_foot_access_m([x, y], yaw, depth, ctx.doors, compact)
         forward, lateral = {"front": ((depth + access) / 2, 0.0), "back": (-(depth + access) / 2, 0.0),
                             "left": (0.0, (width + access) / 2), "right": (0.0, -(width + access) / 2)}[side]
         center = [x + forward * math.cos(yaw) - lateral * math.sin(yaw), y + forward * math.sin(yaw) + lateral * math.cos(yaw), 0.0]

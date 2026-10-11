@@ -24,9 +24,12 @@ BEDROOM_ISSUE_KEYS = (
 )
 
 
-def bed_foot_access_m(pos: list[float], yaw: float, depth: float, doors: list[Polygon]) -> float:
+def bed_foot_access_m(pos: list[float], yaw: float, depth: float, doors: list[Polygon], compact: bool) -> float:
     """Clear depth a bed's foot needs: BED_ACCESS_MIN_M, or the main-path width when the strip across
-    the room just past the foot reaches a door's clear zone, so the foot strip is the route to the door."""
+    the room just past the foot reaches a door's clear zone, so the foot strip is the route to the door.
+    A compact room keeps BED_ACCESS_MIN_M: a 3 m room cannot fit a 2 m bed and a main path past its foot."""
+    if compact:
+        return BED_ACCESS_MIN_M
     c, s = math.cos(yaw), math.sin(yaw)
     near, far = depth / 2, depth / 2 + PROTECTED_PATH_WIDTH_M
     strip = Polygon([(pos[0] + f * c - side * s, pos[1] + f * s + side * c)
@@ -51,8 +54,8 @@ def bedroom_layout_measurements(
     objects do not obstruct floor access. Only associated bedside furniture in
     the head zone is exempt from a side strip; other blockers remain measured.
     A bed at least BED_TWO_SIDED_MIN_WIDTH_M wide needs both sides clear unless
-    the room is compact; the foot needs the main-path width when it is the
-    route to a door (bed_foot_access_m). Storage clearance is a service band,
+    the room is compact; outside a compact room the foot needs the main-path
+    width when it is the route to a door (bed_foot_access_m). Storage clearance is a service band,
     not a model-specific drawer envelope. Desk chair pull-out is measured in
     every room, with or without a bed.
     """
@@ -211,7 +214,7 @@ def bedroom_layout_measurements(
         if wall["wall_gap"] > BED_HEADBOARD_MAX_GAP_M + 1e-6 or wall["delta_deg"] > 12.0:
             result["violations"]["bed_headboard_violations"].append({**orientation, "kind": "headboard_not_at_wall"})
         sides = {side: strip_clearance(bed, side, BED_ACCESS_MIN_M, exempt_bedside=True) for side in ("left", "right")}
-        sides["foot"] = strip_clearance(bed, "foot", bed_foot_access_m(bed["pos"], bed["yaw"], bed["depth"], doors))
+        sides["foot"] = strip_clearance(bed, "foot", bed_foot_access_m(bed["pos"], bed["yaw"], bed["depth"], doors, compact))
         two_sided = bed["width"] >= BED_TWO_SIDED_MIN_WIDTH_M - 1e-6 and not compact
         result["beds"].append({**orientation, "access": sides, "two_sided_required": two_sided,
                                "dual_side_access": sides["left"]["clear"] and sides["right"]["clear"]})

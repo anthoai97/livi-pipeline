@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, CircleNotch } from "@phosphor-icons/react";
+import { ArrowRight, Check, CircleNotch } from "@phosphor-icons/react";
 import { useReducedMotion } from "motion/react";
 import { useEffect } from "react";
 import { furnishingsOf, RoomScene } from "../components/RoomScene";
@@ -17,7 +17,6 @@ export function Choose() {
   const variant = variants[selected];
   const ready = variant.ready;
   const pending = status === "running" ? variants.filter((v) => !v.ready && !v.failed).length : 0;
-  const step = (delta: number) => select((selected + delta + variants.length) % variants.length);
 
   // Options live only in memory, so a reload or a direct visit goes back to the brief.
   useEffect(() => {
@@ -47,29 +46,25 @@ export function Choose() {
   if (!hasOptions) return null;
 
   return (
-    <div className="mx-auto flex min-h-[100dvh] max-w-[1400px] flex-col px-4 pb-4 md:px-8">
-      <header className="flex h-16 items-center justify-between">
+    <div className="flex min-h-[100dvh] flex-col px-4 pb-4 md:px-6">
+      <header className="flex h-14 shrink-0 items-center justify-between">
         <Wordmark />
         <Button variant="quiet" onClick={startOver}>
           Start over
         </Button>
       </header>
 
-      <main className="pb-6">
-        <div className="mb-5 md:mb-7">
-          <h1 className="text-[28px] font-semibold tracking-tight text-text md:text-[36px]">Choose your design</h1>
-          <p className="mt-1 text-[14px] text-muted">Compare the rooms, then save your choice.</p>
-        </div>
-
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-8">
+      <main aria-label="Choose your design">
+        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
           <section aria-label="Design preview" className="min-w-0">
-            <div className="relative h-[clamp(280px,44svh,560px)] overflow-hidden rounded-[20px] bg-canvas lg:h-[clamp(400px,62svh,680px)]">
+            <div className="relative h-[max(320px,60svh)] overflow-hidden rounded-[20px] bg-canvas lg:h-[max(400px,calc(100dvh-160px))]">
               {ready ? (
                 <RoomScene
                   key={`${runId}:${ready.variant_id}`}
                   onDisplayed={(timing) => recordTiming(runId, ready.variant_id, "chooser", timing)}
                   geometry={ready.render_manifest}
                   furnishings={furnishingsOf(ready.render_manifest)}
+                  zoom={0.85}
                   interactive
                 />
               ) : (
@@ -77,20 +72,7 @@ export function Choose() {
               )}
             </div>
 
-            <div className="flex items-center justify-between py-3">
-              <p className="text-[12px] text-muted sm:text-[13px]">{ready ? "Drag to rotate · Scroll to zoom" : designName(selected)}</p>
-              <div className="flex items-center gap-2">
-                <Button variant="quiet" aria-label="Previous design" onClick={() => step(-1)} className="size-9 p-0">
-                  <ArrowLeft size={16} />
-                </Button>
-                <span className="text-[12px] text-muted tabular-nums">{selected + 1} / {variants.length}</span>
-                <Button variant="quiet" aria-label="Next design" onClick={() => step(1)} className="size-9 p-0">
-                  <ArrowRight size={16} />
-                </Button>
-              </div>
-            </div>
-
-            <div role="group" aria-label="Designs" className="grid grid-cols-3 gap-2">
+            <div role="group" aria-label="Designs" className="mt-3 grid grid-cols-3 gap-2">
               {variants.map((option, index) => (
                 <button
                   key={index}
@@ -141,7 +123,6 @@ export function Choose() {
             <Button className="mt-6 w-full" disabled={!ready} onClick={continueWith}>
               Continue with this design <ArrowRight size={17} />
             </Button>
-            {ready && <p className="mt-2 text-center text-[12px] text-muted">Saves in this browser and opens in Studio.</p>}
             {pending > 0 && (
               <p role="status" className="mt-4 flex items-center gap-2 text-[13px] text-muted">
                 <CircleNotch size={14} className={`shrink-0 ${reduce ? "" : "animate-spin"}`} />
@@ -150,11 +131,10 @@ export function Choose() {
             )}
 
             {ready && (
-              <details key={selected} className="group mt-6 border-t border-line pt-4">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded text-[14px] font-medium text-text focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
-                  View products ({grouped(ready.selected_assets).length})
-                  <ArrowRight size={15} className="transition-transform group-open:rotate-90 motion-reduce:transition-none" />
-                </summary>
+              <section aria-label="Products" className="mt-6 border-t border-line pt-4">
+                <h3 className="text-[14px] font-medium text-text">
+                  Products ({grouped(ready.selected_assets).length})
+                </h3>
                 <ul className="mt-4 grid max-h-[360px] gap-3 overflow-y-auto pr-1">
                   {grouped(ready.selected_assets).map((asset) => (
                     <li key={asset.instance_key} className="flex items-center gap-3">
@@ -164,12 +144,12 @@ export function Choose() {
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[13px] font-medium text-text" title={asset.name}>{asset.name}</span>
                         <span className="block truncate text-[12px] text-muted first-letter:uppercase">{humanize(asset.category)}{asset.count > 1 ? ` × ${asset.count}` : ""}</span>
+                        <span className="mt-1 block text-[13px] font-medium text-text tabular-nums">{asset.price != null && !asset.is_decor_item ? money(asset.price) : "Decor"}</span>
                       </span>
-                      <span className="shrink-0 text-[13px] text-muted tabular-nums">{asset.price != null && !asset.is_decor_item ? money(asset.price) : "Decor"}</span>
                     </li>
                   ))}
                 </ul>
-              </details>
+              </section>
             )}
           </aside>
         </div>

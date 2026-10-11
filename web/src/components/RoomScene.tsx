@@ -565,9 +565,9 @@ function CameraRig({
   const up = useMemo(() => new THREE.Vector3(0, 1, 0), []);
   useEffect(() => {
     if (!interactive) return;
-    camera.position.copy(cameraPosition([sx, sy], distance));
+    camera.position.copy(base);
     camera.lookAt(LOOK_AT);
-  }, [camera, sx, sy, distance, interactive]);
+  }, [camera, base, interactive]);
   useFrame(({ clock }) => {
     if (interactive) return;
     const still = prefersReducedMotion();

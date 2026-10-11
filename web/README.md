@@ -53,7 +53,9 @@ invalid events, and EOF before `complete` or `error` show an error with retry.
 A failed variant shows the backend message. Ready designs remain available when
 another design fails or the run stops. An all-failed run offers retry.
 
-Progress rows read `node_complete.data`:
+Progress rows read `node_complete.data`. The service sends the legacy node names:
+`extract_room` is the room stage, `rag_scope_assets` retrieve, `select_asset_intent`
+rank and select, `layout_initial` place, and `render_scene` finish.
 
 | Node | `data` |
 | --- | --- |
@@ -62,8 +64,7 @@ Progress rows read `node_complete.data`:
 | `rag_scope_assets` | `slots`, `candidates`, `gaps`, `preview` (top product per slot) |
 | `select_asset_intent`, shared | `ranked_slots`, `shared_products` |
 | `select_asset_intent`, per design | `turn`, `valid`, `errors`, `fit_step`, `total_cost`, `items` (distinct products, capped at the slot count) |
-| `layout_initial` | `placed`, `findings`, `blocking`, `swaps`, `drops` |
-| `layout_fix` | `placed`, `findings`, `blocking`, `improved` |
+| `layout_initial` | `placed`, `findings`, `blocking` |
 | `render_scene` | `valid`, `errors` |
 
 ## Previews and browser timing

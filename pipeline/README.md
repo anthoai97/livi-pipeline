@@ -86,7 +86,9 @@ summarize their run records from `pipeline/`:
 python scripts/benchmark.py --runs 3 --url http://127.0.0.1:8001 --url http://127.0.0.1:8002
 ```
 
-Repeat `--url` to spread runs over several services, one request at a time on each;
+`scripts/benchmark_requests.json` holds 13 cases: the six base briefs, a tight
+dining room, three small rooms and three large rooms. `--runs 3` sends 39 requests;
+`--only <label>` sends one case. Repeat `--url` to spread runs over several services, one request at a time on each;
 start one service per port. `--parallel` sends more requests at once to each service,
 but runs on one service share its process and take longer, so compare run times only
 between benchmarks run the same way.
@@ -96,7 +98,7 @@ Set `JEV_USES` or `PRODUCT_REUSE_RATE` on the service to benchmark another optio
 To score the output, review run records with an LLM reviewer from `pipeline/`:
 
 ```sh
-python scripts/review.py --latest 12        # or --runs <run_id> ...
+python scripts/review.py --latest 39        # or --runs <run_id> ...
 ```
 
 For each ready variant, the reviewer gets the prompt, budget, room, product

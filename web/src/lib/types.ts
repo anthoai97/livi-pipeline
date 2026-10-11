@@ -52,7 +52,7 @@ const nodeData = {
     turn: count.optional(), valid: z.boolean().optional(), errors: count.optional(),
     fit_step: z.string().nullable().optional(), total_cost: z.number().optional(), items: z.array(product).optional(),
   }),
-  layout_initial: z.object({ placed: count, findings: count, blocking: count, swaps: count, drops: count }),
+  layout_initial: z.object({ placed: count, findings: count, blocking: count }),
   render_scene: z.object({ valid: z.boolean(), errors: count }),
 };
 export type NodeData = { [N in NodeName]: z.infer<(typeof nodeData)[N]> };

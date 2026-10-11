@@ -34,8 +34,8 @@ flowchart TD
 | 2 Room | Code | Walls, doors, windows, protected walkways, the furniture footprint range and count caps for the room size. |
 | 3 Retrieve | Embeddings + Postgres | One search per slot: requested items, required room items, optional roles, decor. Price at most budget + 10%. When a request covers a required role, its other kinds still get a slot (side tables beside a requested coffee table). |
 | 4a Rank | Jev | Orders each slot's candidates for each design's style direction, then deals them so the designs differ. |
-| 4b Select | Gemini, code, Jev | Picks the products, then the checks below. Retries with the errors, up to 4 turns. |
-| 4c Place | Code | Solver places groups (bed, sofa, TV, dining, desk, singles) against walls, keeping doors and walkways clear. Swaps or drops a piece that cannot fit. |
+| 4b Select | Gemini, code, Jev | Picks the products, then the checks below. The solver checks that everything fits. Retries with the errors, up to 4 turns. |
+| 4c Place | Code | Solver places groups (bed, sofa, TV, dining, desk, singles) against walls, keeping doors and walkways clear. |
 | 4d Finish | Gemini, code | Picks the best tied layout from top-down images and measured gaps, reviews it against the design rules, and moves pieces. Code keeps each move that does not make the checks worse, then removes any item that still fails. |
 
 ## Selection rules
@@ -45,14 +45,15 @@ flowchart TD
   pieces with leftover budget. Minimal briefs stay minimal.
 - **TV (code):** adds a TV when the brief asks for one or a stand is chosen,
   swaps a TV too wide for its stand, otherwise hangs it on the wall at eye level.
-- **Checks:** budget, counts, required items, footprint, rug and tabletop fit,
-  reuse limit between designs (code); style match to the anchor and brief
-  attributes (Jev).
+- **Checks:** budget, counts, required items, footprint floor, tabletop
+  supports, reuse limit between designs (code); style match to the anchor and
+  brief attributes (Jev); then the solver places the selection once, and any
+  item it leaves out fails the turn (`LAYOUT FIT`).
 - **Budget repair (code, no model call):** over 110%, swap for cheaper; under
   80%, swap for pricier toward 90% and never over 100%. Same category, same
   slot, pieces swapped, never added.
-- **Last turn:** products that still fail are removed; the design is still
-  delivered.
+- **Last turn:** products that still fail are removed; items the solver cannot
+  place stay for finish to remove. The design is still delivered.
 
 ## What never fails a design
 

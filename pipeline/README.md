@@ -47,7 +47,7 @@ Every `node_complete` event includes `data` with facts from that stage:
 | retrieve | Slot and candidate counts, gap labels, and `preview` with the top product per nonempty slot |
 | rank | `ranked_slots`, `shared_products` (distinct products held by multiple variants, including small shared slots) |
 | select | `turn`, `valid`, error count, `fit_step`, `total_cost`, and unique selected `items`, capped at the slot count |
-| place | `placed`, finding and blocking counts, kept `swaps` and `drops`, `layout_options` (tied layouts offered to the review) |
+| place | `placed`, finding and blocking counts, `layout_options` (tied layouts offered to the review) |
 | finish | `valid` and `errors` (blocking findings left), `dropped` item count, `layout_pick` (A to D, or null when the review failed), `review` (text, or null) |
 
 After finish builds the delivery, `app/preview.py` draws the layout in a worker thread.

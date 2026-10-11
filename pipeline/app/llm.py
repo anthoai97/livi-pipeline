@@ -1,12 +1,15 @@
-"""Bounded Gemini structured-output calls with per-stage token and cost records."""
+"""Bounded structured-output calls (Gemini, or models behind the AI proxy) with per-stage token and cost records."""
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import time
+from collections.abc import Coroutine
 from contextvars import ContextVar
 from types import SimpleNamespace
+from typing import Any
 
 import httpx
 from gemini_usage import estimate_cost, usage_counts
@@ -46,6 +49,12 @@ def gemini_client(api_key: str, transport: httpx.AsyncBaseTransport | None = Non
     )
 
 
+def proxy_client(transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
+    """AI proxy client: the OpenAI-compatible API at AI_PROXY_BASE_URL with AI_PROXY_API_KEY, 60 s per attempt."""
+    return httpx.AsyncClient(base_url=os.environ["AI_PROXY_BASE_URL"], timeout=MODEL_CALL_TIMEOUT_S, transport=transport,
+                             headers={"Authorization": f"Bearer {os.environ['AI_PROXY_API_KEY']}"})
+
+
 def _counts(response: types.GenerateContentResponse | None) -> dict[str, int]:
     """Adapt generate_content usage_metadata to gemini_usage.usage_counts."""
     usage = response.usage_metadata if response is not None else None
@@ -81,10 +90,13 @@ def stage_models(value: str) -> dict[str, tuple[str, types.ThinkingLevel]]:
 
 
 class GeminiModel:
-    """ModelClient backed by google-genai. Tests pass a fake `client`.
+    """ModelClient backed by google-genai, and by the AI proxy (`proxy_client`) for
+    any model whose name does not start with "gemini", such as claude-haiku-5-5.
+    Tests pass a fake `client`.
 
     Stages listed in LLM_STAGE_MODELS use their own model and thinking level; the
-    rest use LLM_DESIGN_MODEL at low thinking.
+    rest use LLM_DESIGN_MODEL at low thinking. Proxy models get the level as
+    `reasoning_effort` (minimal is sent as low).
 
     A call that has not answered after MODEL_HEDGE_AFTER_S (0 turns this off) gets
     a duplicate; the first answer wins and the other call is cancelled. Both calls
@@ -98,21 +110,29 @@ class GeminiModel:
         self.stages = stage_models(stages if stages is not None else os.environ.get("LLM_STAGE_MODELS", ""))
         self.hedge_after_s = hedge_after_s if hedge_after_s is not None else float(
             os.environ.get("MODEL_HEDGE_AFTER_S", MODEL_HEDGE_AFTER_S))
+        self.proxy: httpx.AsyncClient | None = None  # made on the first proxy call
 
     async def generate(
         self, ctx: StageContext, schema: type[M], contents: str | list[str | bytes], *, system: str | None = None
     ) -> M:
         model, level = self.stages.get(ctx.stage, (self.model, types.ThinkingLevel.LOW))
-        if not isinstance(contents, str):  # bytes are PNG images, sent as inline image parts
-            contents = [types.Part.from_bytes(data=part, mime_type="image/png") if isinstance(part, bytes) else part
-                        for part in contents]
-        config = types.GenerateContentConfig(
-            system_instruction=system,
-            response_mime_type="application/json",
-            response_json_schema=schema.model_json_schema(),
-            thinking_config=types.ThinkingConfig(thinking_level=level),
-        )
-        tasks = [asyncio.create_task(self._call(ctx, schema, contents, model, config))]
+        if not model.startswith("gemini"):
+            def call() -> Coroutine[Any, Any, M]:
+                return self._proxy_call(ctx, schema, contents, model, system, level)
+        else:
+            if not isinstance(contents, str):  # bytes are PNG images, sent as inline image parts
+                contents = [types.Part.from_bytes(data=part, mime_type="image/png") if isinstance(part, bytes) else part
+                            for part in contents]
+            config = types.GenerateContentConfig(
+                system_instruction=system,
+                response_mime_type="application/json",
+                response_json_schema=schema.model_json_schema(),
+                thinking_config=types.ThinkingConfig(thinking_level=level),
+            )
+
+            def call() -> Coroutine[Any, Any, M]:
+                return self._call(ctx, schema, contents, model, config)
+        tasks = [asyncio.create_task(call())]
         try:
             if self.hedge_after_s <= 0:
                 return await tasks[0]
@@ -120,7 +140,7 @@ class GeminiModel:
             if done:
                 return tasks[0].result()
             ctx.run.note(f"{ctx.stage} model call slower than {self.hedge_after_s:g} s; sent a duplicate", ctx.variant_index)
-            tasks.append(asyncio.create_task(self._call(ctx, schema, contents, model, config)))
+            tasks.append(asyncio.create_task(call()))
             pending = set(tasks)
             while True:
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
@@ -169,3 +189,52 @@ class GeminiModel:
                 attempts=max(counter[0], 1),
                 error=error,
             )
+
+    async def _proxy_call(self, ctx: StageContext, schema: type[M], contents: str | list[str | bytes], model: str,
+                          system: str | None, level: types.ThinkingLevel) -> M:
+        """One AI proxy chat completion, retried like Gemini calls and recorded like `_call`. Costs are not known."""
+        self.proxy = self.proxy or proxy_client()
+        parts = [contents] if isinstance(contents, str) else contents
+        content = [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,{base64.b64encode(part).decode()}"}}
+                   if isinstance(part, bytes) else {"type": "text", "text": part} for part in parts]
+        body = {
+            "model": model,
+            "messages": [*([{"role": "system", "content": system}] if system else []), {"role": "user", "content": content}],
+            "response_format": {"type": "json_schema", "json_schema": {"name": schema.__name__, "schema": schema.model_json_schema()}},
+            "reasoning_effort": "low" if level == types.ThinkingLevel.MINIMAL else level.name.lower(),
+        }
+        attempts, started, data, error = 0, time.monotonic(), None, "cancelled"
+        try:
+            while True:
+                attempts += 1
+                try:
+                    response = await self.proxy.post("/chat/completions", json=body)
+                except httpx.TransportError:
+                    if attempts >= MODEL_CALL_ATTEMPTS:
+                        raise
+                    continue
+                if response.status_code in RETRY_STATUS_CODES and attempts < MODEL_CALL_ATTEMPTS:
+                    continue
+                response.raise_for_status()
+                data = response.json()
+                break
+            result = schema.model_validate_json(data["choices"][0]["message"]["content"] or "")
+            error = None
+            return result
+        except ValidationError as exc:
+            error = f"output does not match {schema.__name__} ({exc.error_count()} errors)"
+            raise ModelCallError(f"{ctx.stage} model call: {error}") from exc
+        except Exception as exc:
+            error = describe(exc)
+            raise ModelCallError(f"{ctx.stage} model call failed after {attempts} attempt(s): {error}") from exc
+        finally:
+            usage = (data or {}).get("usage") or {}
+            counts = usage_counts(SimpleNamespace(usage={
+                "total_input_tokens": usage.get("prompt_tokens"),
+                "total_cached_tokens": (usage.get("prompt_tokens_details") or {}).get("cached_tokens"),
+                "total_output_tokens": usage.get("completion_tokens"),
+                "total_thought_tokens": 0,
+                "total_tokens": usage.get("total_tokens"),
+            }))
+            ctx.run.record_model_call(ctx, model=(data or {}).get("model") or model, counts=counts, cost_usd=None,
+                                      elapsed=round(time.monotonic() - started, 3), attempts=attempts, error=error)

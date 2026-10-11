@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel
 
 from app.contracts import PipelineRequest
-from app.llm import GeminiModel, gemini_client, stage_models
+from app.llm import GeminiModel, gemini_client, proxy_client, stage_models
 from app.run import ModelCallError, RunContext, StageContext
 
 REQUEST = PipelineRequest(
@@ -149,3 +149,33 @@ def test_fast_call_gets_no_duplicate():
 
     assert plan.note == "first"
     assert len(run.model_calls) == 1 and not run.notes
+
+
+def test_a_non_gemini_stage_model_calls_the_ai_proxy_with_images_and_the_schema(monkeypatch):
+    monkeypatch.setenv("AI_PROXY_BASE_URL", "http://proxy.test/v1")
+    monkeypatch.setenv("AI_PROXY_API_KEY", "proxy-key")
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "http://proxy.test/v1/chat/completions" and request.headers["authorization"] == "Bearer proxy-key"
+        bodies.append(json.loads(request.content))
+        if len(bodies) == 1:
+            return error(503)
+        return httpx.Response(200, json={"model": "claude-haiku-5-5", "choices": [{"message": {"content": '{"note": "ok"}'}}],
+                                         "usage": {"prompt_tokens": 120, "completion_tokens": 8, "total_tokens": 128}})
+
+    model = GeminiModel(gemini_client("test-key"), stages="select=claude-haiku-5-5", hedge_after_s=0)
+    model.proxy = proxy_client(httpx.MockTransport(handler))
+    run = RunContext("test", REQUEST, model, 3)
+
+    plan = asyncio.run(StageContext(run, "select", 1).generate(Plan, ["pick", b"png"], system="be brief"))
+
+    assert plan.note == "ok" and len(bodies) == 2  # the 503 is retried
+    body = bodies[-1]
+    assert body["model"] == "claude-haiku-5-5" and body["response_format"]["json_schema"]["name"] == "Plan"
+    assert body["reasoning_effort"] == "low"  # the stage's default level
+    assert body["messages"][0] == {"role": "system", "content": "be brief"}
+    assert body["messages"][1]["content"][1] == {"type": "image_url", "image_url": {"url": "data:image/png;base64,cG5n"}}
+    [call] = run.model_calls
+    assert (call["model"], call["attempts"], call["error"], call["cost_usd"]) == ("claude-haiku-5-5", 2, None, None)
+    assert call["input_tokens"] == 120 and call["output_tokens"] == 8

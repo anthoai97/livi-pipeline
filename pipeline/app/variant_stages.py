@@ -84,7 +84,13 @@ from app.rules.selection.constants import (
 )
 from app.rules.selection.fit import fit_step_guidance
 from app.rules.selection.preflight import _tv_support_in_selection
-from app.rules.selection.validation import is_decor_plant, requires_spacious_perimeter_storage, room_requirements, validate_selection
+from app.rules.selection.validation import (
+    is_decor_plant,
+    requires_spacious_perimeter_storage,
+    room_requirements,
+    size_passes,
+    validate_selection,
+)
 from app.run import StageContext, describe
 from app.shared_stages import DECOR_CATEGORIES, KEEP, LIMIT_KEYS, RANKED_KEEP
 
@@ -394,7 +400,7 @@ def _selection_intent(intent: Record, slots: list[Record]) -> Record:
 
 def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None, reuse_rate: float) -> str:
     """Legacy _build_selection_prompt for a fresh design, plus the reuse limit, slot gaps,
-    and the previous turn's feedback."""
+    and the previous turn's uids and errors, and the products the Jev check rejected for this design."""
     shared = state["shared"]
     request, room = shared["request"], shared["room"]
     room_width, room_depth = request.room_area
@@ -577,6 +583,14 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
             "incompatible support/desk/dining pieces."
         )
 
+    gaps = _gap_slots(shared["slots"])
+    catalog_gaps = (
+        "\n\nCATALOG GAPS (no eligible product; these items are not required):\n"
+        + "\n".join(f'- {slot["label"]} ({slot["category"] or slot["id"]})' for slot in gaps)
+        + "\nName each one in gaps."
+    ) if gaps else ""
+    # Shared by the three designs first, then the design's catalog, then what changes per design and turn,
+    # so the model provider's prompt cache covers the longest prefix.
     prompt = f"""Select furniture assets matching the user's style and design vision.
 
 ROOM: {room_width:.2f}m x {room_depth:.2f}m | Furniture area: {furniture_area:.2f} sqm
@@ -587,11 +601,12 @@ INTENT: {intent_prompt_text(intent, request.user_intent)}
 {format_feasibility_digest_for_prompt(digest)}
 
 {selection_guidance}
-{fit_decision_guidance}{variant_directive}
 
 CATALOG (grouped by search slot; each slot lists only products that passed its filters):
-{_catalog_block(shared["slots"], state["pool"])}
+{_catalog_block(shared["slots"], state["pool"])}{catalog_gaps}
 
+{variant_directive}
+{fit_decision_guidance}
 TV SIZE / VIEWING RANGE FACTS (metres; choose for the viewers):
 {json.dumps(media_selection_facts) if media_selection_facts else "Not applicable"}
 {f"For viewing across opposing walls, the shorter room span minus a 0.60m combined eye/screen inset gives an approximate {opposed_wall_reference:.2f}m planning reference. Catalog screens whose preferred range reaches it: {wall_viewing_candidates}. Prefer these with a fitting console for a wall-backed arrangement; smaller screens need an intentionally closer arrangement. This is guidance, not a pose or feasibility guarantee." if media_selection_facts else ""}
@@ -635,20 +650,15 @@ OUTPUT JSON:
   "selected_assets": [{{"uid": "..."}}],
   "gaps": "List each selected item where brand/color/style/shape does NOT match user intent, with reason why (e.g. 'rug_15: another brand because the preferred brand has no fitting rug' or 'rug_15: grey instead of green - no green rugs available'). Use an empty string only if ALL selected items match the intent"
 }}"""
-    gaps = _gap_slots(shared["slots"])
-    if gaps:
-        prompt += (
-            "\n\nCATALOG GAPS (no eligible product; these items are not required):\n"
-            + "\n".join(f'- {slot["label"]} ({slot["category"] or slot["id"]})' for slot in gaps)
-            + "\nName each one in gaps."
-        )
     previous = state.get("selection_validation")
     if previous and not previous.get("valid"):
         prompt += (
             f"\n\nPREVIOUS SELECTION (turn {state.get('selection_turns', 0)}) FAILED VALIDATION:\n"
             f"{json.dumps([asset['uid'] for asset in state['selection']['selected_assets']])}\n"
-            f"VALIDATION RESULT:\n{json.dumps(previous, default=str)}\n"
+            "ERRORS:\n" + "".join(f"- {error}\n" for error in previous["errors"])
         )
+        if rejected := state.get("jev_rejected"):
+            prompt += f"REJECTED BY THE STYLE AND ATTRIBUTE CHECK (do not pick again): {', '.join(rejected)}\n"
         if any(error.startswith("OVER BUDGET") for error in previous["errors"]):
             prompt += (
                 "The selection costs more than the budget allowance. Keep every requested item and its count; replace the "
@@ -745,24 +755,33 @@ def _code_audit() -> Record:
         "exact_count_violations": [],
         "coordination_violations": [],
         "style_mismatches": {},  # uid -> its coordination violation
+        "style_kept": [],  # uids whose style mismatch this design accepts: a warning, not a violation
         "attribute_constraint_checks": [],
+        "anchor": None,  # the uid Jev compared the style of the others with
     }
 
 
-def _audit_without(audit: Record, dropped: set[str]) -> Record:
-    """The constraint audit of the selection without the `dropped` products: their findings go with them."""
-    mismatches = {uid: text for uid, text in audit["style_mismatches"].items() if uid not in dropped}
+def _audit_without(audit: Record, dropped: set[str], kept: set[str] | None = None) -> Record:
+    """The constraint audit of the selection without the `dropped` products: their findings go with them.
+
+    The style mismatch of a `kept` product moves from `style_mismatches` to `style_kept`, a warning.
+    """
+    kept = {*(kept or ()), *audit["style_kept"]}
+    mismatches = {uid: text for uid, text in audit["style_mismatches"].items() if uid not in dropped and uid not in kept}
     checks = [
         {**check, **{key: [uid for uid in check[key] if uid not in dropped]
-                     for key in ("target_uids", "satisfied_uids", "unsatisfied_uids")}}
+                     for key in ("target_uids", "satisfied_uids", "unsatisfied_uids", "missed_uids")}}
         for check in audit["attribute_constraint_checks"]
     ]
     return {**audit, "style_mismatches": mismatches, "coordination_violations": list(mismatches.values()),
+            "style_kept": sorted(uid for uid in kept - dropped if uid in {*audit["style_mismatches"], *audit["style_kept"]}),
             "attribute_constraint_checks": checks,
-            "passed": not mismatches and not any(check["unsatisfied_uids"] for check in checks)}
+            "passed": not mismatches and not any(check["unsatisfied_uids"] or (check["brief_wide"] and not check["satisfied_uids"])
+                                                 for check in checks)}
 
 
-async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Record, products: dict[str, Record]) -> Record:
+async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Record, products: dict[str, Record],
+                            kept: set[str]) -> Record:
     """The constraint audit validate_selection reads, built by code and one Jev request.
 
     products: catalog_asset records of the selected products by uid. Counts, sizes,
@@ -771,9 +790,17 @@ async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Reco
     product, except TVs and decor plants, matches the anchor's style and palette
     (below STYLE_VIOLATION_BELOW is a coordination violation), and whether each
     product a `_jev_attribute_constraints` entry targets meets it (below
-    ATTRIBUTE_UNSATISFIED_BELOW is unsatisfied). A constraint without a category
-    targets every product except TVs and decor plants. Notes a rejection. With
-    check off or failed, the audit holds only code results.
+    ATTRIBUTE_UNSATISFIED_BELOW is unsatisfied). A constraint with a category
+    targets the products of that category, and each one that misses it is
+    unsatisfied. A constraint without a category is brief-wide: it targets every
+    product except TVs and decor plants and is met by the room when at least
+    one of them meets it. The products that miss it go to `missed_uids`, for
+    information; when none meets it, the check fails for the room
+    (`brief_wide` with no `satisfied_uids`). Notes a rejection.
+    `style_mismatches` holds each rejected product by uid, except the `kept`
+    ones, whose mismatch this design accepts: they go to `style_kept`, a
+    warning. `anchor` is the uid the style was compared with. With check off or
+    failed, the audit holds only code results.
     """
     audit = _code_audit()
     if "check" not in ctx.run.jev_uses:
@@ -787,13 +814,14 @@ async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Reco
     styled = [uid for uid in furniture if anchor and uid != anchor]
     constraints = [
         (str(constraint.get("source_label") or constraint.get("label") or constraint.get("value") or "").strip(),
+         not constraint.get("category"),
          [uid for uid in products
           if _price_constraint_category_matches(constraint["category"], categories[uid])] if constraint.get("category")
          else furniture)
         for constraint in _jev_attribute_constraints(intent)
     ]
     questions = {f"style_{n}": _STYLE_QUESTION.format(_product_text(products[uid])) for n, uid in enumerate(styled)}
-    for i, (label, targets) in enumerate(constraints):
+    for i, (label, _, targets) in enumerate(constraints):
         questions |= {f"attribute_{i}_{n}": _ATTRIBUTE_QUESTION.format(label, _product_text(products[uid]))
                       for n, uid in enumerate(targets)}
     if not questions:
@@ -803,27 +831,31 @@ async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Reco
         return audit
     if anchor:
         audit["checked_constraints"].append(f"style and palette match to the anchor {anchor} (Jev)")
-    mismatched = {uid: answers[f"style_{n}"] for n, uid in enumerate(styled) if answers[f"style_{n}"] < STYLE_VIOLATION_BELOW}
+        audit["anchor"] = anchor
     audit["style_mismatches"] = {
         uid: f"{uid} does not match the style and palette of the anchor {anchor} (Jev yes {yes:.2f}); "
         "choose a product that coordinates with it"
-        for uid, yes in mismatched.items()
+        for n, uid in enumerate(styled) if (yes := answers[f"style_{n}"]) < STYLE_VIOLATION_BELOW
     }
-    audit["coordination_violations"] = list(audit["style_mismatches"].values())
-    for i, (label, targets) in enumerate(constraints):
+    for i, (label, brief_wide, targets) in enumerate(constraints):
         failing = [uid for n, uid in enumerate(targets) if answers[f"attribute_{i}_{n}"] < ATTRIBUTE_UNSATISFIED_BELOW]
         audit["checked_constraints"].append(f'attribute "{label}" (Jev)')
         audit["attribute_constraint_checks"].append({
             "source_label": label,
+            "brief_wide": brief_wide,
             "target_uids": targets,
             "satisfied_uids": [uid for uid in targets if uid not in failing],
-            "unsatisfied_uids": failing,
+            "unsatisfied_uids": [] if brief_wide else failing,
+            "missed_uids": failing if brief_wide else [],
         })
-    unsatisfied = [f'"{check["source_label"]}" by {check["unsatisfied_uids"]}'
-                   for check in audit["attribute_constraint_checks"] if check["unsatisfied_uids"]]
-    audit["passed"] = not audit["coordination_violations"] and not unsatisfied
+    audit = _audit_without(audit, set(), kept)
+    unsatisfied = [f'"{check["source_label"]}" by {check["unsatisfied_uids"]}' if check["unsatisfied_uids"]
+                   else f'"{check["source_label"]}" by no selected piece'
+                   for check in audit["attribute_constraint_checks"]
+                   if check["unsatisfied_uids"] or (check["brief_wide"] and not check["satisfied_uids"])]
     if not audit["passed"]:
-        ctx.run.note(f"jev check rejected: style {list(mismatched)}; attributes {'; '.join(unsatisfied) or 'none'}", ctx.variant_index)
+        ctx.run.note(f"jev check rejected: style {list(audit['style_mismatches'])}; attributes {'; '.join(unsatisfied) or 'none'}",
+                     ctx.variant_index)
     return audit
 
 
@@ -831,11 +863,17 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     """Run one selection turn: one model call, the Jev check, then the ported selection validator.
 
     Reads: `shared`, `pool` (this variant's candidates), `direction`,
-    `selection_turns` (turns already made), and `selection` and
-    `selection_validation` from the previous turn as feedback.
+    `selection_turns` (turns already made), `selection`,
+    `selection_validation`, and `jev_rejected` from the previous turns as
+    feedback, and `style_kept`.
     Returns: `selection` (the model's `selected_assets`, one entry per unit, and
     `gaps`), `selection_validation` (the legacy validator report: `valid: bool`,
-    `errors: list[str]`, ...), `instances`, and `fit_step`. `fit_satisfaction`
+    `errors: list[str]`, ...), `instances`, `fit_step`, `style_kept` (products
+    whose style mismatch this design accepts because no candidate in their slot
+    matches the anchor; each is a warning, not an error, in this and later
+    turns), and `jev_rejected` (the products Jev rejected for style or an
+    category-scoped attribute in this design's turns, except the kept ones; a retry prompt
+    names them so the model does not pick them again). `fit_satisfaction`
     comes from slot membership and the constraint audit from
     `_constraint_audit`. Before validation, a selection with no TV gets one
     when the brief asks for a TV or a media support is selected, and a TV
@@ -843,15 +881,17 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     The selection also fails
     when more than `ctx.run.product_reuse_rate` of its distinct products are
     marked `shared`. A selection that passes is solved once with the code
-    solver, and fails when the solver leaves items out (`_solver_fit`). A
-    selection over the budget allowance, or a passing one under
-    BUDGET_FLOOR_PCT of the budget, is repaired in code (`_budget_repair`) and
-    checked the same way; the repaired selection replaces it only when it
-    passes. On the last turn, a selection that still fails validation loses the
+    solver, and fails when the solver leaves items out (`_solver_fit`). Then
+    up to two rounds swap products in code (`_swap_repair`: style and size
+    failures, then the budget range) and check the result the same way; a
+    round is kept when it passes or leaves fewer errors, and the next round
+    starts from it. A style failure the repair keeps is checked again without
+    another Jev call. Only a selection that still fails goes back to the model.
+    On the last turn, a selection that still fails validation loses the
     products that fail it (`_drop_failing`), and the graph places it even when
-    errors remain. Notes the fit step applied, an added or replaced TV, a
-    budget repair or fill, the dropped products, and a failed turn's errors
-    with `ctx.run.note(...)`.
+    errors remain. Notes the fit step applied, an added or replaced TV, each
+    kept or rejected swap repair, each kept style mismatch, the dropped products, and a failed turn's
+    errors with `ctx.run.note(...)`.
     """
     from app.graph import MAX_SELECTION_TURNS  # the graph owns the turn bound; a module import would be circular
 
@@ -869,28 +909,30 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
         old, tv = change
         selected = [asset for asset in selected if asset["uid"].strip() != old] + [{"uid": tv, "functional_group": None}]
         ctx.run.note(f"selection turn {turn}: {f'replaced TV {old} with' if old else 'added TV'} {tv}", ctx.variant_index)
-    validation, audit = await _checked(state, ctx, selected, intent, fit_step, reuse_rate)
-    for _ in range(2):  # a repair that lands under the floor gets one fill
-        over_budget = not validation["valid"] and any(error.startswith("OVER BUDGET") for error in validation["errors"])
-        under_budget = validation["valid"] and validation["metrics"]["total_cost"] < shared["request"].budget * BUDGET_FLOOR_PCT
-        name = "budget repair" if over_budget else "budget fill"
-        if not (over_budget or under_budget):
-            break
-        if not (repaired := _budget_repair(state, selected, reuse_rate)):
-            if under_budget:
-                ctx.run.note(f"budget fill: no pricier product fits; ${validation['metrics']['total_cost']:.2f} stays",
-                             ctx.variant_index)
+    kept = set(state.get("style_kept") or [])
+    rejected = set(state.get("jev_rejected") or [])
+
+    def reject(audit: Record) -> None:
+        rejected.update(audit["style_mismatches"], *(check["unsatisfied_uids"] for check in audit["attribute_constraint_checks"]))
+
+    validation, audit = await _checked(state, ctx, selected, intent, fit_step, reuse_rate, kept)
+    reject(audit)
+    for _ in range(2):  # a kept round that still fails, or lands under the budget floor, gets a second
+        accepted = len(kept)
+        repaired = await _swap_repair(state, ctx, selected, validation, audit, reuse_rate, kept)
+        if len(kept) > accepted:  # the newly kept style mismatches are warnings now; no Jev call is needed
+            validation, audit = await _checked(state, ctx, selected, intent, fit_step, reuse_rate, kept,
+                                               _audit_without(audit, set(), kept))
+        if not repaired:
             break
         swapped, swaps = repaired
-        trial, trial_audit = await _checked(state, ctx, swapped, intent, fit_step, reuse_rate)
-        if not trial["valid"]:
-            ctx.run.note(f"{name} rejected ({swaps}): {_errors_text(trial['errors'])}", ctx.variant_index)
+        trial, trial_audit = await _checked(state, ctx, swapped, intent, fit_step, reuse_rate, kept)
+        reject(trial_audit)
+        if not trial["valid"] and len(trial["errors"]) >= len(validation["errors"]):
+            ctx.run.note(f"swap repair rejected: {swaps}; {_errors_text(trial['errors'])}", ctx.variant_index)
             break
-        ctx.run.note(f"{name}: ${validation['metrics']['total_cost']:.2f} -> "
-                     f"${trial['metrics']['total_cost']:.2f} ({swaps})", ctx.variant_index)
+        ctx.run.note(f"swap repair: {swaps}", ctx.variant_index)
         selected, validation, audit = swapped, trial, trial_audit
-        if name == "budget fill":
-            break
     # The validator cannot see a LAYOUT FIT failure, so removing products would not target it.
     unfit = any(error.startswith("LAYOUT FIT") for error in validation["errors"])
     if not validation["valid"] and not unfit and turn >= MAX_SELECTION_TURNS and (
@@ -912,6 +954,8 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
         "selection_validation": validation,
         "instances": instances,
         "fit_step": fit_step,
+        "style_kept": sorted(kept),
+        "jev_rejected": sorted(rejected - kept),
     }
     ctx.data.update(
         turn=turn, valid=validation["valid"], errors=len(validation["errors"]), fit_step=fit_step,
@@ -925,10 +969,11 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
 
 
 async def _checked(state: VariantState, ctx: StageContext, selected: list[Record], intent: Record, fit_step: str | None,
-                   reuse_rate: float) -> tuple[Record, Record]:
-    """The `_validated` report for `selected` and its constraint audit. A passing selection fails when the code
-    solver leaves items out (`_solver_fit`); `fit_failed` is set when one of them is a floor item."""
-    audit = await _constraint_audit(state, ctx, intent, _products(state["pool"], selected))
+                   reuse_rate: float, kept: set[str], audit: Record | None = None) -> tuple[Record, Record]:
+    """The `_validated` report for `selected` and its constraint audit: `audit` when given, else `_constraint_audit`
+    with the `kept` style mismatches. A passing selection fails when the code solver leaves items out
+    (`_solver_fit`); `fit_failed` is set when one of them is a floor item."""
+    audit = audit or await _constraint_audit(state, ctx, intent, _products(state["pool"], selected), kept)
     validation = _validated(state, selected, intent, fit_step, audit, reuse_rate)
     if validation["valid"] and (unfit := await asyncio.to_thread(_solver_fit, state, validation)):
         error, validation["fit_failed"] = unfit
@@ -1003,62 +1048,126 @@ def _missing_tv(state: VariantState, selected: list[Record], intent: Record, reu
     return (None, fitting or tvs[0]["uid"]) if tvs else None
 
 
-def _budget_repair(state: VariantState, selected: list[Record], reuse_rate: float) -> tuple[list[Record], str] | None:
-    """Swap products for others from the same slot to bring `selected` into the budget range.
+async def _swap_repair(state: VariantState, ctx: StageContext, selected: list[Record], validation: Record, audit: Record,
+                       reuse_rate: float, kept: set[str]) -> tuple[list[Record], str] | None:
+    """Swap products of `selected` for others from the same slot: first the products that fail on their own, then
+    the spend into the budget range.
 
-    Over the budget allowance, the most expensive purchasable non-anchor products are swapped for cheaper
-    ones until the total is at most the allowance. Under BUDGET_FLOOR_PCT of the budget, the most expensive
-    purchasable products, anchors included, are swapped for pricier ones that keep the total at most the
-    budget, until it reaches BUDGET_TARGET_PCT. Every unit of a product changes, so counts and matched sets
-    stay. A cheaper replacement is the first fitting product of the same category in the variant's ranked
-    slot order after the current one, then before it; a pricier one is the first in ranked order. Either is
-    purchasable, not already selected, and keeps the reuse limit. Returns the new selection and the swaps as
-    text, or None when nothing is swapped or a cheaper set cannot reach the allowance. The caller validates
-    the result again.
+    A product fails on its own when Jev rejects its style (`audit["style_mismatches"]`) or a `SIZE:` error names it
+    (the pool then holds a product of its kind that passes). A replacement comes from the product's slot in this
+    variant's ranked order and passes the candidate test: the same category, not selected, purchasable when the
+    product is, keeps the reuse limit, and raises no SIZE error beside the other selected pieces (`size_passes`).
+    Then the budget walk: over the allowance, the most expensive purchasable non-anchor products are swapped for
+    cheaper candidates (after the current one in ranked order, then before it) until the total is at most the
+    allowance, and the walk is dropped when it cannot reach it; a passing selection under BUDGET_FLOOR_PCT of the
+    budget swaps its most expensive purchasable products, anchors included, for pricier candidates (in ranked order)
+    that keep the total at most the budget, until it reaches BUDGET_TARGET_PCT. Every unit of a product changes, so
+    counts and matched sets stay.
+
+    A style-failing product gets every candidate of its slot, any other product the repair may swap up to 3, and one
+    Jev check request asks the anchor style question of all of them; a product takes its first candidate with yes at
+    or above STYLE_VIOLATION_BELOW. A style-failing product none of whose candidates reaches it (or with none) stays:
+    it is added to `kept`, so its mismatch is a warning for the rest of this design's selection, and noted. With check
+    off, no anchor, or a failed request, candidates pass on the code checks alone, and the swaps text says so. Returns
+    the new selection and the swaps as text ("<old> -> <new> (style|size|budget)", ...), or None when nothing is
+    swapped. The caller checks the result again.
     """
     shared = state["shared"]
     budget = shared["request"].budget
     allowance = budget * (1 + BUDGET_FLEX_PCT)
-    anchors = set().union(*_ANCHOR_CATEGORIES.get(shared["room"]["room_type"], (FIT_ANCHOR_SEATING,)))
+    room_type = shared["room"]["room_type"]
+    anchors = set().union(*_ANCHOR_CATEGORIES.get(room_type, (FIT_ANCHOR_SEATING,)))
     products = _products(state["pool"], selected)
+    pool = [catalog_asset(record) for record in _candidates(state["pool"])]
+    units = Counter(uid for asset in selected if (uid := asset["uid"].strip()) in products)
+    groups: dict[str, Any] = {}
+    for asset in selected:
+        groups.setdefault(asset["uid"].strip(), asset.get("functional_group"))
+    limit = math.floor(round(reuse_rate * len(products), 9))
 
     def price(product: Record) -> float:
         """What the product counts toward the budget: 0 for TVs and products that are not purchasable."""
         return 0.0 if normalize_category(product.get("category")) in BUDGET_EXCLUDED_CATEGORIES else product["price"]
 
-    units = Counter(uid for asset in selected if (uid := asset["uid"].strip()) in products)
-    total = sum(price(products[uid]) * count for uid, count in units.items())
-    cheaper = total > allowance
-    limit = math.floor(round(reuse_rate * len(products), 9))
-    shared_count = sum(bool(product.get("shared")) for product in products.values())
-    chosen = set(units)
-    swaps: dict[str, str] = {}
-    for uid in sorted(units, key=lambda uid: -price(products[uid])):
-        if (total <= allowance) if cheaper else (total >= budget * BUDGET_TARGET_PCT):
-            break
-        product = products[uid]
-        category = normalize_category(product.get("category"))
-        if (cheaper and category in anchors) or price(product) <= 0:
-            continue
+    def total(swaps: dict[str, Record]) -> float:
+        return sum(price(swaps.get(uid, products[uid])) * count for uid, count in units.items())
+
+    def usable(uid: str, record: Record, swaps: dict[str, Record]) -> bool:
+        """The candidate test for `record` in place of the selected `uid`, with `swaps` (old uid -> product) made."""
+        now = {other: swaps.get(other, product) for other, product in products.items()}
+        product = now[uid]
+        candidate = {**catalog_asset(record), "uid": str(record["asset_id"]), "functional_group": groups[uid]}
+        context = [candidate if other == uid else {**item, "functional_group": groups[other]} for other, item in now.items()]
+        return (candidate["uid"] not in {*products, *(item["uid"] for item in now.values())}
+                and normalize_category(candidate.get("category")) == normalize_category(product.get("category"))
+                and (price(candidate) > 0) == (price(product) > 0)
+                and (reuse_rate >= 1 or not candidate.get("shared") or bool(product.get("shared"))
+                     or sum(bool(item.get("shared")) for item in now.values()) < limit)
+                and size_passes(candidate, context, pool, room_type))
+
+    def ranked(uid: str, after: bool) -> list[Record]:
+        """The slot's products in ranked order; with `after`, from the one after `uid` round to the one before it."""
         rows = next(rows for rows in state["pool"].values() if any(str(row["asset_id"]) == uid for row in rows))
         at = next(n for n, row in enumerate(rows) if str(row["asset_id"]) == uid)
-        for record in (rows[at + 1:] + rows[:at]) if cheaper else rows:
-            replacement, candidate = str(record["asset_id"]), catalog_asset(record)
-            added_shared = bool(candidate.get("shared")) - bool(product.get("shared"))
-            delta = (price(candidate) - price(product)) * units[uid]
-            if (replacement in chosen or normalize_category(candidate.get("category")) != category or price(candidate) <= 0
-                    or not (delta < 0 if cheaper else 0 < delta <= budget - total)
-                    or (reuse_rate < 1 and added_shared > 0 and shared_count >= limit)):
-                continue
-            swaps[uid] = replacement
-            chosen = (chosen - {uid}) | {replacement}
-            shared_count += added_shared
-            total += delta
-            break
-    if (cheaper and total > allowance) or not swaps:
+        return rows[at + 1:] + rows[:at] if after else rows
+
+    sized = [error.split()[1] for error in validation["errors"] if error.startswith("SIZE: ")]
+    failing = {uid: reason for reason, uids in (("size", sized), ("style", audit["style_mismatches"]))
+               for uid in uids if uid in products}
+    start = total({})
+    cheaper = start > allowance
+    pricier = validation["valid"] and start < budget * BUDGET_FLOOR_PCT
+
+    def within(uid: str, record: Record, swaps: dict[str, Record]) -> bool:
+        """Whether `record` in place of `uid` moves the total the walk's way: down, or up to at most the budget."""
+        delta = (price(catalog_asset(record)) - price(swaps.get(uid, products[uid]))) * units[uid]
+        return delta < 0 if cheaper else 0 < delta <= budget - total(swaps)
+
+    walk = [uid for uid in sorted(products, key=lambda uid: -price(products[uid]))
+            if (cheaper or pricier) and uid not in failing and price(products[uid]) > 0
+            and not (cheaper and normalize_category(products[uid].get("category")) in anchors)]
+    options = {uid: list(itertools.islice((record for record in ranked(uid, False) if usable(uid, record, {})),
+                                          None if reason == "style" else 3))
+               for uid, reason in failing.items()}
+    options |= {uid: list(itertools.islice((record for record in ranked(uid, cheaper)
+                                            if usable(uid, record, {}) and within(uid, record, {})), 3))
+                for uid in walk}
+    asked = {str(record["asset_id"]): record for records in options.values() for record in records}
+    answers = None
+    if asked and (anchor := audit["anchor"]) and "check" in ctx.run.jev_uses:
+        answers = await ctx.ask("check", {**_brief(shared, state["direction"]), "anchor": _product_text(products[anchor])},
+                                {f"style_{n}": _STYLE_QUESTION.format(_product_text(record)) for n, record in enumerate(asked.values())})
+    rejected = {uid for n, uid in enumerate(asked) if answers[f"style_{n}"] < STYLE_VIOLATION_BELOW} if answers is not None else set()
+    for uid, reason in failing.items():
+        if reason == "style" and all(str(record["asset_id"]) in rejected for record in options[uid]):
+            kept.add(uid)
+            ctx.run.note(f"style kept: {uid} (no candidate in the slot matches the anchor)", ctx.variant_index)
+    if not asked:
         return None
-    text = ", ".join(f"{old} -> {new}" for old, new in swaps.items())
-    return [{**asset, "uid": swaps.get(asset["uid"].strip(), asset["uid"])} for asset in selected], text
+
+    def pick(uid: str, swaps: dict[str, Record], walking: bool) -> None:
+        """Swap `uid` in `swaps` for its first candidate that Jev did not reject and that still passes."""
+        if record := next((record for record in options[uid] if str(record["asset_id"]) not in rejected
+                           and usable(uid, record, swaps) and (not walking or within(uid, record, swaps))), None):
+            swaps[uid] = {**catalog_asset(record), "uid": str(record["asset_id"])}
+
+    swaps: dict[str, Record] = {}
+    for uid in failing:
+        pick(uid, swaps, walking=False)
+    walked = dict(swaps)
+    for uid in walk:
+        if (total(walked) <= allowance) if cheaper else (total(walked) >= budget * BUDGET_TARGET_PCT):
+            break
+        pick(uid, walked, walking=True)
+    if not (cheaper and total(walked) > allowance):
+        swaps = walked
+    if not swaps:
+        return None
+    text = ", ".join(f"{uid} -> {product['uid']} ({failing.get(uid, 'budget')})" for uid, product in swaps.items())
+    if answers is None:
+        text += "; code checks only"
+    return [{**asset, "uid": swaps[uid]["uid"]} if (uid := asset["uid"].strip()) in swaps else asset
+            for asset in selected], text
 
 
 def _products(pool: dict[str, list[Record]], selected: list[Record]) -> dict[str, Record]:
@@ -1101,7 +1210,8 @@ def _validated(state: VariantState, selected: list[Record], intent: Record, fit_
 
     Returns the validator report with `instances`, without `feedback`. The
     selection also fails when more than `reuse_rate` of its distinct products
-    are marked `shared`.
+    are marked `shared`. Each `style_kept` product of `audit` adds a
+    `STYLE KEPT` warning.
     """
     shared = state["shared"]
     candidates = _candidates(state["pool"])
@@ -1124,6 +1234,8 @@ def _validated(state: VariantState, selected: list[Record], intent: Record, fit_
         constraint_audit=audit,
     )
     validation.pop("feedback")
+    validation["warnings"] += [f"STYLE KEPT: {uid} does not match the anchor's style, but no candidate in its slot does"
+                               for uid in audit["style_kept"]]
     products = _products(state["pool"], selected)
     shared_uids = [uid for uid in products if products[uid].get("shared")]
     limit = math.floor(round(reuse_rate * len(products), 9))

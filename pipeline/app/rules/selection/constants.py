@@ -25,7 +25,9 @@ LIVING_ACCENT_SEATING = {"accent_chair", "recliner", "swivel_chair"}
 CLOTHES_STORAGE_CATEGORIES = {"dresser", "wardrobe"}
 DINING_SERVING_CATEGORIES = {"sideboard", "cabinet"}
 
-# Selection size rules (issue #54).
+# Selection size rules (issue #54). Catalog sizes come from 3D bounding boxes, so a product passes a rule within
+# SIZE_TOLERANCE_M of its limit; prompts state the limits themselves.
+SIZE_TOLERANCE_M = 0.05
 COFFEE_TABLE_HEIGHT_M = (0.35, 0.50)  # seat height or a little under
 COFFEE_TABLE_SOFA_WIDTH_RATIO = (0.5, 0.75)  # x the sofa width
 SIDE_TABLE_HEIGHT_M = (0.45, 0.65)  # within reach of the arm

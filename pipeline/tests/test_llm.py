@@ -7,6 +7,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
+from app import llm
 from app.contracts import PipelineRequest
 from app.llm import GeminiModel, gemini_client, proxy_client, stage_models
 from app.run import ModelCallError, RunContext, StageContext
@@ -100,8 +101,9 @@ def test_malformed_stage_models_are_rejected(value):
         stage_models(value)
 
 
-def hedged_call(first_delay_s: float, hedge_after_s: float) -> tuple[RunContext, Plan, float]:
-    """One model call whose first HTTP request answers after `first_delay_s` and later ones at once."""
+def hedged_call(first_delay_s: float, hedge_after_s: float | None) -> tuple[RunContext, Plan, float]:
+    """One model call whose first HTTP request answers after `first_delay_s` and later ones at once.
+    `hedge_after_s` None uses the default hedge."""
     sent: list[int] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -133,11 +135,15 @@ def test_slow_call_gets_a_duplicate_and_the_first_answer_wins():
     assert [note["text"] for note in run.notes] == ["select model call slower than 0.1 s; sent a duplicate"]
 
 
-def test_fast_call_gets_no_duplicate():
-    run, plan, _ = hedged_call(first_delay_s=0.0, hedge_after_s=0.5)
+@pytest.mark.parametrize(("call_s", "duplicates"), [(9, 0), (13, 1)])
+def test_only_a_call_slower_than_the_default_hedge_gets_a_duplicate(monkeypatch, call_s, duplicates):
+    scale = 1 / 30  # test seconds per call second, so the test does not wait out the real hedge
+    monkeypatch.delenv("MODEL_HEDGE_AFTER_S", raising=False)
+    monkeypatch.setattr(llm, "MODEL_HEDGE_AFTER_S", llm.MODEL_HEDGE_AFTER_S * scale)
+    run, plan, _ = hedged_call(first_delay_s=call_s * scale, hedge_after_s=None)
 
-    assert plan.note == "first"
-    assert len(run.model_calls) == 1 and not run.notes
+    assert plan.note == ("duplicate" if duplicates else "first")
+    assert len(run.model_calls) == 1 + duplicates and len(run.notes) == duplicates
 
 
 def test_a_non_gemini_stage_model_calls_the_ai_proxy_with_images_and_the_schema(monkeypatch):

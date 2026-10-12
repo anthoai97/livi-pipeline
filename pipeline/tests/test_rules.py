@@ -18,6 +18,15 @@ from app.rules.layout.normalization import normalize_layout
 from app.rules.planner.intent_packet import coerce_intent_packet
 from app.rules.planner.room_facts import build_room_context
 from app.rules.selection.catalog import catalog_asset
+from app.rules.selection.constants import (
+    BED_RUG_EXTRA_WIDTH_M,
+    COFFEE_TABLE_HEIGHT_M,
+    COFFEE_TABLE_SOFA_WIDTH_RATIO,
+    DINING_LIGHT_TABLE_INSET_M,
+    RUNNER_MAX_WIDTH_M,
+    SIDE_TABLE_HEIGHT_M,
+    SIZE_TOLERANCE_M,
+)
 from app.rules.selection.fit import fit_step_guidance
 from app.rules.selection.preflight import _layout_preflight_for_assets
 from app.rules.selection.validation import _size_findings, build_instances, validate_selection
@@ -303,16 +312,22 @@ PASSING = [_piece("coffee_table_9", "coffee_table", 1.2, 0.6, 0.45), _piece("sid
            _piece("pendant_9", "pendant_light", 0.4, 0.4, 0.5), _piece("rug_9", "rug", 0.8, 2.0, 0.01)]
 
 
+# Each rule's piece `over` metres past its limit, the pieces it serves, and its finding once `over` passes the tolerance.
 @pytest.mark.parametrize(("room_type", "piece", "context", "finding"), [
-    ("living_room", _piece("coffee_table_1", "coffee_table", 1.2, 0.6, 0.35), [SOFA_2M], None),  # 0.35 to 0.50 m tall
-    ("living_room", _piece("coffee_table_1", "coffee_table", 1.2, 0.6, 0.34), [SOFA_2M], "error"),
-    ("living_room", _piece("coffee_table_1", "coffee_table", 0.99, 0.6, 0.45), [SOFA_2M], "warning"),  # under 0.5 x the sofa: advisory
-    ("living_room", _piece("side_table_1", "side_table", 0.5, 0.5, 0.44), [], "error"),  # under 0.45 m tall
-    ("dining_room", _piece("pendant_1", "pendant_light", 0.61, 0.61, 0.5), [DINING_TABLE], "error"),  # not 0.15 m inside each edge
-    ("bedroom", _piece("rug_1", "rug", 2.49, 1.7, 0.01), [BED_160], "error"),  # under the bed width plus 0.9 m
-    ("bedroom", _piece("rug_1", "rug", 0.9, 2.0, 0.01), [BED_160], None),  # a runner
+    ("living_room", lambda over: _piece("coffee_table_1", "coffee_table", 1.2, 0.6, COFFEE_TABLE_HEIGHT_M[0] - over),
+     [SOFA_2M], "error"),
+    ("living_room", lambda over: _piece("coffee_table_1", "coffee_table", COFFEE_TABLE_SOFA_WIDTH_RATIO[0] * 2.0 - over,
+                                        0.6, 0.45), [SOFA_2M], "warning"),  # the width beside the sofa is advisory
+    ("living_room", lambda over: _piece("side_table_1", "side_table", 0.5, 0.5, SIDE_TABLE_HEIGHT_M[1] + over), [], "error"),
+    ("dining_room", lambda over: _piece("pendant_1", "pendant_light", *[0.9 - 2 * (DINING_LIGHT_TABLE_INSET_M - over)] * 2,
+                                        0.5), [DINING_TABLE], "error"),  # past the inset on each edge
+    ("bedroom", lambda over: _piece("rug_1", "rug", 1.6 + BED_RUG_EXTRA_WIDTH_M - over, 1.7, 0.01), [BED_160], "error"),
+    ("bedroom", lambda over: _piece("rug_1", "rug", RUNNER_MAX_WIDTH_M + over, 2.0, 0.01), [BED_160], "error"),
 ])
-def test_selection_size_rules_hold_at_their_boundaries(room_type, piece, context, finding):
+@pytest.mark.parametrize("over", [0.01, SIZE_TOLERANCE_M + 0.01])
+def test_selection_size_rules_allow_the_size_tolerance(room_type, piece, context, finding, over):
+    piece = piece(over)
+    finding = finding if over > SIZE_TOLERANCE_M else None
     errors, warnings = _size_findings([piece, *context], [piece, *PASSING], room_type)
     assert [bool(errors), bool(warnings)] == [finding == "error", finding == "warning"]
     # With no passing product in the pool, a failing piece is only a warning.

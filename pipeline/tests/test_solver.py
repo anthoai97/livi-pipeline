@@ -23,6 +23,18 @@ from app.rules.planner.room_facts import build_room_context
 
 BENCHMARK = {entry["label"]: entry["request"] for entry in
              json.loads((Path(__file__).parents[1] / "scripts" / "benchmark_requests.json").read_text())}
+# Rooms of benchmark cases since removed: a 5 x 6 m living room and the legacy dining-room template.
+LIVING_ROOM = {"room_area": [5.0, 6.0], "wall_height": 2.7,
+               "room_vertices": [[0.0, 0.0], [5.0, 0.0], [5.0, 6.0], [0.0, 6.0]],
+               "room_doors": [{"center": [2.5, 0.0], "width": 0.9, "depth": 0.05, "height": 2.08}],
+               "room_windows": [{"center": [2.5, 6.0], "width": 1.1, "depth": 0.05, "height": 1.2, "sill_height": 0.9}]}
+DINING_ROOM = {"user_intent": "A cozy Scandinavian dining room for four with light wood and soft neutral dining chairs. "
+                              "Keep the floor bare and the room uncluttered.",
+               "room_area": [4.2672, 4.8768], "wall_height": 3.3528,
+               "room_vertices": [[0.0, 0.0], [4.2672, 0.0], [4.2672, 4.8768], [0.0, 4.8768]],
+               "room_doors": [{"center": [1.194816, 4.8768], "width": 0.9, "depth": 0.05, "height": 2.08}],
+               "room_windows": [{"center": [3.072384, 4.8768], "width": 1.1, "depth": 0.05, "height": 1.2,
+                                 "sill_height": 0.9}]}
 # Recorded legacy variants and the synthetic rooms, as (room, variant).
 ROOMS = [("run0", "0"), ("run0", "1"), ("run1", "0"), ("run2", "0"),
          ("living", "0"), ("bedroom", "0"), ("studio", "0"), ("hallway_living", "0")]
@@ -44,8 +56,8 @@ def item(uid, category, width, depth, height, placement_mode="floor", **fields):
 
 
 def dining_room(table, *extra):
-    """The benchmark dining room with this table (width, depth, height), four 0.59 m chairs, and extra instances."""
-    request = BENCHMARK["dining_room"]
+    """The 4.27 x 4.88 m dining room with this table (width, depth, height), four 0.59 m chairs, and extra instances."""
+    request = DINING_ROOM
     intent = coerce_intent_packet({"normalized_prompt": request["user_intent"],
                                    "requested_categories": ["dining_table", "dining_chair"]}, room_type="dining_room")
     room = build_room_context(room_type="dining_room", room_area=request["room_area"], room_vertices=request["room_vertices"],
@@ -84,9 +96,9 @@ def test_solver_keeps_a_protected_path_and_its_doorways_clear():
 
 
 def test_media_pulls_off_its_wall_to_bring_the_tv_into_its_viewing_range():
-    # A 1.52 m TV prefers 2.28 to 4.26 m (1.5 to 2.8 x its width); across the 5 m side of the benchmark living room a
+    # A 1.52 m TV prefers 2.28 to 4.26 m (1.5 to 2.8 x its width); across the 5 m side of the 5 x 6 m living room a
     # flush stand sees it from about 4.37 m.
-    request = BENCHMARK["living_room"]
+    request = LIVING_ROOM
     spec = GOLDEN["rooms"]["living"]
     assets = [{**asset, "width": 1.52, "placement_mode": "tabletop", "paired_support_uid": "tv_stand_1"}
               if asset["category"] == "tv" else asset for asset in spec["instances"]]

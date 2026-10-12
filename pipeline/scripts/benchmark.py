@@ -1,12 +1,20 @@
 """Replay the benchmark requests against a running pipeline service and summarize the run records.
 
-Sends each request in benchmark_requests.json `--runs` times to POST /pipeline on
+Sends each request of the chosen `--set` in benchmark_requests.json `--runs` times to POST /pipeline on
 each `--url` (repeat it to spread runs over several services), up to `--parallel`
 at once per service (default 1), reads the run ID from the stream's start event, then reads
 pipeline/.data/runs/<run_id>.json, which the service writes when the stream ends.
 The service must run on this machine so its run records are readable here.
 
 Run from pipeline/: python scripts/benchmark.py --runs 3 --url http://127.0.0.1:8001 --url http://127.0.0.1:8002
+
+`--set full` (the default) sends every case; `--set quick` sends the medium case of
+each room type once, for everyday PR checks.
+
+Per run, `select_calls` counts the selection model calls (stage `select`, hedged
+duplicates included) and `failed_turns` the `selection turn <n> failed` notes, over
+all designs. The summary's `select_calls_per_design` and `failed_turns_per_design`
+are the medians over runs of each count divided by the run's designs (3).
 
 Runs on one service share its process, so `--parallel` above 1 makes run times longer
 than sequential ones. Separate services keep them close; compare times only between
@@ -18,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+import re
 import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -29,6 +38,7 @@ SCRIPTS = Path(__file__).resolve().parent
 REQUESTS = SCRIPTS / "benchmark_requests.json"
 RUNS_DIR = SCRIPTS.parent / ".data" / "runs"
 SWITCHES = ("JEV_USES", "PRODUCT_REUSE_RATE")
+FAILED_TURN = re.compile(r"selection turn \d+ failed")
 
 
 def stream_run(client: httpx.Client, url: str, request: dict) -> str:
@@ -67,6 +77,9 @@ def summarize(label: str, record: dict) -> dict:
         "seconds": totals["full_run_s"],
         "ready_of_3": sum(variant["outcome"] == "ready" for variant in variants),
         "model_calls": totals["model_calls"],
+        "select_calls": sum(call["stage"] == "select" for call in record["model_calls"]),
+        "failed_turns": sum(bool(FAILED_TURN.match(note["text"])) for note in record["notes"]),
+        "designs": len(variants),
         "cost_usd": totals["cost_usd"],
         "jev_calls": len(record["jev_calls"]) if "jev_calls" in record else None,
         "findings": sum(len(f) if isinstance(f, list) else f for f in findings) if findings else None,
@@ -86,17 +99,21 @@ def print_table(rows: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Replay the benchmark requests against a running pipeline service")
-    parser.add_argument("--runs", type=int, default=3, help="times to send each request")
+    parser.add_argument("--runs", type=int, default=3, help="times to send each request (1 with --set quick)")
+    parser.add_argument("--set", choices=("quick", "full"), default="full", help="the cases to send")
     parser.add_argument("--url", action="append", help="service base URL (default http://127.0.0.1:8000); repeat to spread runs over services")
     parser.add_argument("--only", help="send only the request with this label, such as studio or living_room_scandi")
     parser.add_argument("--parallel", type=int, default=1, help="requests in flight at once on each service")
     args = parser.parse_args()
     if args.runs < 1 or args.parallel < 1:
         parser.error("--runs and --parallel must be at least 1")
+    if args.set == "quick":
+        args.runs = 1
 
-    cases = [case for case in json.loads(REQUESTS.read_text()) if args.only in (None, case["label"])]
+    cases = [case for case in json.loads(REQUESTS.read_text())
+             if args.set in case["set"] and args.only in (None, case["label"])]
     if not cases:
-        parser.error(f"no benchmark request labeled {args.only!r}")
+        parser.error(f"no benchmark request labeled {args.only!r} in the {args.set} set")
 
     urls = [url.rstrip("/") for url in args.url or ["http://127.0.0.1:8000"]]
     pending: queue.SimpleQueue[tuple[int, dict, int]] = queue.SimpleQueue()
@@ -121,10 +138,12 @@ def main() -> None:
     print_table(rows)
     seconds = [row["seconds"] for row in rows]
     valid = sum(row["ready_of_3"] == 3 for row in rows)
+    per_design = {key: statistics.median(row[key] / row["designs"] for row in rows) for key in ("select_calls", "failed_turns")}
     print()
     print(f"runs={len(rows)} max_s={max(seconds):.1f} median_s={statistics.median(seconds):.1f}"
           f" valid={valid}/{len(rows)} ({valid / len(rows):.0%}) under_60s={sum(s < 60 for s in seconds)}/{len(rows)}"
-          f" distinct_plans={sum(row['plans'] == 3 for row in rows)}/{len(rows)}")
+          f" distinct_plans={sum(row['plans'] == 3 for row in rows)}/{len(rows)}"
+          f" select_calls_per_design={per_design['select_calls']:.2f} failed_turns_per_design={per_design['failed_turns']:.2f}")
 
 
 if __name__ == "__main__":

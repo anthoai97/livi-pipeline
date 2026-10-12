@@ -6,7 +6,7 @@ for 1-5 scores on selection and layout, plus one call per run that compares its
 ready variants. Writes report.md, review.json, and images/ to
 pipeline/.data/reviews/<UTC timestamp>/.
 
-Run from pipeline/: python scripts/review.py --latest 39
+Run from pipeline/: python scripts/review.py --latest 30
 """
 
 from __future__ import annotations

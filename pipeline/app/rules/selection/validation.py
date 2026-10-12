@@ -3,6 +3,7 @@
 import copy
 import json
 from collections import Counter
+from collections.abc import Callable
 from typing import Any
 from app.rules.categories import is_ceiling_mounted_asset, normalize_asset_label
 from app.rules.layout.bedroom import BED_TWO_SIDED_MIN_WIDTH_M
@@ -47,6 +48,7 @@ from app.rules.selection.constants import (
     REQUIRED_CATEGORIES,
     RUNNER_MAX_WIDTH_M,
     SIDE_TABLE_HEIGHT_M,
+    SIZE_TOLERANCE_M,
 )
 from app.rules.selection.fit import (
     FIT_STEP_DECISIONS,
@@ -304,72 +306,90 @@ def _attribute_errors(selected_assets: list[dict[str, Any]], intent_packet: dict
     return errors
 
 
+def _in_categories(assets: list[dict[str, Any]], categories: set[str]) -> list[dict[str, Any]]:
+    return [asset for asset in assets if normalize_category(asset.get("category")) in categories]
+
+
+def _size_text(asset: dict[str, Any]) -> str:
+    width, depth = _asset_width_depth(asset)
+    return f"{width:.2f}m x {depth:.2f}m x {float(asset.get('height') or 0.0):.2f}m"
+
+
+def _size_rule(
+    product: dict[str, Any], selected: list[dict[str, Any]], pool: list[dict[str, Any]], room_type: str,
+) -> tuple[Callable[[dict[str, Any]], bool], str, list[dict[str, Any]]] | None:
+    """The size rule `product` must meet beside the `selected` pieces, as (passes, message, the `pool` products of
+    its kind), or None when no rule applies.
+
+    Living room: a coffee table 0.35 to 0.50 m high, a side table 0.45 to 0.65 m
+    high. Dining room and studio: a ceiling light over the dining table (in a
+    studio, of the dining group) stays DINING_LIGHT_TABLE_INSET_M inside each
+    table edge. Bedroom: a rug is a runner (at most RUNNER_MAX_WIDTH_M wide) or
+    spans the bed width plus BED_RUG_EXTRA_WIDTH_M. Catalog sizes come from 3D
+    bounding boxes, so a product passes within SIZE_TOLERANCE_M of a limit; the
+    message states the limit itself.
+    """
+    category = normalize_category(product.get("category"))
+    if room_type == "living_room" and category in {"coffee_table", "side_table"}:
+        low, high = COFFEE_TABLE_HEIGHT_M if category == "coffee_table" else SIDE_TABLE_HEIGHT_M
+        return (lambda asset: low - SIZE_TOLERANCE_M <= float(asset.get("height") or 0.0) <= high + SIZE_TOLERANCE_M,
+                f"is {_size_text(product)}; a {category.replace('_', ' ')} is {low:.2f}-{high:.2f}m high.",
+                _in_categories(pool, {category}))
+    tables = _in_categories(selected, {"dining_table"})
+    if tables and is_ceiling_mounted_asset(product.get("category", ""), product.get("uid", "")) and (
+            room_type == "dining_room" or (room_type == "studio" and product.get("functional_group") == "dining")):
+        table = max(tables, key=lambda asset: _asset_width_depth(asset)[0])
+        width, depth = (side - 2 * DINING_LIGHT_TABLE_INSET_M for side in _asset_width_depth(table))
+        slack = 2 * SIZE_TOLERANCE_M
+        return (lambda asset: _fits_rect(*_asset_width_depth(asset), width + slack, depth + slack),
+                (f"is {_size_text(product)}; over table {table.get('uid')} a light stays "
+                 f"{DINING_LIGHT_TABLE_INSET_M:.2f}m inside each edge, at most {width:.2f}m x {depth:.2f}m."),
+                [asset for asset in pool if is_ceiling_mounted_asset(asset.get("category", ""))])
+    beds = _in_categories(selected, {"bed"})
+    if beds and room_type == "bedroom" and category == "rug":
+        span = _asset_width_depth(beds[0])[0] + BED_RUG_EXTRA_WIDTH_M
+        return (lambda asset: min(_asset_width_depth(asset)) <= RUNNER_MAX_WIDTH_M + SIZE_TOLERANCE_M
+                or max(_asset_width_depth(asset)) >= span - SIZE_TOLERANCE_M,
+                (f"is {_size_text(product)}; a bedroom rug is a runner at most {RUNNER_MAX_WIDTH_M:.2f}m wide, or at "
+                 f"least {span:.2f}m across the bed, {BED_RUG_EXTRA_WIDTH_M / 2:.2f}m past each side."),
+                _in_categories(pool, {"rug"}))
+    return None
+
+
+def size_passes(
+    product: dict[str, Any], selected: list[dict[str, Any]], pool: list[dict[str, Any]], room_type: str,
+) -> bool:
+    """Whether `product` raises no SIZE error beside the `selected` pieces: it meets its `_size_rule`, or no `pool`
+    product of its kind does, since the model can choose only from the pool."""
+    rule = _size_rule(product, selected, pool, room_type)
+    return rule is None or rule[0](product) or not any(rule[0](asset) for asset in rule[2])
+
+
 def _size_findings(
     selected_assets: list[dict[str, Any]], pool: list[dict[str, Any]], room_type: str,
 ) -> tuple[list[str], list[str]]:
     """Errors and warnings for piece sizes against the pieces they serve.
 
-    Living room: a coffee table 0.35 to 0.50 m high and 0.5 to 0.75 x the widest
-    selected sofa's width, a side table 0.45 to 0.65 m high. Dining room and
-    studio: a ceiling light over the dining table (in a studio, of the dining
-    group) stays DINING_LIGHT_TABLE_INSET_M inside each table edge. Bedroom: a
-    rug is a runner (at most RUNNER_MAX_WIDTH_M wide) or spans the bed width
-    plus BED_RUG_EXTRA_WIDTH_M. A failing product is an error when the pool
-    holds a product that would pass in its place, else a warning: the model
-    can choose only from the pool. The coffee table width is always a
-    warning, because most catalog coffee tables are narrower than half a long
-    sofa.
+    A product that fails its `_size_rule` is an error when it fails
+    `size_passes` (the pool holds a product that would pass in its place), else
+    a warning. A living-room coffee table outside 0.5 to 0.75 x the widest
+    selected sofa's width (within SIZE_TOLERANCE_M) is always a warning, because
+    most catalog coffee tables are narrower than half a long sofa.
     """
     errors: list[str] = []
     warnings: list[str] = []
     selected = list({str(asset.get("uid")): asset for asset in selected_assets}.values())
-
-    def of(assets: list[dict[str, Any]], categories: set[str]) -> list[dict[str, Any]]:
-        return [asset for asset in assets if normalize_category(asset.get("category")) in categories]
-
-    def check(asset: dict[str, Any], passes, message: str, alternatives: list[dict[str, Any]] | None) -> None:
-        if not passes(asset):
-            blocking = alternatives is not None and any(passes(product) for product in alternatives)
-            (errors if blocking else warnings).append(f"SIZE: {asset.get('uid')} {message}")
-
-    def size(asset: dict[str, Any]) -> str:
-        width, depth = _asset_width_depth(asset)
-        return f"{width:.2f}m x {depth:.2f}m x {float(asset.get('height') or 0.0):.2f}m"
-
-    def height_in(limits: tuple[float, float]):
-        return lambda asset: limits[0] - 1e-9 <= float(asset.get("height") or 0.0) <= limits[1] + 1e-9
-
-    if room_type == "living_room":
-        for category, limits in (("coffee_table", COFFEE_TABLE_HEIGHT_M), ("side_table", SIDE_TABLE_HEIGHT_M)):
-            for table in of(selected, {category}):
-                check(table, height_in(limits), f"is {size(table)}; a {category.replace('_', ' ')} is "
-                      f"{limits[0]:.2f}-{limits[1]:.2f}m high.", of(pool, {category}))
-        sofa = max(of(selected, FIT_ANCHOR_SEATING), key=lambda asset: max(_asset_width_depth(asset)), default=None)
-        if sofa:
-            narrow, wide = (ratio * max(_asset_width_depth(sofa)) for ratio in COFFEE_TABLE_SOFA_WIDTH_RATIO)
-            for table in of(selected, {"coffee_table"}):
-                check(table, lambda asset: narrow - 1e-9 <= max(_asset_width_depth(asset)) <= wide + 1e-9,
-                      f"is {size(table)}; beside sofa {sofa.get('uid')} a coffee table is {narrow:.2f}-{wide:.2f}m "
-                      "wide.", None)
-    tables = of(selected, {"dining_table"})
-    if tables and room_type in {"dining_room", "studio"}:
-        table = max(tables, key=lambda asset: _asset_width_depth(asset)[0])
-        width, depth = (side - 2 * DINING_LIGHT_TABLE_INSET_M for side in _asset_width_depth(table))
-        lights = [asset for asset in pool if is_ceiling_mounted_asset(asset.get("category", ""))]
-        for light in selected:
-            if is_ceiling_mounted_asset(light.get("category", ""), light.get("uid", "")) and (
-                    room_type == "dining_room" or light.get("functional_group") == "dining"):
-                check(light, lambda asset: _fits_rect(*_asset_width_depth(asset), width, depth),
-                      f"is {size(light)}; over table {table.get('uid')} a light stays "
-                      f"{DINING_LIGHT_TABLE_INSET_M:.2f}m inside each edge, at most {width:.2f}m x {depth:.2f}m.", lights)
-    beds = of(selected, {"bed"})
-    if beds and room_type == "bedroom":
-        span = _asset_width_depth(beds[0])[0] + BED_RUG_EXTRA_WIDTH_M
-        for rug in of(selected, {"rug"}):
-            check(rug, lambda asset: min(_asset_width_depth(asset)) <= RUNNER_MAX_WIDTH_M + 1e-9
-                  or max(_asset_width_depth(asset)) >= span - 1e-9,
-                  f"is {size(rug)}; a bedroom rug is a runner at most {RUNNER_MAX_WIDTH_M:.2f}m wide, or at least "
-                  f"{span:.2f}m across the bed, {BED_RUG_EXTRA_WIDTH_M / 2:.2f}m past each side.", of(pool, {"rug"}))
+    for asset in selected:
+        if (rule := _size_rule(asset, selected, pool, room_type)) and not rule[0](asset):
+            (warnings if size_passes(asset, selected, pool, room_type) else errors).append(
+                f"SIZE: {asset.get('uid')} {rule[1]}")
+    sofa = max(_in_categories(selected, FIT_ANCHOR_SEATING), key=lambda asset: max(_asset_width_depth(asset)), default=None)
+    if room_type == "living_room" and sofa:
+        narrow, wide = (ratio * max(_asset_width_depth(sofa)) for ratio in COFFEE_TABLE_SOFA_WIDTH_RATIO)
+        for table in _in_categories(selected, {"coffee_table"}):
+            if not narrow - SIZE_TOLERANCE_M <= max(_asset_width_depth(table)) <= wide + SIZE_TOLERANCE_M:
+                warnings.append(f"SIZE: {table.get('uid')} is {_size_text(table)}; beside sofa {sofa.get('uid')} "
+                                f"a coffee table is {narrow:.2f}-{wide:.2f}m wide.")
     return errors, warnings
 
 

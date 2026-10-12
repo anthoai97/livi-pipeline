@@ -22,7 +22,7 @@ events. The service reads these variables from the repository `.env`:
 | `LLM_DESIGN_MODEL` | Model for the design stages. Defaults to `gemini-3.8-flash`. A model whose name does not start with `gemini`, such as `claude-haiku-5-5`, is called through the AI proxy, with the stage's thinking level sent as `reasoning_effort` (for example `select=claude-haiku-5-5:high`; `minimal` is sent as `low`). |
 | `AI_PROXY_BASE_URL`, `AI_PROXY_API_KEY` | The OpenAI-compatible AI proxy (for example `http://127.0.0.1:8317/v1`) used for non-Gemini models. Its calls record tokens but no cost. |
 | `LLM_STAGE_MODELS` | Optional model and thinking level per stage, such as `select=gemini-3.5-flash-lite:minimal,finish=gemini-3.8-flash:low`. Stages: `interpret`, `select`, `finish` (the final layout review). Unlisted stages use `LLM_DESIGN_MODEL` at `low`. |
-| `MODEL_HEDGE_AFTER_S` | Seconds before a slow model call gets a duplicate; the first answer wins and the other call is cancelled. Defaults to `8`; `0` turns it off. |
+| `MODEL_HEDGE_AFTER_S` | Seconds before a slow model call gets a duplicate; the first answer wins and the other call is cancelled. Defaults to `12`; `0` turns it off. |
 | `JEV_API_KEY` | Jev (typesafe-sdk) yes/no questions. |
 | `JEV_MODEL` | Jev model. Defaults to the pinned `jev-1.13.0`. |
 | `JEV_USES` | Comma list of Jev uses: `rank` (order each slot's candidates per variant direction before they are dealt) and `check` (style and attribute checks of a selection). Defaults to `rank,check`. Leave it empty to turn both off. |
@@ -86,22 +86,25 @@ summarize their run records from `pipeline/`:
 python scripts/benchmark.py --runs 3 --url http://127.0.0.1:8001 --url http://127.0.0.1:8002
 ```
 
-`scripts/benchmark_requests.json` holds 13 cases: the six base briefs, a tight
-dining room, three small rooms and three large rooms. `--runs 3` sends 39 requests;
-`--only <label>` sends one case. Repeat `--url` to spread runs over several services, one request at a time on each;
+`scripts/benchmark_requests.json` holds 10 cases, one per room type and size
+class. `--runs 3` sends 30 requests; `--set quick` sends the four medium cases
+(living_room_scandi, bedroom, dining_room_tight, studio) once each, for everyday
+PR checks; `--only <label>` sends one case. Repeat `--url` to spread runs over several services, one request at a time on each;
 start one service per port. `--parallel` sends more requests at once to each service,
 but runs on one service share its process and take longer, so compare run times only
 between benchmarks run the same way.
 
 The table's `plans` column counts the distinct solver plans among a run's ready
 variants, and the summary line's `distinct_plans` counts the runs with three.
+`select_calls` counts a run's selection model calls and `failed_turns` its failed
+selection turns; the summary line gives the median of each per design.
 
 Set `JEV_USES` or `PRODUCT_REUSE_RATE` on the service to benchmark another option.
 
 To score the output, review run records with an LLM reviewer from `pipeline/`:
 
 ```sh
-python scripts/review.py --latest 39        # or --runs <run_id> ...
+python scripts/review.py --latest 30        # or --runs <run_id> ...
 ```
 
 For each ready variant, the reviewer gets the prompt, budget, room, product

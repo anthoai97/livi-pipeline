@@ -42,7 +42,13 @@ from app.rules.selection.catalog import (
     catalog_asset,
     filter_oversized_seating,
 )
-from app.rules.selection.constants import BUDGET_EXCLUDED_CATEGORIES, BUDGET_FLEX_PCT
+from app.rules.selection.constants import (
+    BUDGET_EXCLUDED_CATEGORIES,
+    BUDGET_FLEX_PCT,
+    COFFEE_TABLE_HEIGHT_M,
+    SIDE_TABLE_HEIGHT_M,
+    SIZE_TOLERANCE_M,
+)
 from app.rules.selection.validation import _ORIENTATION_FREE_CATEGORIES, _size_limits_met, room_requirements
 
 if TYPE_CHECKING:
@@ -426,17 +432,25 @@ def merge_categories(rows: list[Record]) -> list[Record]:
     return [row for turn in zip_longest(*groups.values()) for row in turn if row is not None]
 
 
+_LIVING_TABLE_HEIGHTS_M = {"coffee_table": COFFEE_TABLE_HEIGHT_M, "side_table": SIDE_TABLE_HEIGHT_M}
+
+
 def keep_slot(slot: Record, rows: list[Record], room: Record) -> list[Record]:
     """Merge categories, apply the checks after the search, and keep up to FETCH.
 
     Drops products that fit the floor in neither orientation, products outside the
     requested sizes (rugs in either orientation), other brands when a brand is strict,
-    and products the room type excludes. Preferred brands move to the front.
+    products the room type excludes, and in a living room coffee and side tables
+    more than SIZE_TOLERANCE_M outside the selection size check's heights. Preferred brands move to the front.
     """
     width, depth = room["room_area"]
+    heights = _LIVING_TABLE_HEIGHTS_M if room["room_type"] == "living_room" else {}
     kept = []
     for row in merge_categories(rows):
         asset = catalog_asset(row)
+        low, high = heights.get(normalize_category(row["category"]), (0.0, float("inf")))
+        if not low - SIZE_TOLERANCE_M <= asset["height"] <= high + SIZE_TOLERANCE_M:
+            continue
         w, d = asset["width"], asset["depth"]
         if not ((w <= width and d <= depth) or (d <= width and w <= depth)):
             continue

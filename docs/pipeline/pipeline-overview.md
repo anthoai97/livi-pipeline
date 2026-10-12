@@ -50,9 +50,13 @@ flowchart TD
   supports, reuse limit between designs (code); style match to the anchor and
   brief attributes (Jev); then the solver places the selection once, and any
   item it leaves out fails the turn (`LAYOUT FIT`).
-- **Budget repair (code, no model call):** over 110%, swap for cheaper; under
-  80%, swap for pricier toward 90% and never over 100%. Same category, same
-  slot, pieces swapped, never added.
+- **Swap repair (code and one Jev request, no model call):** a product Jev
+  rejects for style, or one too large or small for the piece it serves, is
+  swapped for the next fitting product in its slot; then over 110%, swap for
+  cheaper; under 80%, swap for pricier toward 90% and never over 100%. Each
+  replacement passes the size, reuse and Jev style checks first. Same
+  category, same slot, pieces swapped, never added. The model is asked again
+  only for what swaps cannot fix, with the previous product IDs and errors.
 - **Last turn:** products that still fail are removed; items the solver cannot
   place stay for finish to remove. The design is still delivered.
 
@@ -69,7 +73,7 @@ all its attempts.
 | `LLM_DESIGN_MODEL` | `gemini-3.8-flash`, low thinking | Model for interpret, select and finish. |
 | `LLM_STAGE_MODELS` | none | Per stage, e.g. `select=gemini-3.5-flash-lite:minimal`. |
 | Non-Gemini model | - | A name like `claude-haiku-5-5` goes through the AI proxy; the level becomes `reasoning_effort`. About 2x slower, so not the default. |
-| `MODEL_HEDGE_AFTER_S` | 8 | Sends a duplicate of a slow call; 0 turns it off. |
+| `MODEL_HEDGE_AFTER_S` | 12 | Sends a duplicate of a slow call; 0 turns it off. |
 | `JEV_USES` | `rank,check` | Turns the two Jev uses on or off. |
 
 Every setting is in `.env.example`.

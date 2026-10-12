@@ -19,8 +19,8 @@ POST /pipeline
                     direction, then deals them so variants get different products
      then in parallel, each:
        b. select    model picks products, code adds or swaps the TV, Jev and
-                    code check them, code moves spend into the budget range
-                    (up to 4 turns)
+                    code check them, code swaps products that fail on style,
+                    size or budget (up to 4 turns)
        c. place     code solver places every item; each variant takes a
                     different one of its tied best layouts
        d. finish    model reviews and adjusts the layout; the final check
@@ -174,7 +174,9 @@ For each slot, the stage:
 3. Merges the categories in turn, so one category cannot crowd out the others.
 4. Applies checks that need the room: the product must fit the floor in either
    orientation, meet the requested minimum sizes, match a strict brand, and be
-   allowed in this room type.
+   allowed in this room type. In a living room, coffee tables outside 0.35 to
+   0.50 m high and side tables outside 0.45 to 0.65 m high are dropped, the
+   same limits the selection size check applies.
 5. Moves preferred brands to the front and keeps up to 30 products.
 
 If a required slot finds nothing within the user's limits, the stage searches
@@ -284,9 +286,10 @@ toward the reuse limit. Each variant's selection prompt lists its own pool.
    - piece sizes: a living-room coffee table 0.35 to 0.50 m high and a side
      table 0.45 to 0.65 m high; a dining light 0.15 m inside each table edge;
      a bedroom rug that is a runner (at most 0.90 m wide) or reaches 0.45 m
-     past each side of the bed. A failing piece is an error only when the
-     candidates hold one that passes, else a warning. A coffee table 0.5 to
-     0.75 x the sofa width is only a warning
+     past each side of the bed. A piece within 5 cm of a limit passes,
+     because catalog sizes come from 3D bounding boxes. A failing piece is an
+     error only when the candidates hold one that passes, else a warning. A
+     coffee table 0.5 to 0.75 x the sofa width is only a warning
    - footprint reaches the density floor and stays at or under the maximum.
      Over the maximum is an `OVERCROWDED` error, for example `OVERCROWDED:
      floor furniture covers 7.67m² of 21.19m² usable; at most 7.42m² (target
@@ -307,34 +310,50 @@ placed items do not fail the selection; the final review (4d) handles them.
 The validator still checks dining table edge length (a table under 0.75 m
 deep seats one long side only), dining light clearance, and tiny-room counts.
 
-Code then moves the spend into the budget range, without another model turn
-(`_budget_repair`). It changes every unit of a product, swaps only within the
-same category and the same slot of this variant's pool, and keeps the reuse
-limit:
+Code then swaps products that fail on their own, without another model turn
+(`_swap_repair`). It changes every unit of a product and swaps only within the
+same category and the same slot of this variant's pool, in ranked order:
 
-- **Over the allowance** (`OVER BUDGET`, above 110%): it takes the purchasable
-  products from most to least expensive, skipping the anchor (sofa, bed, or
-  dining table), and swaps each for the next cheaper product in the variant's
-  ranked order, until the total is within the allowance. The run record notes
-  `budget repair: $<from> -> $<to> (<old> -> <new>, ...)`.
-- **Under the floor** (a passing selection under 80% of the budget): it takes
-  the products from most to least expensive, anchors included, and swaps each
-  for the first pricier product in the variant's ranked order that keeps the
-  total at most the budget, until the total reaches 90%. It upgrades pieces;
-  it never adds any. The run record notes `budget fill: $<from> -> $<to> (...)`,
-  or `budget fill: no pricier product fits` when nothing can be swapped.
-- A repair that lands under the floor gets one fill.
+1. **Style and size.** A product Jev rejects for style, or a `SIZE` error
+   whose candidates hold a passing product, is swapped first.
+2. **Over the allowance** (`OVER BUDGET`, above 110%): the purchasable
+   products from most to least expensive, skipping the anchor (sofa, bed, or
+   dining table), are swapped for cheaper ones until the total is within the
+   allowance. A walk that cannot reach the allowance swaps nothing.
+3. **Under the floor** (a passing selection under 80% of the budget): the
+   products from most to least expensive, anchors included, are swapped for
+   pricier ones that keep the total at most the budget, until it reaches 90%.
+   It upgrades pieces; it never adds any.
+
+A replacement must pass before it is used: not selected, purchasable when the
+product is, within the reuse limit, and no `SIZE` error beside the other
+pieces. The repair takes up to 3 such candidates per product and asks Jev the
+style question for all of them in one request, against the anchor; a product
+takes its first candidate with yes at or above 0.3. With the Jev check off or
+failed, candidates pass on the code checks alone, and the note says
+`code checks only`. For example, a sideboard Jev rejects is swapped for the
+next sideboard in its slot that Jev accepts, and an over-budget chair set
+skips a cheaper chair Jev would reject and takes the next one.
 
 The swapped selection goes through the same checks, including the Jev check
-and the solver check above, and replaces the model's selection only if it
-passes. Otherwise the run record notes `budget repair rejected` or
-`budget fill rejected` with the errors. Each failed turn adds
-`selection turn <n> failed: <errors>` to the run record.
+and the solver check above. A round is kept when it passes or leaves fewer
+errors, and a second round starts from it, so a style fix stays even while
+the budget is still off. The run record notes `swap repair: <old> -> <new>
+(style|size|budget), ...`, or `swap repair rejected: <swaps>; <errors>`. Each
+turn that ends failing adds `selection turn <n> failed: <errors>` to the run
+record.
 
-If validation fails, the next turn repeats with the errors. An over-budget turn
-also tells the model to keep every requested item and its count and to replace
-expensive picks with cheaper products from the same slots. When products do
-not fit, the turns step down:
+If validation still fails, the next turn repeats with the previous selection's
+product IDs and its errors, one per line, not the whole validation report. The
+prompt puts the parts all three designs share first (room, budget, intent,
+room facts, digest, selection guidance), then the design's catalog, then what
+changes per design and turn, so the model's prompt cache covers the longest
+prefix. The model is asked again only for errors the repair cannot fix, such
+as a missing required item, counts, layout fit, unknown IDs, an
+under-furnished or overcrowded room. An over-budget turn also tells the model
+to keep every requested item and its count and to replace expensive picks with
+cheaper products from the same slots. When products do not fit, the turns step
+down:
 
 1. First fit failure: switch to smaller products (`compact`).
 2. Next fit failure: reduce counts to what fits, keeping required items
@@ -519,7 +538,7 @@ Three stages call a language model: interpret, select (each turn), and finish.
   2026-10-11 and is about twice as slow (see the
   [report](report-2026-10-11.md)), so Gemini stays the default.
 - **Retries and duplicates:** each call has a 60 s timeout and up to 3 attempts.
-  A call still running after `MODEL_HEDGE_AFTER_S` (default 8 s; 0 turns it off)
+  A call still running after `MODEL_HEDGE_AFTER_S` (default 12 s; 0 turns it off)
   gets a duplicate, and the first answer wins. Turn it off for slower models
   such as Haiku.
 

@@ -1,71 +1,19 @@
 [
   {
-    "label": "living_room",
-    "phase_3_run_id": "b5b6ce6e68744dd5850704eaa1e7f085",
-    "geometry": "Door centered on the front wall and windows spaced on the back wall, reconstructed from the recorded counts.",
-    "request": {
-      "user_intent": "A cozy modern living room with a cream sofa, a wooden coffee table, a floor lamp for reading, and a TV for movie nights.",
-      "budget": 7000.0,
-      "room_type": "living_room",
-      "room_area": [
-        5.0,
-        6.0
-      ],
-      "wall_height": 2.7,
-      "room_vertices": [
-        [
-          0.0,
-          0.0
-        ],
-        [
-          5.0,
-          0.0
-        ],
-        [
-          5.0,
-          6.0
-        ],
-        [
-          0.0,
-          6.0
-        ]
-      ],
-      "room_doors": [
-        {
-          "center": [
-            2.5,
-            0.0
-          ],
-          "width": 0.9,
-          "depth": 0.05,
-          "height": 2.08
-        }
-      ],
-      "room_windows": [
-        {
-          "center": [
-            2.5,
-            6.0
-          ],
-          "width": 1.1,
-          "depth": 0.05,
-          "height": 1.2,
-          "sill_height": 0.9
-        }
-      ]
-    }
-  },
-  {
     "label": "bedroom",
+    "set": [
+      "quick",
+      "full"
+    ],
     "phase_3_run_id": "af3cb2938a684d91b82ff52460200175",
-    "geometry": "Door centered on the front wall and windows spaced on the back wall, reconstructed from the recorded counts.",
+    "geometry": "3.6 x 4 m (resized from 4 x 4.5 m for a medium bedroom); door centered on the front wall, window centered on the back wall.",
     "request": {
       "user_intent": "A calm Scandinavian bedroom with a queen bed, two nightstands with table lamps, and a dresser for clothes.",
       "budget": 6000.0,
       "room_type": "bedroom",
       "room_area": [
-        4.0,
-        4.5
+        3.6,
+        4.0
       ],
       "wall_height": 2.7,
       "room_vertices": [
@@ -74,22 +22,22 @@
           0.0
         ],
         [
-          4.0,
+          3.6,
           0.0
         ],
         [
-          4.0,
-          4.5
+          3.6,
+          4.0
         ],
         [
           0.0,
-          4.5
+          4.0
         ]
       ],
       "room_doors": [
         {
           "center": [
-            2.0,
+            1.8,
             0.0
           ],
           "width": 0.9,
@@ -100,64 +48,8 @@
       "room_windows": [
         {
           "center": [
-            2.0,
-            4.5
-          ],
-          "width": 1.1,
-          "depth": 0.05,
-          "height": 1.2,
-          "sill_height": 0.9
-        }
-      ]
-    }
-  },
-  {
-    "label": "dining_room",
-    "phase_3_run_id": "56cb72b9029549d0a328c60f6d683aa3",
-    "geometry": "Doors and windows from the legacy dining-room template (pipeline/tests/fixtures/legacy_runs.json).",
-    "request": {
-      "user_intent": "A cozy Scandinavian dining room for four with light wood and soft neutral dining chairs. Keep the floor bare and the room uncluttered.",
-      "budget": 7000.0,
-      "room_type": "dining_room",
-      "room_area": [
-        4.2672,
-        4.8768
-      ],
-      "wall_height": 3.3528,
-      "room_vertices": [
-        [
-          0.0,
-          0.0
-        ],
-        [
-          4.2672,
-          0.0
-        ],
-        [
-          4.2672,
-          4.8768
-        ],
-        [
-          0.0,
-          4.8768
-        ]
-      ],
-      "room_doors": [
-        {
-          "center": [
-            1.194816,
-            4.8768
-          ],
-          "width": 0.9,
-          "depth": 0.05,
-          "height": 2.08
-        }
-      ],
-      "room_windows": [
-        {
-          "center": [
-            3.072384,
-            4.8768
+            1.8,
+            4.0
           ],
           "width": 1.1,
           "depth": 0.05,
@@ -169,6 +61,10 @@
   },
   {
     "label": "studio",
+    "set": [
+      "quick",
+      "full"
+    ],
     "phase_3_run_id": "b1005cb4a1524727a82466a9fcf198f3",
     "geometry": "Door centered on the front wall and windows spaced on the back wall, reconstructed from the recorded counts.",
     "request": {
@@ -235,6 +131,10 @@
   },
   {
     "label": "living_room_scandi",
+    "set": [
+      "quick",
+      "full"
+    ],
     "phase_5_run_id": "5e18ba6b80c2414695a46ba84e032648",
     "geometry": "Recorded from the web brief: door and window on the back wall.",
     "note": "Design 2 failed every selection turn: a Jev style mismatch on one product, then a tabletop item with no support.",
@@ -295,68 +195,11 @@
     }
   },
   {
-    "label": "studio_relaxed",
-    "phase_5_run_id": "06afd8ae48f84584830d54786b14ee35",
-    "geometry": "Recorded from the web brief: door and window on the back wall.",
-    "note": "Sofa and TV on opposite walls about 4 m apart, dining squeezed by the door and the TV stand.",
-    "request": {
-      "user_intent": "A relaxed studio with a complete bed, a sofa facing a TV, and dining for two. Keep the TV comfortable to watch from the sofa and allow space to pull out the dining chairs.",
-      "budget": 10000.0,
-      "room_type": "studio",
-      "room_area": [
-        5.0,
-        6.5
-      ],
-      "wall_height": 2.7,
-      "room_vertices": [
-        [
-          0.0,
-          0.0
-        ],
-        [
-          5.0,
-          0.0
-        ],
-        [
-          5.0,
-          6.5
-        ],
-        [
-          0.0,
-          6.5
-        ]
-      ],
-      "room_doors": [
-        {
-          "id": "door-1",
-          "height": 2.08,
-          "center": [
-            3.6,
-            6.5
-          ],
-          "width": 0.9,
-          "depth": 0.05,
-          "wall": "top"
-        }
-      ],
-      "room_windows": [
-        {
-          "id": "window-1",
-          "height": 1.2,
-          "sill_height": 0.9,
-          "center": [
-            1.4,
-            6.5
-          ],
-          "width": 1.1,
-          "depth": 0.05,
-          "wall": "top"
-        }
-      ]
-    }
-  },
-  {
     "label": "dining_room_tight",
+    "set": [
+      "quick",
+      "full"
+    ],
     "geometry": "The #45 incident request (run f9109392): 3.4 x 3.8 m, door and window on the top wall.",
     "request": {
       "user_intent": "A cosy Scandinavian dining room for four with a round light wood table, four soft upholstered chairs, and a rug underneath. Keep the door clear.",
@@ -416,6 +259,9 @@
   },
   {
     "label": "bedroom_small",
+    "set": [
+      "full"
+    ],
     "geometry": "3 x 3 m, the web build wizard's Small quick pick; door on the top wall, window on the bottom wall.",
     "request": {
       "user_intent": "A calm small bedroom with a queen bed, two nightstands, and a dresser.",
@@ -471,6 +317,9 @@
   },
   {
     "label": "living_room_small",
+    "set": [
+      "full"
+    ],
     "geometry": "3 x 3 m, the web build wizard's Small quick pick; door on the top wall, window on the bottom wall.",
     "request": {
       "user_intent": "A compact living room with a sofa, a coffee table, an armchair, and a TV.",
@@ -526,6 +375,9 @@
   },
   {
     "label": "studio_small",
+    "set": [
+      "full"
+    ],
     "geometry": "4 x 4.5 m; door on the top wall, window on the bottom wall.",
     "request": {
       "user_intent": "A small studio with a full bed, a loveseat facing a TV, and dining for two.",
@@ -581,6 +433,9 @@
   },
   {
     "label": "living_room_large",
+    "set": [
+      "full"
+    ],
     "geometry": "7 x 8 m; door on the top wall, window on the bottom wall.",
     "request": {
       "user_intent": "A spacious family living room with a large sectional sofa, two armchairs, a coffee table, a TV, and a reading corner with a floor lamp.",
@@ -636,6 +491,9 @@
   },
   {
     "label": "bedroom_large",
+    "set": [
+      "full"
+    ],
     "geometry": "5.5 x 6 m; door on the top wall, window on the bottom wall.",
     "request": {
       "user_intent": "A large primary bedroom with a king bed, two nightstands, a dresser, a bench at the foot of the bed, and a reading chair.",
@@ -691,6 +549,9 @@
   },
   {
     "label": "dining_room_large",
+    "set": [
+      "full"
+    ],
     "geometry": "5.5 x 6.5 m; door on the top wall, window on the bottom wall.",
     "request": {
       "user_intent": "A formal dining room for eight with a long wooden table, eight upholstered chairs, a sideboard, and a large rug.",

@@ -27,6 +27,7 @@ from app.llm import GeminiModel
 from app.main import create_app
 from app.rules.planner.intent_packet import coerce_intent_packet
 from app.rules.planner.room_facts import build_room_context
+from app.rules.selection.constants import COFFEE_TABLE_HEIGHT_M, SIZE_TOLERANCE_M
 from app.run import RunContext, StageContext
 
 RUN = json.loads((Path(__file__).parent / "fixtures" / "legacy_runs.json").read_text())[1]
@@ -336,30 +337,33 @@ def test_lamp_too_large_for_its_side_table_keeps_the_fit_step(tmp_path, monkeypa
         assert "=== ACCEPTED FIT DECISION ===" not in prompt
 
 
-def over_budget_chairs(monkeypatch, **cheaper: object) -> None:
-    """Chairs at $1,200 put TURN at $6,598, over the $5,500 allowance; the chair slot also holds a $300 chair with `cheaper` fields."""
+def over_budget_chairs(monkeypatch, *cheaper: dict) -> None:
+    """Chairs at $1,200 put TURN at $6,598, over the $5,500 allowance; the chair slot also holds the `cheaper` chairs
+    after it, in order, each a copy of it with its fields."""
     chair = next(record for record in POOL if record["asset_id"] == "dining_chair_39")
     monkeypatch.setitem(chair, "price", 1200)
-    search_pool(monkeypatch, [*POOL, {**chair, "asset_id": "dining_chair_8", "price": 300, **cheaper}])
+    search_pool(monkeypatch, [*POOL, *({**chair, "title": fields["asset_id"], **fields} for fields in cheaper)])
 
 
 def test_over_budget_selection_is_repaired_with_cheaper_products_from_the_same_slot(tmp_path, monkeypatch):
-    over_budget_chairs(monkeypatch)
+    over_budget_chairs(monkeypatch, {"asset_id": "dining_chair_8", "price": 300}, {"asset_id": "dining_chair_9", "price": 350})
     solve_as(monkeypatch, PLACEMENTS)
     genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection()})
+    # Jev rejects the style of the first cheaper chair, so the repair takes the second.
+    jev = FakeJevClient(lambda text: 0.1 if "style and palette" in text and "dining_chair_8" in text else 0.9)
 
-    events, record = run_pipeline(tmp_path, genai)
+    events, record = run_pipeline(tmp_path, genai, jev)
 
     ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
     assert len(ready) == 3
     for variant in ready:
         # The requested four chairs stay; the anchor table and the sideboard are unchanged.
-        assert [asset["asset_id"] for asset in variant["selected_assets"] if asset["category"] == "dining_chair"] == ["dining_chair_8"] * 4
-        assert variant["total_cost"] == 899 + 4 * 300 + 899
+        assert [asset["asset_id"] for asset in variant["selected_assets"] if asset["category"] == "dining_chair"] == ["dining_chair_9"] * 4
+        assert variant["total_cost"] == 899 + 4 * 350 + 899
     for index in range(3):
         assert stage_runs(record, "select", index) == 1
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
-        assert "budget repair: $6598.00 -> $2998.00 (dining_chair_39 -> dining_chair_8)" in notes
+        assert "swap repair: dining_chair_39 -> dining_chair_9 (budget)" in notes
         assert not [note for note in notes if " failed: " in note]
 
 
@@ -376,12 +380,13 @@ def test_selection_under_the_budget_floor_is_filled_with_pricier_products_from_t
     selections = [event["data"] for event in of_type(events, "node_complete") if "items" in event.get("data", {})]
     assert len(selections) == 3
     assert all(data["valid"] and budget * 0.8 <= data["total_cost"] <= budget for data in selections)
-    assert len([note for note in record["notes"] if note["text"].startswith("budget fill: $")]) == 3
+    repairs = [note["text"] for note in record["notes"] if note["text"].startswith("swap repair")]
+    assert len(repairs) == 3 and all(note.startswith("swap repair: ") and note.endswith("(budget)") for note in repairs)
 
 
 def test_over_budget_selection_the_repair_cannot_validate_is_retried_keeping_requested_items(tmp_path, monkeypatch):
     # The cheaper chair is not a usable single chair, so the repaired selection fails validation.
-    over_budget_chairs(monkeypatch, width_m=2.0)
+    over_budget_chairs(monkeypatch, {"asset_id": "dining_chair_8", "price": 300, "width_m": 2.0})
     solve_as(monkeypatch, PLACEMENTS)
     genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection()})
 
@@ -393,14 +398,88 @@ def test_over_budget_selection_the_repair_cannot_validate_is_retried_keeping_req
     dropped = [note["text"] for note in record["notes"] if " dropped " in note["text"]]
     assert dropped == [f"selection turn {MAX_SELECTION_TURNS}: dropped sideboard_1; still fails: OVER BUDGET: "
                        "Selection costs $5699.00 (Flex limit: $5500.00)."] * 3
-    rejected = [note["text"] for note in record["notes"] if note["text"].startswith("budget repair")]
+    rejected = [note["text"] for note in record["notes"] if note["text"].startswith("swap repair")]
     assert len(rejected) == 3 * MAX_SELECTION_TURNS
-    assert all(note.startswith("budget repair rejected (dining_chair_39 -> dining_chair_8): ") and "DINING CHAIR DIMENSIONS" in note
+    assert all(note.startswith("swap repair rejected: dining_chair_39 -> dining_chair_8 (budget); ") and "DINING CHAIR DIMENSIONS" in note
                for note in rejected)
     retries = [prompt for prompt in genai.of("Selection") if "FAILED VALIDATION" in prompt]
     assert len(retries) == 3 * (MAX_SELECTION_TURNS - 1)
     assert all("OVER BUDGET: Selection costs $6598.00" in prompt and "Keep every requested item and its count" in prompt
                and "Do not drop requested items to save money." in prompt for prompt in retries)
+
+
+def test_style_rejection_is_repaired_with_the_next_candidate_in_the_slot(tmp_path, monkeypatch):
+    sideboard = next(record for record in POOL if record["asset_id"] == "sideboard_1")
+    search_pool(monkeypatch, [*POOL, *({**sideboard, "asset_id": uid, "title": uid} for uid in ("sideboard_2", "sideboard_3"))])
+    solve_as(monkeypatch, PLACEMENTS)
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection()})
+    jev = FakeJevClient(lambda text: 0.1 if "style and palette" in text and "sideboard_1" in text else 0.9)
+
+    events, record = run_pipeline(tmp_path, genai, jev)
+
+    # One model call per design: the repair swaps the rejected sideboard for the next one in its slot.
+    assert [call["stage"] for call in record["model_calls"]].count("select") == 3
+    ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
+    assert len(ready) == 3
+    for variant in ready:
+        assert [asset["asset_id"] for asset in variant["selected_assets"] if asset["category"] == "sideboard"] == ["sideboard_2"]
+    for index in range(3):
+        notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
+        assert "swap repair: sideboard_1 -> sideboard_2 (style)" in notes
+        assert not [note for note in notes if " failed: " in note]
+        # The audit, one repair request asking about both other sideboards, and the audit of the repaired selection.
+        checks = [call["questions"] for call in record["jev_calls"] if call["use"] == "check" and call["variant_index"] == index]
+        assert len(checks) == 3 and checks[1] == 2
+
+
+@pytest.mark.parametrize("lights", [("pendant_big", "pendant_small"), ("pendant_big",)])
+def test_light_too_large_for_the_table_is_swapped_when_a_fitting_one_exists(tmp_path, monkeypatch, lights):
+    sideboard = next(record for record in POOL if record["asset_id"] == "sideboard_1")
+    sides = {"pendant_big": 1.0, "pendant_small": 0.5}  # the dining table leaves about 0.74 m inside its edges
+    search_pool(monkeypatch, [*POOL, *({**sideboard, "asset_id": uid, "title": uid, "category": "pendant_light",
+                                        "placement_type": "ceiling", "width_m": sides[uid], "depth_m": sides[uid],
+                                        "height_m": 0.6, "price": 200} for uid in lights)])
+    solve_as(monkeypatch, PLACEMENTS)
+    # Without the minimal brief this dining room needs a pendant or chandelier.
+    packet = {**intent_packet(), "functional_hints": [], "fit_flexibility": "balanced"}
+    genai = FakeGenai({"IntentPacket": packet, "Selection": selection([*TURN["items"], ("pendant_big", 1)])})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    # Swapped when a fitting light exists; otherwise the size finding is a warning. Neither retries the model.
+    assert [stage_runs(record, "select", index) for index in range(3)] == [1, 1, 1]
+    repairs = [note["text"] for note in record["notes"] if note["text"].startswith("swap repair")]
+    ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
+    assert len(ready) == 3
+    if len(lights) == 2:
+        assert repairs == ["swap repair: pendant_big -> pendant_small (size)"] * 3
+        assert all("pendant_small" in variant["selection_validation"]["validated_uids"] for variant in ready)
+    else:
+        assert repairs == []
+        assert all(any(warning.startswith("SIZE: pendant_big ") for warning in variant["selection_validation"]["warnings"])
+                   for variant in ready)
+
+
+def test_missing_required_item_retries_the_model_with_the_previous_uids_and_errors(tmp_path, searches, monkeypatch):
+    solve_as(monkeypatch, PLACEMENTS)
+    plantless = TURN["items"][:3]
+    genai = FakeGenai({"IntentPacket": intent_packet(),
+                       "Selection": lambda prompt: selection() if "FAILED VALIDATION" in prompt else selection(plantless)})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    assert len(of_type(events, "variant_ready")) == 3
+    assert [stage_runs(record, "select", index) for index in range(3)] == [2, 2, 2]
+    firsts = [prompt for prompt in genai.of("Selection") if "FAILED VALIDATION" not in prompt]
+    retries = [prompt for prompt in genai.of("Selection") if "FAILED VALIDATION" in prompt]
+    # The designs share the prompt up to their catalogs, and a retry is the design's first prompt plus its errors.
+    assert len({prompt.split("CATALOG (")[0] for prompt in firsts}) == 1
+    uids = json.dumps([uid for uid, count in plantless for _ in range(count)])
+    for retry in retries:
+        [tail] = [retry[len(first):] for first in firsts if retry.startswith(first)]
+        assert tail.startswith(f"\n\nPREVIOUS SELECTION (turn 1) FAILED VALIDATION:\n{uids}\nERRORS:\n- ")
+        assert "\n- MISSING REQUIRED: Include at least one non-shoppable decor plant" in tail
+        assert "metrics" not in tail and "status" not in tail and "warnings" not in tail
 
 
 def test_required_item_searched_without_its_limits_can_pass_selection(tmp_path, searches, monkeypatch):
@@ -987,7 +1066,7 @@ def test_empty_requested_slot_is_a_gap_and_required_slot_drops_request_limits(mo
 def test_requested_coffee_table_still_searches_side_tables(monkeypatch):
     packet = {"normalized_prompt": "a sofa and a wooden coffee table",
               "requested_items": [item("sofa", "sofa"), item("wooden coffee table", "coffee_table")]}
-    rows = [product("coffee_1", "coffee_table", 1.1, 0.6), product("side_1", "side_table", 0.5, 0.5)]
+    rows = [product("coffee_1", "coffee_table", 1.1, 0.6, height_m=0.45), product("side_1", "side_table", 0.5, 0.5, height_m=0.55)]
 
     slots, pool, _, _, _ = retrieve(monkeypatch, "living_room", packet,
                                     lambda filters: [row for row in rows if row["category"] in filters["categories"]],
@@ -996,6 +1075,21 @@ def test_requested_coffee_table_still_searches_side_tables(monkeypatch):
     assert pool["coffee_table"] == ["coffee_1"]
     assert slots["surface"]["kind"] == "optional" and pool["surface"] == ["side_1"]
 
+
+
+def test_living_room_drops_coffee_tables_outside_the_height_limits(monkeypatch):
+    # Catalog heights are bounding boxes: 1 cm under the limit passes, past the tolerance does not.
+    low = COFFEE_TABLE_HEIGHT_M[0]
+    packet = {"normalized_prompt": "a sofa and a coffee table",
+              "requested_items": [item("sofa", "sofa"), item("coffee table", "coffee_table")]}
+    rows = [product("coffee_low", "coffee_table", 1.1, 0.6, height_m=low - SIZE_TOLERANCE_M - 0.01),
+            product("coffee_near", "coffee_table", 1.1, 0.6, height_m=low - 0.01),
+            product("coffee_ok", "coffee_table", 1.1, 0.6, height_m=0.42)]
+
+    _, pool, _, _, _ = retrieve(monkeypatch, "living_room", packet,
+                                lambda filters: [row for row in rows if row["category"] in filters["categories"]])
+
+    assert sorted(pool["coffee_table"]) == ["coffee_near", "coffee_ok"]
 
 # --- select: TVs ------------------------------------------------------------
 

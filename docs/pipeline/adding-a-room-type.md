@@ -211,8 +211,9 @@ gets living-room behavior, without it.
     ```
 
 15. **Add a benchmark case** to `benchmark_requests.json` with `label`,
+    `set` (`["quick", "full"]` for the room's medium case, else `["full"]`),
     `geometry` (one sentence on doors and windows), an optional `note` and a
-    full `request`, copied from the `dining_room` case.
+    full `request`, copied from the `dining_room_tight` case.
 
 ## Writing the room's rules
 

@@ -18,6 +18,7 @@
 - Delegate concrete independent work to built-in Claude Code subagents when the benefit outweighs coordination overhead.
 - DO NOT CHANGE ANY CONTRACT VERSION JUST REPLACE DIRECTLY
 - PR always target to `trunk` branch
+- DO NOT CALL LLM WITH API KEY IN UNIT TEST
 
 ## Conversational Style
 

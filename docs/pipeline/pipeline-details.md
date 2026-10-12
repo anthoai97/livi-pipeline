@@ -272,9 +272,13 @@ toward the reuse limit. Each variant's selection prompt lists its own pool.
      dining table. Below 0.3 rejects the product.
    - **Attributes.** For each required attribute that the catalog vocabulary
      cannot filter, such as "pet-friendly" or "stain resistant": does each
-     targeted product meet it? Below 0.5 rejects the product. An attribute
-     with no category, such as "wool and boucle textures", skips TVs and decor
-     plants.
+     targeted product meet it? An attribute with a category, such as "boucle
+     sofa", rejects each targeted product below 0.5. An attribute with no
+     category, such as "wool and boucle textures", applies to the room: it
+     targets every product except TVs and decor plants, and passes when at
+     least one of them reaches 0.5. Products that miss it are not rejected.
+     When none reaches it, the selection fails with `the room needs at least
+     one piece that meets "<phrase>"; none of the selected pieces does`.
 6. The legacy selection validator checks the result:
    - total cost is at most 110% of the budget, with TVs and design-only decor
      excluded
@@ -355,8 +359,8 @@ record.
 
 If validation still fails, the next turn repeats with the previous selection's
 product IDs and its errors, one per line, not the whole validation report,
-then every product the Jev check rejected for style or an attribute in this
-design's turns, except the kept ones, as `REJECTED BY THE STYLE AND ATTRIBUTE
+then every product the Jev check rejected for style or a category attribute
+in this design's turns, except the kept ones, as `REJECTED BY THE STYLE AND ATTRIBUTE
 CHECK (do not pick again): <uid>, ...`. These products stay in the catalog
 block, so the prompt cache still covers it. The
 prompt puts the parts all three designs share first (room, budget, intent,

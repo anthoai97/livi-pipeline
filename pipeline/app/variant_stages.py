@@ -770,13 +770,14 @@ def _audit_without(audit: Record, dropped: set[str], kept: set[str] | None = Non
     mismatches = {uid: text for uid, text in audit["style_mismatches"].items() if uid not in dropped and uid not in kept}
     checks = [
         {**check, **{key: [uid for uid in check[key] if uid not in dropped]
-                     for key in ("target_uids", "satisfied_uids", "unsatisfied_uids")}}
+                     for key in ("target_uids", "satisfied_uids", "unsatisfied_uids", "missed_uids")}}
         for check in audit["attribute_constraint_checks"]
     ]
     return {**audit, "style_mismatches": mismatches, "coordination_violations": list(mismatches.values()),
             "style_kept": sorted(uid for uid in kept - dropped if uid in {*audit["style_mismatches"], *audit["style_kept"]}),
             "attribute_constraint_checks": checks,
-            "passed": not mismatches and not any(check["unsatisfied_uids"] for check in checks)}
+            "passed": not mismatches and not any(check["unsatisfied_uids"] or (check["brief_wide"] and not check["satisfied_uids"])
+                                                 for check in checks)}
 
 
 async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Record, products: dict[str, Record],
@@ -789,8 +790,13 @@ async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Reco
     product, except TVs and decor plants, matches the anchor's style and palette
     (below STYLE_VIOLATION_BELOW is a coordination violation), and whether each
     product a `_jev_attribute_constraints` entry targets meets it (below
-    ATTRIBUTE_UNSATISFIED_BELOW is unsatisfied). A constraint without a category
-    targets every product except TVs and decor plants. Notes a rejection.
+    ATTRIBUTE_UNSATISFIED_BELOW is unsatisfied). A constraint with a category
+    targets the products of that category, and each one that misses it is
+    unsatisfied. A constraint without a category is brief-wide: it targets every
+    product except TVs and decor plants and is met by the room when at least
+    one of them meets it. The products that miss it go to `missed_uids`, for
+    information; when none meets it, the check fails for the room
+    (`brief_wide` with no `satisfied_uids`). Notes a rejection.
     `style_mismatches` holds each rejected product by uid, except the `kept`
     ones, whose mismatch this design accepts: they go to `style_kept`, a
     warning. `anchor` is the uid the style was compared with. With check off or
@@ -808,13 +814,14 @@ async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Reco
     styled = [uid for uid in furniture if anchor and uid != anchor]
     constraints = [
         (str(constraint.get("source_label") or constraint.get("label") or constraint.get("value") or "").strip(),
+         not constraint.get("category"),
          [uid for uid in products
           if _price_constraint_category_matches(constraint["category"], categories[uid])] if constraint.get("category")
          else furniture)
         for constraint in _jev_attribute_constraints(intent)
     ]
     questions = {f"style_{n}": _STYLE_QUESTION.format(_product_text(products[uid])) for n, uid in enumerate(styled)}
-    for i, (label, targets) in enumerate(constraints):
+    for i, (label, _, targets) in enumerate(constraints):
         questions |= {f"attribute_{i}_{n}": _ATTRIBUTE_QUESTION.format(label, _product_text(products[uid]))
                       for n, uid in enumerate(targets)}
     if not questions:
@@ -830,18 +837,22 @@ async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Reco
         "choose a product that coordinates with it"
         for n, uid in enumerate(styled) if (yes := answers[f"style_{n}"]) < STYLE_VIOLATION_BELOW
     }
-    for i, (label, targets) in enumerate(constraints):
+    for i, (label, brief_wide, targets) in enumerate(constraints):
         failing = [uid for n, uid in enumerate(targets) if answers[f"attribute_{i}_{n}"] < ATTRIBUTE_UNSATISFIED_BELOW]
         audit["checked_constraints"].append(f'attribute "{label}" (Jev)')
         audit["attribute_constraint_checks"].append({
             "source_label": label,
+            "brief_wide": brief_wide,
             "target_uids": targets,
             "satisfied_uids": [uid for uid in targets if uid not in failing],
-            "unsatisfied_uids": failing,
+            "unsatisfied_uids": [] if brief_wide else failing,
+            "missed_uids": failing if brief_wide else [],
         })
     audit = _audit_without(audit, set(), kept)
-    unsatisfied = [f'"{check["source_label"]}" by {check["unsatisfied_uids"]}'
-                   for check in audit["attribute_constraint_checks"] if check["unsatisfied_uids"]]
+    unsatisfied = [f'"{check["source_label"]}" by {check["unsatisfied_uids"]}' if check["unsatisfied_uids"]
+                   else f'"{check["source_label"]}" by no selected piece'
+                   for check in audit["attribute_constraint_checks"]
+                   if check["unsatisfied_uids"] or (check["brief_wide"] and not check["satisfied_uids"])]
     if not audit["passed"]:
         ctx.run.note(f"jev check rejected: style {list(audit['style_mismatches'])}; attributes {'; '.join(unsatisfied) or 'none'}",
                      ctx.variant_index)
@@ -861,7 +872,7 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     whose style mismatch this design accepts because no candidate in their slot
     matches the anchor; each is a warning, not an error, in this and later
     turns), and `jev_rejected` (the products Jev rejected for style or an
-    attribute in this design's turns, except the kept ones; a retry prompt
+    category-scoped attribute in this design's turns, except the kept ones; a retry prompt
     names them so the model does not pick them again). `fit_satisfaction`
     comes from slot membership and the constraint audit from
     `_constraint_audit`. Before validation, a selection with no TV gets one

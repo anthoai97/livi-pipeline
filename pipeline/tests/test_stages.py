@@ -587,6 +587,52 @@ def test_jev_style_and_attribute_failures_reject_the_selection(tmp_path, searche
     assert len(of_type(events, "variant_ready")) == 3
 
 
+def boucle_packet() -> dict:
+    packet = intent_packet()
+    return {**packet, "asset_attribute_constraints": [
+        *packet["asset_attribute_constraints"],
+        {"category": None, "attribute_type": "material", "value": "boucle", "required": True,
+         "source_label": "boucle textures"},
+    ]}
+
+
+def test_brief_wide_attribute_met_by_one_piece_passes_the_selection(tmp_path, searches, monkeypatch):
+    def answer(text: str) -> float:
+        return 0.2 if 'requirement "boucle textures"' in text and "dining_table_3" not in text else 0.9
+
+    solve_as(monkeypatch, PLACEMENTS)
+    genai = FakeGenai({"IntentPacket": boucle_packet(), "Selection": selection()})
+
+    events, record = run_pipeline(tmp_path, genai, FakeJevClient(answer))
+
+    # The table meets the brief-wide phrase, so the chairs and sideboard that miss it are not failures.
+    assert len(of_type(events, "variant_ready")) == 3
+    assert [stage_runs(record, "select", index) for index in range(3)] == [1, 1, 1]
+    assert not any(note["text"].startswith("jev check rejected") for note in record["notes"])
+
+
+def test_brief_wide_attribute_met_by_no_piece_fails_the_room(tmp_path, searches, monkeypatch):
+    def answer(text: str) -> float:
+        return 0.2 if 'requirement "boucle textures"' in text else 0.9
+
+    solve_as(monkeypatch, PLACEMENTS)
+    genai = FakeGenai({"IntentPacket": boucle_packet(), "Selection": selection()})
+
+    _, record = run_pipeline(tmp_path, genai, FakeJevClient(answer))
+
+    error = ('SELECTION CONSTRAINT AUDIT: the room needs at least one piece that meets "boucle textures"; '
+             "none of the selected pieces does")
+    for index in range(3):
+        notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
+        failures = [note for note in notes if note.startswith("selection turn") and " failed: " in note]
+        assert failures == [f"selection turn {turn} failed: {error}" for turn in range(1, MAX_SELECTION_TURNS + 1)]
+        # Removing pieces cannot add one that meets the phrase, so none is dropped.
+        assert not any(" dropped " in note for note in notes)
+    retries = [prompt for prompt in genai.of("Selection") if "FAILED VALIDATION" in prompt]
+    assert len(retries) == 3 * (MAX_SELECTION_TURNS - 1)
+    assert all(f"- {error}\n" in prompt and "REJECTED BY THE STYLE" not in prompt for prompt in retries)
+
+
 def test_jev_failure_never_fails_a_variant(tmp_path, searches, monkeypatch):
     solve_as(monkeypatch, PLACEMENTS)
     genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection()})

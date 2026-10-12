@@ -871,8 +871,10 @@ def _selection_constraint_audit_errors(
     The select stage builds the audit from code and Jev checks of the current
     selection (variant_stages._constraint_audit): coordination violations, and
     one attribute check per required constraint that Jev checked. Blocking
-    findings are substantive: a coordination violation, or a selected asset
-    that fails a checked constraint. A constraint without a check is left to
+    findings are substantive: a coordination violation, a selected asset
+    that fails a checked constraint, or a brief-wide constraint (no category)
+    that no selected asset meets; assets that miss a brief-wide constraint
+    (`missed_uids`) are not failures. A constraint without a check is left to
     the code attribute checks, or its check was switched off or failed, so it
     is not reported. Malformed entries are advisory.
     """
@@ -946,6 +948,17 @@ def _selection_constraint_audit_errors(
             for uid in check.get("unsatisfied_uids") or []
             if str(uid).strip()
         }
+        missed = {
+            str(uid).strip()
+            for uid in check.get("missed_uids") or []
+            if str(uid).strip()
+        }
+        # Brief-wide: the room meets the constraint when one selected piece does.
+        if check.get("brief_wide") and not satisfied & selected:
+            errors.append(
+                f'the room needs at least one piece that meets "{source_label}"; '
+                "none of the selected pieces does"
+            )
         if not targets:
             warnings.append(
                 f'attribute constraint "{source_label}" has no audited target UIDs'
@@ -962,8 +975,8 @@ def _selection_constraint_audit_errors(
                 f'attribute constraint "{source_label}" marks the same UID both '
                 "satisfied and unsatisfied"
             )
-        unaudited_targets = sorted(targets - satisfied - unsatisfied)
-        unexpected_results = sorted((satisfied | unsatisfied) - targets)
+        unaudited_targets = sorted(targets - satisfied - unsatisfied - missed)
+        unexpected_results = sorted((satisfied | unsatisfied | missed) - targets)
         if unaudited_targets or unexpected_results:
             warnings.append(
                 f'attribute constraint "{source_label}" has inconsistent UID '

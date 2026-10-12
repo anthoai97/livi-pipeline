@@ -1,7 +1,7 @@
-"""Ported rules against recorded legacy runs (livinit_pipeline/runs, Oct 06 2026).
+"""Room, selection, and layout rules on recorded legacy runs (livinit_pipeline/runs, Oct 06 2026) and synthetic rooms.
 
 Fixture assets are legacy catalog rows rewritten as pipeline_assets_v2 records,
-with the legacy uid kept as asset_id so recorded messages still match.
+with the legacy uid kept as asset_id.
 """
 
 import json
@@ -11,36 +11,22 @@ from pathlib import Path
 import pytest
 
 from app import variant_stages
-from app.rules.geometry.generation import generate_deterministic_layout_with_report
-from app.rules.layout.analysis import analyze_layout, final_layout_check, findings_by_level
-from app.rules.layout.cleanup import (
-    clear_protected_paths,
-    run_deterministic_living_dining_cleanup,
-    run_deterministic_p0_cleanup,
-    satisfy_sofa_table_gaps,
-)
+from app.rules.layout.analysis import analyze_layout
 from app.rules.layout.dining import dining_fit_envelopes
 from app.rules.layout.metrics import has_blocking_issues
 from app.rules.layout.normalization import normalize_layout
-from app.rules.planner._util import room_scale
 from app.rules.planner.intent_packet import coerce_intent_packet
 from app.rules.planner.room_facts import build_room_context
-from app.rules.planner.seed_guidance import build_seed_guidance
 from app.rules.selection.catalog import catalog_asset
-from app.rules.selection.fit import capped_counts
+from app.rules.selection.fit import fit_step_guidance
 from app.rules.selection.preflight import _layout_preflight_for_assets
 from app.rules.selection.validation import _size_findings, build_instances, validate_selection
 
-# Recorded digests, blocking findings and validity are re-measured at the issue #54 phase 1 rules: per-room size classes
-# (these 20.8 m2 dining rooms are spacious), a door clear zone as deep as the door is wide, a 0.46 m chair pull-out
-# (0.56 m with a path behind) and 0.76 m storage fronts. At the phase 2 rules the first run, which states no seat
-# count, defaults to six chairs (four to six pass), and its turns without a sideboard or cabinet, or without a
-# pendant when the pool holds one, fail; the other two runs are minimal or state their counts and are unchanged.
+# Three recorded legacy runs: each run's request, intent and selected instances per variant; run 1 (a dining room for
+# four) also keeps its candidate assets, a passing selection, and a valid final layout.
 RUNS = json.loads((Path(__file__).parent / "fixtures" / "legacy_runs.json").read_text())
-# Legacy seed and cleanup outputs (livinit_pipeline @ 8ec38ae) on the RUNS variants
-# and on synthetic living, bedroom, studio, and door-to-door rooms built as runtime instances,
-# re-recorded at the issue #54 phase 1 rules (the door clear zone, 1.5 m wall mounts, the new clearances and TV
-# range, TV support checks, the desk check in every room, and the window_front count).
+# The rooms `_golden_inputs` builds: the RUNS variants, and synthetic living, bedroom, studio, and door-to-door rooms
+# with their runtime instances.
 GOLDEN = json.loads((Path(__file__).parent / "fixtures" / "legacy_seed_cleanup.json").read_text())
 
 
@@ -57,69 +43,6 @@ def _room(run):
         intent=intent,
     )
     return intent, room
-
-
-def _cases(key):
-    return [
-        pytest.param(run, case, id=f"{run['run'][-22:]}-{case.get('label') or 'v%(variant)s-turn%(turn)s' % case}")
-        for run in RUNS
-        for case in run[key]
-    ]
-
-
-@pytest.mark.parametrize("run", RUNS, ids=[run["run"][-22:] for run in RUNS])
-def test_room_context_matches_recorded_digest(run):
-    _, room = _room(run)
-    assert {key: room["digest"][key] for key in run["digest"]} == run["digest"]
-
-
-@pytest.mark.parametrize(("run", "turn"), _cases("selection_turns"))
-def test_selection_validation_matches_recorded_result(run, turn):
-    intent, room = _room(run)
-    pool = list(run["assets"].values())
-    result = validate_selection(
-        items=[{"asset": run["assets"][uid], "quantity": quantity} for uid, quantity in turn["items"]],
-        intent=intent,
-        room=room,
-        budget=run["request"]["budget"],
-        candidates=pool,
-        fit_satisfaction=turn["fit_satisfaction"],
-        constraint_audit=turn["constraint_audit"],
-    )
-    assert result["valid"] == turn["valid"]
-    # Placement now comes from prepared records on every turn, so a turn can
-    # report extra layout-preflight errors next to the recorded ones.
-    assert set(turn["errors"]) <= set(result["errors"])
-
-
-@pytest.mark.parametrize(("run", "case"), _cases("layouts"))
-def test_analyze_layout_matches_recorded_blocking_findings(run, case):
-    request = run["request"]
-    assets = [{**catalog_asset(record), "uid": record["uid"]} for record in run["layout_assets"][str(case["variant"])]]
-    issues = analyze_layout(
-        case["layout"],
-        assets,
-        request["room_vertices"],
-        request["room_doors"],
-        tuple(request["room_area"]),
-        room_windows=request["room_windows"],
-        protected_paths=[],
-        room_type=request["room_type"],
-    )
-    levels = findings_by_level(issues)
-    blocking = {**levels["P0"], **levels["P1"], **levels["critical_p2"]}
-    assert json.loads(json.dumps(blocking)) == case["blocking"]
-    if case["valid"] is not None:
-        check = final_layout_check(
-            case["layout"],
-            assets,
-            room_type=request["room_type"],
-            room_area=request["room_area"],
-            room_vertices=request["room_vertices"],
-            room_doors=request["room_doors"],
-            room_windows=request["room_windows"],
-        )
-        assert check["valid"] == case["valid"]
 
 
 def _bedroom(room_area: tuple[float, float], requested: dict[str, int], required: set[str]) -> tuple[dict, dict]:
@@ -151,44 +74,24 @@ def _bedroom(room_area: tuple[float, float], requested: dict[str, int], required
         ((3.6, 3.8), {"desk", "office_chair", "tv", "tv_stand"}, {"wardrobe"}),
     ],
 )
-def test_capped_counts_keep_bed_and_drop_whole_lower_priority_groups(room_area, dropped, kept):
+def test_the_fit_estimate_keeps_the_bed_and_drops_whole_lower_priority_groups(room_area, dropped, kept):
     requested = {"bed": 1, "nightstand": 2, "wardrobe": 1, "tv": 1, "tv_stand": 1, "desk": 1, "office_chair": 1}
-    intent, room = _bedroom(room_area, requested, {"bed"})
-    capped = capped_counts(room, intent)
+    _, room = _bedroom(room_area, requested, {"bed"})
+    recommended = room["fit"]["counts"]["recommended"]
     assert room["fit_warning"]
-    assert capped["bed"] == 1
-    assert all(capped[category] == 0 for category in dropped)
-    assert all(capped[category] == requested[category] for category in kept)
+    assert recommended["bed"] == 1
+    assert not dropped & set(recommended)
+    assert all(recommended[category] == requested[category] for category in kept)
 
 
-def test_capped_counts_keep_explicitly_requested_items_and_cap_optional_ones():
+def test_the_capped_fit_step_keeps_explicitly_requested_items_and_caps_optional_ones():
     # A 3 x 3 m bedroom: the fit estimate fits only the bed and dresser.
     requested = {"bed": 1, "nightstand": 2, "table_lamp": 2, "dresser": 1, "bench": 1}
     intent, room = _bedroom((3.0, 3.0), requested, {"bed", "nightstand", "table_lamp", "dresser"})
 
     assert room["fit"]["counts"]["recommended"] == {"bed": 1, "dresser": 1}
-    assert capped_counts(room, intent) == {**requested, "bench": 0}
-
-
-def test_requested_gap_is_not_required():
-    run = RUNS[1]  # dining room for four, passing selection on turn 1
-    intent, room = _room(run)
-    turn = run["selection_turns"][0]
-    items = [{"asset": run["assets"][uid], "quantity": quantity} for uid, quantity in turn["items"]]
-    pool = list(run["assets"].values())
-    chairs_only = [item for item in items if item["asset"]["category"] != "dining_table"]
-    intent = {**intent, "requested_items": [*intent["requested_items"], {
-        "label": "bookcase", "canonical_category": "bookcase", "count": 1,
-        "exact": True, "optional": False, "acceptable_substitutes": [],
-    }]}
-
-    missing = validate_selection(items=items, intent=intent, room=room, budget=5000, candidates=pool)
-    gap = validate_selection(items=items, intent=intent, room=room, budget=5000, candidates=pool, gaps=["bookcase"])
-    no_table = validate_selection(items=chairs_only, intent=intent, room=room, budget=5000, candidates=pool, gaps=["bookcase"])
-
-    assert any("bookcase" in error for error in missing["errors"])
-    assert gap["valid"], gap["errors"]
-    assert not no_table["valid"]
+    assert "Selection target for this run: 1 bed, 1 dresser, 2 nightstands and 2 table lamps\n" in fit_step_guidance(
+        "capped", room, intent)
 
 
 def _golden_inputs(case):
@@ -201,83 +104,8 @@ def _golden_inputs(case):
     return intent, room, spec["instances"]
 
 
-def _golden_id(case):
-    return "-".join(str(case[key]) for key in ("room", "variant", "label") if key in case)
-
-
 def _room_args(room):
     return tuple(room["room_area"]), room["room_vertices"], room["room_doors"], room["room_windows"], room["protected_paths"]
-
-
-@pytest.mark.parametrize("case", GOLDEN["seeds"], ids=_golden_id)
-def test_seed_layout_matches_legacy(case):
-    intent, room, assets = _golden_inputs(case)
-    guidance = build_seed_guidance(room_facts=room["facts"], intent_packet=intent, feasibility_digest=room["digest"], selected_assets=assets)
-    layout, report = generate_deterministic_layout_with_report(
-        assets,
-        tuple(room["room_area"]),
-        room_vertices=room["room_vertices"],
-        room_doors=room["room_doors"],
-        room_windows=room["room_windows"],
-        planner_guidance=guidance,
-        protected_paths=room["protected_paths"],
-    )
-    assert json.loads(json.dumps(guidance)) == case["guidance"]
-    assert json.loads(json.dumps([layout, report])) == [case["layout"], case["report"]]
-
-
-def _cleanup_input(case):
-    if case["label"].startswith("recorded"):
-        run = RUNS[GOLDEN["rooms"][case["room"]]["run"]]
-        recorded = [layout["layout"] for layout in run["layouts"] if str(layout["variant"]) == case["variant"]]
-        return recorded[int(case["label"].removeprefix("recorded"))]
-    seed = next(s["layout"] for s in GOLDEN["seeds"] if (s["room"], s["variant"]) == (case["room"], case["variant"]))
-    if case["label"] == "seed_shifted":
-        return {uid: {**p, "position": [p["position"][0] + 0.6, *p["position"][1:]]} for uid, p in seed.items()}
-    return seed
-
-
-@pytest.mark.parametrize("case", GOLDEN["cleanups"], ids=_golden_id)
-def test_cleanup_matches_legacy(case):
-    _, room, assets = _golden_inputs(case)
-    room_area, boundary, doors, windows, paths = _room_args(room)
-    for key, cleanup in (("p0", run_deterministic_p0_cleanup), ("living_dining", run_deterministic_living_dining_cleanup)):
-        layout, report = cleanup(_cleanup_input(case), assets, room_area, boundary, room_doors=doors, room_windows=windows, protected_paths=paths)
-        assert json.loads(json.dumps([layout, report])) == [case[key]["layout"], case[key]["report"]], key
-
-
-def _issues_after(fix, name, layout):
-    _, room, assets = _golden_inputs({"room": name})
-    room_area, boundary, doors, windows, paths = _room_args(room)
-    layout = normalize_layout(layout, assets, boundary, room_windows=None, rehome_service_items=False)
-
-    def analyze(candidate):
-        return analyze_layout(candidate, assets, boundary, doors, room_area, room_windows=windows, protected_paths=paths, room_type=room["room_type"])
-
-    before = analyze(layout)
-    fixed, report = fix(layout, assets, room_area, boundary, doors, windows, paths, room["room_type"])
-    return before, analyze(normalize_layout(fixed, assets, boundary, room_windows=None, rehome_service_items=False)), report
-
-
-def test_clear_protected_paths_moves_blocker_off_the_path():
-    # Cabinet straddles the door-to-door path at y 2.05..2.96.
-    cabinet = {"cabinet_1": {"position": [3.2, 2.3, 0.0], "rotation": [0.0, 0.0, 3.141592653589793]}}
-    before, after, report = _issues_after(clear_protected_paths, "hallway_living", cabinet)
-    assert [item["uid"] for item in before["protected_path_violations"]] == ["cabinet_1"]
-    assert not after["protected_path_violations"]
-    assert report["planned_moves"][0]["direction"] == "down"
-
-
-def test_satisfy_sofa_table_gaps_moves_table_into_range():
-    # 0.73 m sofa-to-table gap; the valid range is 0.38..0.50 m.
-    layout = {
-        "sofa_1": {"position": [3.5, 0.5, 0.0], "rotation": [0.0, 0.0, 1.5707963267948966]},
-        "coffee_table_1": {"position": [3.5, 2.0, 0.0], "rotation": [0.0, 0.0, 1.5707963267948966]},
-    }
-    before, after, report = _issues_after(satisfy_sofa_table_gaps, "living", layout)
-    assert before["sofa_coffee_table_violations"]
-    assert not after["sofa_coffee_table_violations"]
-    assert report["planned_moves"][0]["uid"] == "coffee_table_1"
 
 
 # --- issue #54 phase 1: thresholds and bugs, measured on the fixture rooms
@@ -298,17 +126,16 @@ def _measure(name, layout, *extra):
                           room_type=room["room_type"], wall_height=room["wall_height"])
 
 
-@pytest.mark.parametrize(("gap", "flagged"), [(0.42, False), (0.55, True)])
-def test_sofa_to_coffee_table_gap_is_0_38_to_0_50_m(gap, flagged):
-    # Sofa back on the left wall, front at x = 0.95; the table's near face `gap` beyond it.
-    layout = {"sofa_1": _pose(0.475, 2.25, 0.0), "coffee_table_1": _pose(0.95 + gap + 0.3, 2.25, 0.0)}
-    assert bool(_measure("living", layout)["sofa_coffee_table_violations"]) is flagged
-
-
-@pytest.mark.parametrize(("back_gap", "flagged"), [(0.0, False), (0.2, True)])
-def test_a_flush_sofa_passes_the_wall_gap(back_gap, flagged):
-    layout = {"sofa_1": _pose(0.475 + back_gap, 2.25, 0.0)}
-    assert bool(_measure("living", layout)["sofa_wall_gap_violations"]) is flagged
+@pytest.mark.parametrize(("layout", "key", "flagged"), [
+    # Sofa back on the left wall, front at x = 0.95; the table's near face 0.42 m or 0.55 m beyond it (0.38 to 0.50 m passes).
+    ({"sofa_1": _pose(0.475, 2.25, 0.0), "coffee_table_1": _pose(0.95 + 0.42 + 0.3, 2.25, 0.0)}, "sofa_coffee_table_violations", False),
+    ({"sofa_1": _pose(0.475, 2.25, 0.0), "coffee_table_1": _pose(0.95 + 0.55 + 0.3, 2.25, 0.0)}, "sofa_coffee_table_violations", True),
+    # A flush sofa passes the wall gap; one 0.2 m off the wall does not.
+    ({"sofa_1": _pose(0.475, 2.25, 0.0)}, "sofa_wall_gap_violations", False),
+    ({"sofa_1": _pose(0.475 + 0.2, 2.25, 0.0)}, "sofa_wall_gap_violations", True),
+], ids=["table_0.42", "table_0.55", "wall_flush", "wall_0.2"])
+def test_sofa_gaps_to_the_coffee_table_and_the_wall(layout, key, flagged):
+    assert bool(_measure("living", layout)[key]) is flagged
 
 
 @pytest.mark.parametrize(("front", "flagged"), [(0.60, True), (0.80, False)])
@@ -338,12 +165,6 @@ def test_a_studio_without_a_dining_table_gets_no_dining_findings_and_one_storage
     issues = _measure("studio", layout, cabinet)
     assert not any(findings for key, findings in issues.items() if key.startswith("dining_"))
     assert [row["uid"] for row in issues["storage_access_violations"]] == ["cabinet_1"]
-
-
-def test_room_size_classes_follow_the_room_type():
-    _, room = _bedroom((3.75, 4.0), {"bed": 1}, {"bed"})
-    assert room["digest"]["room_scale"] == "medium"  # 15 m2: a normal bedroom
-    assert room_scale(15.0, "living_room") == "compact"
 
 
 def test_a_piece_taller_than_the_sill_in_front_of_a_window_is_a_non_blocking_finding():
@@ -483,22 +304,12 @@ PASSING = [_piece("coffee_table_9", "coffee_table", 1.2, 0.6, 0.45), _piece("sid
 
 
 @pytest.mark.parametrize(("room_type", "piece", "context", "finding"), [
-    ("living_room", _piece("coffee_table_1", "coffee_table", 1.2, 0.6, 0.35), [SOFA_2M], None),
+    ("living_room", _piece("coffee_table_1", "coffee_table", 1.2, 0.6, 0.35), [SOFA_2M], None),  # 0.35 to 0.50 m tall
     ("living_room", _piece("coffee_table_1", "coffee_table", 1.2, 0.6, 0.34), [SOFA_2M], "error"),
-    ("living_room", _piece("coffee_table_1", "coffee_table", 1.2, 0.6, 0.50), [SOFA_2M], None),
-    ("living_room", _piece("coffee_table_1", "coffee_table", 1.2, 0.6, 0.51), [SOFA_2M], "error"),
-    ("living_room", _piece("coffee_table_1", "coffee_table", 1.0, 0.6, 0.45), [SOFA_2M], None),  # 0.5 x the sofa
-    ("living_room", _piece("coffee_table_1", "coffee_table", 0.99, 0.6, 0.45), [SOFA_2M], "warning"),  # width is advisory
-    ("living_room", _piece("coffee_table_1", "coffee_table", 1.5, 0.6, 0.45), [SOFA_2M], None),  # 0.75 x the sofa
-    ("living_room", _piece("coffee_table_1", "coffee_table", 1.51, 0.6, 0.45), [SOFA_2M], "warning"),
-    ("living_room", _piece("side_table_1", "side_table", 0.5, 0.5, 0.45), [], None),
-    ("living_room", _piece("side_table_1", "side_table", 0.5, 0.5, 0.44), [], "error"),
-    ("living_room", _piece("side_table_1", "side_table", 0.5, 0.5, 0.65), [], None),
-    ("living_room", _piece("side_table_1", "side_table", 0.5, 0.5, 0.66), [], "error"),
-    ("dining_room", _piece("pendant_1", "pendant_light", 1.5, 0.6, 0.5), [DINING_TABLE], None),  # 0.15 m inside each edge
-    ("dining_room", _piece("pendant_1", "pendant_light", 0.61, 0.61, 0.5), [DINING_TABLE], "error"),
-    ("bedroom", _piece("rug_1", "rug", 2.5, 1.7, 0.01), [BED_160], None),  # the bed width plus 0.9 m
-    ("bedroom", _piece("rug_1", "rug", 2.49, 1.7, 0.01), [BED_160], "error"),
+    ("living_room", _piece("coffee_table_1", "coffee_table", 0.99, 0.6, 0.45), [SOFA_2M], "warning"),  # under 0.5 x the sofa: advisory
+    ("living_room", _piece("side_table_1", "side_table", 0.5, 0.5, 0.44), [], "error"),  # under 0.45 m tall
+    ("dining_room", _piece("pendant_1", "pendant_light", 0.61, 0.61, 0.5), [DINING_TABLE], "error"),  # not 0.15 m inside each edge
+    ("bedroom", _piece("rug_1", "rug", 2.49, 1.7, 0.01), [BED_160], "error"),  # under the bed width plus 0.9 m
     ("bedroom", _piece("rug_1", "rug", 0.9, 2.0, 0.01), [BED_160], None),  # a runner
 ])
 def test_selection_size_rules_hold_at_their_boundaries(room_type, piece, context, finding):

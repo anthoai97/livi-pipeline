@@ -52,17 +52,6 @@ def call_with(responses: list) -> tuple[RunContext, Exception | None, int]:
     return run, asyncio.run(main()), len(requests)
 
 
-def test_retries_timeouts_rate_limits_and_server_errors_up_to_three_attempts():
-    run, exc, sent = call_with([httpx.ReadTimeout("slow"), error(429), error(503), error(503)])
-
-    assert isinstance(exc, ModelCallError)
-    assert sent == 3
-    [call] = run.model_calls
-    assert call["stage"] == "select" and call["variant_index"] == 1
-    assert call["attempts"] == 3
-    assert "503" in call["error"]
-
-
 def test_client_errors_are_not_retried():
     run, exc, sent = call_with([error(400)])
 

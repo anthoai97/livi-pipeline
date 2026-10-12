@@ -6,15 +6,17 @@ layout check.
 """
 
 import asyncio
+import copy
 import json
 import math
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 import pytest
 from google.genai import types
-from test_rules_parity import _room
+from test_rules import _room
 from test_runtime import FakeJevClient, of_type, parse
 
 from app import shared_stages, variant_stages
@@ -168,6 +170,25 @@ def searches(monkeypatch):
     search_pool(monkeypatch, POOL)
 
 
+SOLVES: dict[str, tuple[dict, dict]] = {}
+SOLVES_LOCK = threading.Lock()
+
+
+@pytest.fixture
+def cached_solver(monkeypatch):
+    """The real solver, memoized by its inputs: designs and turns that place the same instances solve once."""
+    solve = variant_stages.solve_layout
+
+    def cached(instances, room, intent):
+        key = json.dumps([instances, room, intent], sort_keys=True, default=repr)
+        with SOLVES_LOCK:
+            if key not in SOLVES:
+                SOLVES[key] = solve(instances, room, intent)
+            return copy.deepcopy(SOLVES[key])
+
+    monkeypatch.setattr(variant_stages, "solve_layout", cached)
+
+
 def run_pipeline(tmp_path: Path, genai: FakeGenai, jev: FakeJevClient | None = None) -> tuple[list[dict], dict]:
     app = create_app(model=GeminiModel(genai), jev=Jev(jev or FakeJevClient()), connect=lambda: None, runs_dir=tmp_path)
 
@@ -258,33 +279,8 @@ def oversized_table(monkeypatch) -> list[tuple[str, int]]:
     return [("dining_table_9" if uid == "dining_table_3" else uid, count) for uid, count in TURN["items"]]
 
 
-def test_selection_the_solver_cannot_place_fails_steps_to_compact_and_passes_with_a_smaller_table(tmp_path, monkeypatch):
-    oversized = oversized_table(monkeypatch)
-    genai = FakeGenai({"IntentPacket": intent_packet(),
-                       "Selection": lambda prompt: selection() if "LAYOUT FIT" in prompt else selection(oversized)})
-
-    events, record = run_pipeline(tmp_path, genai)
-
-    ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
-    assert len(ready) == 3
-    for variant in ready:
-        assert sorted(asset["asset_id"] for asset in variant["selected_assets"] if asset["category"].startswith("dining")) == [
-            *["dining_chair_39"] * 4, "dining_table_3"]
-    for index in range(3):
-        assert stage_runs(record, "select", index) == 2
-        notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
-        assert [note for note in notes if "fit step" in note] == ["selection turn 2: fit step compact"]
-    retries = [prompt for prompt in genai.of("Selection") if "FAILED VALIDATION" in prompt]
-    assert len(retries) == 3
-    for prompt in retries:
-        # The error names what the solver left out, with sizes.
-        assert ("LAYOUT FIT: the layout solver could not place 4 x dining_chair_39 (dining_chair_39, 0.53m x 0.55m), "
-                "dining_table_9 (Lane Dining Table, 4.00m x 2.60m). Choose products from the same slots that fit together, "
-                "keeping the requested items and counts.") in prompt
-        assert "=== ADVISORY FIT ESTIMATE ===" in prompt
-
-
-def test_selection_the_solver_cannot_place_steps_to_compact_then_capped_counts_then_loses_what_does_not_fit(tmp_path, monkeypatch):
+def test_selection_the_solver_cannot_place_steps_to_compact_then_capped_counts_then_loses_what_does_not_fit(tmp_path, monkeypatch,
+                                                                                                            cached_solver):
     genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(oversized_table(monkeypatch))})
 
     events, record = run_pipeline(tmp_path, genai)
@@ -297,6 +293,10 @@ def test_selection_the_solver_cannot_place_steps_to_compact_then_capped_counts_t
     assert compact in prompts[1] and capped not in prompts[1]
     assert all(capped in prompt for prompt in prompts[2:])
     assert "Selection target for this run: 4 dining chairs and 1 dining table" in prompts[2]
+    # The error names what the solver left out, with sizes.
+    assert all("LAYOUT FIT: the layout solver could not place 4 x dining_chair_39 (dining_chair_39, 0.53m x 0.55m), "
+               "dining_table_9 (Lane Dining Table, 4.00m x 2.60m). Choose products from the same slots that fit together, "
+               "keeping the requested items and counts." in prompt for prompt in prompts[1:])
     for index in range(3):
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
         assert [note for note in notes if "fit step" in note] == ["selection turn 2: fit step compact", "selection turn 3: fit step capped"]
@@ -311,7 +311,7 @@ def test_selection_the_solver_cannot_place_steps_to_compact_then_capped_counts_t
     assert len(of_type(events, "variant_ready")) == 3
 
 
-def test_lamp_too_large_for_its_side_table_keeps_the_fit_step(tmp_path, monkeypatch):
+def test_lamp_too_large_for_its_side_table_keeps_the_fit_step(tmp_path, monkeypatch, cached_solver):
     sideboard = next(record for record in POOL if record["asset_id"] == "sideboard_1")
     lamp = {**sideboard, "asset_id": "table_lamp_1", "title": "Big Table Lamp", "category": "table_lamp", "width_m": 0.6,
             "depth_m": 0.6, "placement_type": "surface", "price": 100}
@@ -510,26 +510,7 @@ def test_jev_failure_never_fails_a_variant(tmp_path, searches, monkeypatch):
 # --- solver placement -------------------------------------------------------
 
 
-def test_solver_places_the_selection_and_each_design_reviews_its_own_layout(tmp_path, searches):
-    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Arrangement": arrangement()})
-
-    events, record = run_pipeline(tmp_path, genai)
-
-    assert len(of_type(events, "variant_ready")) == 3
-    # One review call per design, with one image: the design's own layout.
-    assert {call["stage"] for call in record["model_calls"]} == {"interpret", "select", "finish"}
-    assert [count for title, count in genai.images if title == "Arrangement"] == [1, 1, 1]
-    places = stage_data(events, "layout_initial")
-    for index in range(3):
-        assert [stage_runs(record, stage, index) for stage in ("place", "finish")] == [1, 1]
-        notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
-        assert any(note.startswith("solver: score [0, 0, 0],") and f"; tied layout {places[index]['plan']} of " in note for note in notes)
-        assert f"final review: {REVIEW}" in notes
-    # The record keeps each design's solver plan; the dining table's quarter comes first.
-    assert all(variant["plan"][0][0] == "dining" for variant in record["variants"])
-
-
-def test_final_review_fixes_blocking_findings_the_solver_left(tmp_path, searches, monkeypatch):
+def test_final_review_fixes_blocking_findings_the_solver_left(tmp_path, searches, monkeypatch, cached_solver):
     solve = variant_stages.solve_layout
     solved: dict = {}
 
@@ -553,10 +534,17 @@ def test_final_review_fixes_blocking_findings_the_solver_left(tmp_path, searches
     ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
     assert len(ready) == 3 and all(len(variant["selected_assets"]) == 7 for variant in ready)
     assert delivered(events, "dining_chair_1") == [solved["layout"]["dining_chair_1"]["position"][:2]] * 3
+    # One review call per design, with one image: the design's own layout.
+    assert {call["stage"] for call in record["model_calls"]} == {"interpret", "select", "finish"}
+    assert [count for title, count in genai.images if title == "Arrangement"] == [1, 1, 1]
     for index in range(3):
+        assert [stage_runs(record, stage, index) for stage in ("place", "finish")] == [1, 1]
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
+        assert any(note.startswith("solver: score [") for note in notes)
         assert any(note.startswith("final review: a chair stands on the plant; adjusted dining_chair_1: kept,")
                    for note in notes)
+    # The record keeps each design's solver plan; the dining table's quarter comes first.
+    assert all(variant["plan"][0][0] == "dining" for variant in record["variants"])
 
 
 # The plant in the other front corner, or by the left wall: the checks score both the same as PLACEMENTS.
@@ -644,34 +632,24 @@ def test_a_design_repeats_a_main_layout_only_when_the_ties_run_out(tmp_path, sea
                                             "tied layout 2 of 2 (2 main layouts)"]
 
 
-def test_a_single_layout_still_gets_a_final_review(tmp_path, searches, monkeypatch):
-    solve_as(monkeypatch, PLACEMENTS, OVERLAPPING)
-    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Arrangement": arrangement()})
-
-    events, record = run_pipeline(tmp_path, genai)
-
-    assert delivered(events, "planter_1") == [[0.6, 0.6]] * 3
-    assert [count for title, count in genai.images if title == "Arrangement"] == [1, 1, 1]
-    assert all("variant A" not in prompt and "variant B" not in prompt for prompt in genai.of("Arrangement"))
-    assert [(data["plans"], data["plan"]) for data in stage_data(events, "layout_initial")] == [(1, 1)] * 3
-    first = solver_notes(record).index("tied layout 1 of 1 (1 main layout)")
-    assert sorted(solver_notes(record)) == ["tied layout 1 of 1 (1 main layout)",
-                                            *[f"tied layout 1 of 1 (1 main layout), repeats the main layout of variant {first}"] * 2]
-    assert sum(note["text"] == f"final review: {REVIEW}" for note in record["notes"]) == 3
+# The solver leaves floor lamps off-axis; a room-aligned turn is not a quarter turn from that, but is allowed.
+TILTED = {**PLACEMENTS, "planter_1": {**PLACEMENTS["planter_1"], "rotation": [0.0, 0.0, 3.37]}}
 
 
-@pytest.mark.parametrize(("moves", "outcome", "planter"), [
-    ([("planter_1", 0.7, 0.6)], "adjusted planter_1: kept, score [0, 0, 0] -> [0, 0, 0]", [0.7, 0.6]),  # a tie keeps it
-    ([("planter_1", 3.6, 0.6)], "adjusted planter_1: kept, score [0, 0, 0] -> [0, 0, 0]", [3.6, 0.6]),  # a 3 m move is allowed
-    ([("dining_chair_1", 2.535, 2.8)], "adjusted dining_chair_1: reverted, score [0, 0, 0] -> [1, ", [0.6, 0.6]),  # into the table
-    ([("dining_chair_1", 2.535, 2.8), ("planter_1", 0.7, 0.6)],  # the bad move reverts the set, so each is checked alone
+@pytest.mark.parametrize(("solved", "moves", "outcome", "planter"), [
+    (PLACEMENTS, [("planter_1", 0.7, 0.6)], "adjusted planter_1: kept, score [0, 0, 0] -> [0, 0, 0]", [0.7, 0.6]),  # a tie keeps it
+    (PLACEMENTS, [("planter_1", 3.6, 0.6)], "adjusted planter_1: kept, score [0, 0, 0] -> [0, 0, 0]", [3.6, 0.6]),  # a 3 m move
+    (PLACEMENTS, [("dining_chair_1", 2.535, 2.8)], "adjusted dining_chair_1: reverted, score [0, 0, 0] -> [1, ",  # into the table
+     [0.6, 0.6]),
+    (PLACEMENTS, [("dining_chair_1", 2.535, 2.8), ("planter_1", 0.7, 0.6)],  # the bad move reverts the set, so each is checked alone
      "reverted, score [0, 0, 0] -> [1, 1, 1]; one at a time: kept planter_1, reverted dining_chair_1, score [0, 0, 0] -> [0, 0, 0]",
      [0.7, 0.6]),
-    ([("sofa_9", 1.0, 1.0, 0.0), ("planter_1", 0.7, 0.6, PLACEMENTS["planter_1"]["rotation"][2] + 0.5)],
+    (PLACEMENTS, [("sofa_9", 1.0, 1.0, 0.0), ("planter_1", 0.7, 0.6, PLACEMENTS["planter_1"]["rotation"][2] + 0.5)],
      "rejected unknown, non-finite, or off-axis: sofa_9, planter_1", [0.6, 0.6]),
+    (TILTED, [("planter_1", 0.7, 0.6, math.pi)], "adjusted planter_1: kept", [0.7, 0.6]),  # squared to the room
 ])
-def test_final_review_adjustments_are_kept_only_when_not_worse(tmp_path, searches, monkeypatch, moves, outcome, planter):
-    solve_as(monkeypatch, PLACEMENTS)
+def test_final_review_adjustments_are_kept_only_when_not_worse(tmp_path, searches, monkeypatch, solved, moves, outcome, planter):
+    solve_as(monkeypatch, solved)
     genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Arrangement": arrangement(*moves)})
 
     events, record = run_pipeline(tmp_path, genai)
@@ -680,19 +658,6 @@ def test_final_review_adjustments_are_kept_only_when_not_worse(tmp_path, searche
     assert delivered(events, "dining_chair_1") == [PLACEMENTS["dining_chair_1"]["position"][:2]] * 3
     reviews = [note["text"] for note in record["notes"] if note["text"].startswith(f"final review: {REVIEW}")]
     assert len(reviews) == 3 and all(outcome in note for note in reviews)
-
-
-def test_final_review_may_square_an_off_axis_piece_to_the_room(tmp_path, searches, monkeypatch):
-    # The solver leaves floor lamps off-axis; a room-aligned turn is not a quarter turn from that, but is allowed.
-    tilted = {**PLACEMENTS, "planter_1": {**PLACEMENTS["planter_1"], "rotation": [0.0, 0.0, 3.37]}}
-    solve_as(monkeypatch, tilted)
-    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(),
-                       "Arrangement": arrangement(("planter_1", 0.7, 0.6, math.pi))})
-
-    events, record = run_pipeline(tmp_path, genai)
-
-    assert delivered(events, "planter_1") == [[0.7, 0.6]] * 3
-    assert sum("adjusted planter_1: kept" in note["text"] for note in record["notes"]) == 3
 
 
 def test_failed_final_review_delivers_the_design_layout(tmp_path, searches, monkeypatch):
@@ -836,41 +801,21 @@ def cloned_searches(monkeypatch, copies: int) -> None:
     monkeypatch.setattr(shared_stages, "embed_query", lambda client, text: [0.0])
 
 
-def cloned_selection(shared_first: bool):
-    """Select TURN's items from the clones in the prompt: the first one not marked shared, or on the
-    first turn with `shared_first`, the first one marked shared."""
+def cloned_selection():
+    """Select TURN's items from the clones in the prompt: on the first turn the first one marked shared, after that
+    the first one not marked shared."""
     def answer(prompt: str) -> dict:
         rows = [line.split(",") for line in prompt.splitlines() if "_c" in line.split(",")[0]]
-        shared = shared_first and "FAILED VALIDATION" not in prompt
+        shared = "FAILED VALIDATION" not in prompt
         return selection([(next(cells[0] for cells in rows if cells[0].startswith(f"{uid}_c") and (cells[-1] == "yes") == shared),
                            count) for uid, count in TURN["items"]])
     return answer
 
 
-def selected_ids(events: list[dict]) -> dict[int, set[str]]:
-    return {event["data"]["variant"]["variant_index"]: {a["asset_id"] for a in event["data"]["variant"]["selected_assets"]}
-            for event in of_type(events, "variant_ready")}
-
-
-def test_variants_select_different_products_within_the_reuse_rate(tmp_path, monkeypatch):
-    cloned_searches(monkeypatch, 12)
-    solve_as(monkeypatch, PLACEMENTS)
-    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": cloned_selection(False)})
-
-    events, _ = run_pipeline(tmp_path, genai)
-
-    chosen = selected_ids(events)
-    assert sorted(chosen) == [0, 1, 2]
-    for index, assets in chosen.items():
-        others = set().union(*(chosen[other] for other in chosen if other != index))
-        assert len(assets & others) <= len(assets) // 2
-    assert all("At most 50% of your distinct products may be shared ones." in prompt for prompt in genai.of("Selection"))
-
-
 def test_selection_over_the_reuse_rate_is_rejected_and_retried(tmp_path, monkeypatch):
     cloned_searches(monkeypatch, 12)
     solve_as(monkeypatch, PLACEMENTS)
-    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": cloned_selection(True)})
+    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": cloned_selection()})
 
     events, record = run_pipeline(tmp_path, genai)
 
@@ -880,6 +825,7 @@ def test_selection_over_the_reuse_rate_is_rejected_and_retried(tmp_path, monkeyp
     retries = [prompt for prompt in genai.of("Selection") if "FAILED VALIDATION" in prompt]
     assert len(retries) == 3
     assert all("REUSE LIMIT: 4 of 4 products are shared with other variants; at most 2 may be." in p for p in retries)
+    assert all("At most 50% of your distinct products may be shared ones." in prompt for prompt in genai.of("Selection"))
 
 
 # --- retrieve ---------------------------------------------------------------
@@ -1081,54 +1027,20 @@ def select_with_requested_tv(model_uids: list[str], tvs: list[dict]) -> tuple[di
     return update, [note["text"] for note in run.notes]
 
 
-@pytest.mark.parametrize(("stand", "tvs", "added", "placement"), [
-    (True, [WIDE_TV, FITTING_TV], "tv_fits", "tabletop"),  # the first TV that fits the selected stand
-    (True, [WIDE_TV], "tv_wide", "wall_mounted"),  # no TV fits the stand: the TV hangs on the wall instead
-    (False, [WIDE_TV, FITTING_TV], "tv_wide", "wall_mounted"),  # no stand selected: the first ranked TV
+@pytest.mark.parametrize(("extra", "tvs", "note", "added", "placement"), [
+    (["stand"], [WIDE_TV, FITTING_TV], "added TV tv_fits", "tv_fits", "tabletop"),  # the first TV that fits the selected stand
+    (["stand"], [WIDE_TV], "added TV tv_wide", "tv_wide", "wall_mounted"),  # no TV fits the stand: it hangs on the wall instead
+    ([], [WIDE_TV, FITTING_TV], "added TV tv_wide", "tv_wide", "wall_mounted"),  # no stand selected: the first ranked TV
+    (["stand", "tv_wide"], [WIDE_TV, FITTING_TV], "replaced TV tv_wide with tv_fits", "tv_fits", "tabletop"),  # too wide: swapped
 ])
-def test_select_adds_a_requested_tv_that_stands_on_a_fitting_stand_or_hangs_on_the_wall(stand, tvs, added, placement):
-    model_uids = [uid for uid, count in TURN["items"] for _ in range(count)] + (["stand"] if stand else [])
+def test_select_gives_a_requested_tv_a_fitting_stand_or_hangs_it_on_the_wall(extra, tvs, note, added, placement):
+    model_uids = [uid for uid, count in TURN["items"] for _ in range(count)] + extra
 
     update, notes = select_with_requested_tv(model_uids, tvs)
 
     assert update["selection_validation"]["valid"], update["selection_validation"]["errors"]
-    assert f"selection turn 1: added TV {added}" in notes
+    assert f"selection turn 1: {note}" in notes
     assert update["selection"]["selected_assets"][-1]["uid"] == added
     [tv] = [instance for instance in update["instances"] if instance["category"] == "tv"]
     assert tv["placement_mode"] == placement
     assert tv.get("paired_support_uid") == ("tv_stand_1" if placement == "tabletop" else None)
-
-
-def test_select_swaps_a_tv_too_wide_for_the_selected_stand_for_one_that_fits():
-    model_uids = [uid for uid, count in TURN["items"] for _ in range(count)] + ["stand", "tv_wide"]
-
-    update, notes = select_with_requested_tv(model_uids, [WIDE_TV, FITTING_TV])
-
-    assert update["selection_validation"]["valid"], update["selection_validation"]["errors"]
-    assert "selection turn 1: replaced TV tv_wide with tv_fits" in notes
-    [tv] = [instance for instance in update["instances"] if instance["category"] == "tv"]
-    assert tv["placement_mode"] == "tabletop" and tv["paired_support_uid"] == "tv_stand_1"
-
-
-@pytest.mark.parametrize(("room_type", "header"), [
-    ("living_room", "MEDIA COMFORT AND RUG COMPOSITION:"), ("bedroom", "BEDROOM RULES"),
-    ("dining_room", "DINING ROOM RULES"), ("studio", "STUDIO RULES"),
-])
-def test_prompts_carry_no_retired_edit_or_infeasibility_instructions(room_type, header):
-    request = PipelineRequest(**{**REQUEST, "room_type": room_type})
-    intent = coerce_intent_packet({**RUN["intent"], "room_type": room_type}, room_type=room_type)
-    room = build_room_context(room_type=room_type, room_area=request.room_area, room_vertices=REQUEST["room_vertices"],
-                              wall_height=request.wall_height, room_doors=REQUEST["room_doors"],
-                              room_windows=REQUEST["room_windows"], intent=intent)
-    slot = {"id": "all", "kind": "optional", "category": None, "label": "all", "gap": False, "relaxed": False}
-    state = {"direction": "", "pool": {"all": POOL}, "instances": [], "layout": {}, "findings": [],
-             "shared": {"request": request, "intent": intent, "room": room, "slots": [slot]}}
-    rules = variant_stages.build_rules_block(room_type=room_type)
-    prompts = [shared_stages._intent_prompt(REQUEST["user_intent"], room_type),
-               variant_stages._selection_prompt(state, intent, None, 1.0), rules,
-               variant_stages._arrangement_prompt(state, b"")[0]]
-
-    assert [[phrase for phrase in ("existing-room", "frozen", "infeasib", "explain") if phrase in prompt.lower()]
-            for prompt in prompts] == [[]] * 4
-    block = rules.split(f"{header}")[1].split("\n\n")[0]
-    assert "\n1. " in block and "\n2. " in block

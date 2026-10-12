@@ -93,38 +93,6 @@ def dining_placement_facts(assets: list[dict[str, Any]]) -> list[dict[str, Any]]
     return facts
 
 
-def dining_chair_table_facts(layout: dict[str, Any], assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Current chair/table separation in world coordinates, not a layout repair."""
-    groups = _functional_group_assets(layout, assets)
-    facts = []
-    for chair in groups["dining_chairs"]:
-        if not groups["dining_tables"]:
-            break
-        table = min(groups["dining_tables"], key=lambda item: item.poly.distance(chair.poly))
-        nx, ny = math.cos(chair.rot_z), math.sin(chair.rot_z)
-        if (table.pos[0] - chair.pos[0]) * nx + (table.pos[1] - chair.pos[1]) * ny <= 0:
-            continue  # Facing-away validation must be resolved before an edge-normal gap is meaningful.
-        ray_length = math.dist(chair.pos[:2], table.pos[:2]) + math.hypot(table.width, table.depth)
-        if not LineString([chair.pos[:2], (chair.pos[0] + ray_length * nx,
-                                          chair.pos[1] + ray_length * ny)]).intersects(table.poly):
-            continue  # A chair beside the table must first aim at an occupied edge.
-        table_near_edge = min(x * nx + y * ny for x, y in table.poly.exterior.coords)
-        chair_front = chair.pos[0] * nx + chair.pos[1] * ny + chair.depth / 2
-        gap = table_near_edge - chair_front
-        shift = gap - DINING_CHAIR_GAP_M
-        facts.append({
-            "chair": chair.uid, "table": table.uid,
-            "chair_center_xy": chair.pos[:2], "table_center_xy": table.pos[:2],
-            "chair_front_direction_xy": [round(nx, 5), round(ny, 5)],
-            "signed_edge_gap_m": round(gap, 5), "target_edge_gap_m": DINING_CHAIR_GAP_M,
-            "chair_translation_to_target_gap_xy_m": [round(shift * nx, 5), round(shift * ny, 5)],
-            "chair_center_at_target_gap_xy": [round(chair.pos[0] + shift * nx, 5),
-                                               round(chair.pos[1] + shift * ny, 5)],
-            "required_pullout_m": DINING_PULLOUT_M,
-        })
-    return facts
-
-
 def dining_layout_measurements(
     layout: dict[str, Any], assets: list[dict[str, Any]],
     boundary: list[list[float]], room_area: tuple[float, float],

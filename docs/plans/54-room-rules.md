@@ -299,6 +299,90 @@ above 3.0 by more than chance (0.5), studio overall and use of space above
 3.0, no case's layout quality down by more than 0.5, every design delivered,
 selection turns not up by more than one on average.
 
+## Changes during implementation
+
+Phase 1:
+
+- The dining light's 0.90 m maximum is advisory: a non-critical
+  `light_too_high_over_table` finding and a preflight warning. Pendants hang
+  flush to the ceiling, so a blocking maximum would reject most catalog
+  pendants. Below 0.76 m stays critical and a preflight error.
+- The solver's living-dining gap measures the dining chairs as well as the
+  table, so the seated group stays clear of the sofa. The new thresholds had
+  tipped a tie in the golden studio toward chairs beside the sofa.
+- `WALL_MOUNT_Z` (now 1.5 m) is the bottom of wall art, not its center, as it
+  was before; switching to a center height conflicts with the wall-mount
+  check's 1.2 m minimum. Left for a later change.
+- Not done: the solver costs for a rug 0.3 m wider than the sofa and a 0.65 m
+  seat pitch.
+
+Phase 2:
+
+- The new required pieces (a lamp, accent seats, nightstands, a dresser or
+  wardrobe, a sideboard or cabinet, a pendant or chandelier) are `gap_ok`
+  entries of `room_requirements`, checked by one loop in `validate_selection`
+  that blocks unless a fit step was applied. Lighting is required this way,
+  not through `BLOCKING_REQUIRED_ROLES`, and leaves `REQUIRED_CATEGORIES`.
+- A `gap_ok` slot that finds no product is a gap, and validation never
+  requires a piece the variant's candidates hold none of, so a missing catalog
+  category cannot fail every turn. A count the brief states for a piece's
+  categories caps the count required ("one nightstand" with a queen bed).
+- The accent seats, clothes storage and dining pieces are skipped for a
+  minimal or space-first brief, as the digest already skips the dining
+  suggestions; a piece is skipped when the brief excludes any of its
+  categories or their siblings.
+- No `painting` slot: no catalog product uses the category. `pendant` (9
+  prepared products, against 6 `pendant_light`) is now an alias of
+  `pendant_light`, so the overhead slot finds them.
+- The size checks are errors only when the candidates hold a product that
+  passes, else warnings. The coffee table width against the sofa is always a
+  warning: 44% of catalog coffee tables suit a 2.3 m sofa, 11% a 2.8 m one.
+- The table depth rule is in `dining_fit_envelopes`, so the preflight's edge
+  length error and the solver's chair arrangements both follow it.
+- A spacious dining room with no stated count passes with 4 to 6 chairs; the
+  preflight checks the table seats them. Below 25 m² a studio gets no dining
+  slot unless the brief asks for one; a selected dining group is still
+  checked.
+- A medium living room gets storage as an optional digest category, as the
+  phase list says, not as a required piece.
+- Left for phase 3: the policy strings and the digest still call dining
+  storage and lights suggestions and list the bedside pieces as optional; the
+  selection prompt's new lines state what is required.
+
+Phase 4 (crowding):
+
+Benchmark designs sat near 155% of the comfortable load in small living rooms
+and studios, because selection enforced only the floor. Load limits are now the
+share of the usable floor (doors excluded) that floor furniture covers, as real
+footprint (width x depth, no x2), comfortable target / maximum:
+
+| Room | Compact | Medium | Spacious |
+|---|---|---|---|
+| Living room | 0.22 / 0.30 | 0.27 / 0.35 | 0.30 / 0.38 |
+| Bedroom | 0.42 / 0.50 | 0.35 / 0.43 | 0.30 / 0.38 |
+| Dining room | 0.32 / 0.40 | 0.30 / 0.38 | 0.28 / 0.36 |
+| Studio | 0.35 / 0.43 | 0.32 / 0.40 | 0.30 / 0.38 |
+
+- Load limits by room type and size class (`ROOM_THRESHOLDS`). The sparse
+  floor is halved to real-footprint units (0.15 / 0.16 / 0.125), still 0 for
+  dining rooms and studios. Only floor furniture counts: rugs, wall- and
+  ceiling-mounted pieces, tabletop items and a TV on its stand do not. The
+  digest keeps its field names; `comfortable_load_sqm` and
+  `overcrowded_load_sqm` hold the target and the maximum.
+- `validate_selection` enforces the maximum with an `OVERCROWDED` error. It is
+  a warning after a fit step, or when the pieces filling the required roles
+  alone go over it. The prompt asks the model to stay at or under the target
+  and states the maximum.
+- Fewer required extras: a living room requires one accent seat only when
+  spacious (none when compact or medium); a nightstand on each side of a
+  1.4 m+ bed is required only in a spacious bedroom.
+- The final check never removes the anchor (bed, sofa, dining table); findings
+  that name only the anchor stay and the design is delivered with them.
+- The pre-selection fit estimate (`build_fit_check`, `fit_warning`) measures
+  category loads with a clearance ring, a different unit, so it keeps the old
+  size-only ratios as `FIT_ESTIMATE_THRESHOLDS`. Its uncalled `exact_assets`
+  path (measured footprint x2) is deleted.
+
 ## Unresolved questions
 
 None. The values were chosen from design practice as asked; any row above can

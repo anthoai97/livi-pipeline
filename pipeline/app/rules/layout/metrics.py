@@ -148,6 +148,7 @@ def serialize_layout_issues(issues: dict[str, Any]) -> dict[str, Any]:
         "service_corridor_violations": list(
             issues.get("service_corridor_violations", [])
         ),
+        "window_front_violations": list(issues.get("window_front_violations", [])),
     }
 
 def get_asset_by_uid(uid: str, assets: list[dict[str, Any]]) -> dict[str, Any]:
@@ -234,6 +235,9 @@ def issue_counts(
         if "P2" in tiers
         else 0,
         "service_corridor": len(issues.get("service_corridor_violations", []))
+        if "P2" in tiers
+        else 0,
+        "window_front": len(issues.get("window_front_violations", []))
         if "P2" in tiers
         else 0,
     }

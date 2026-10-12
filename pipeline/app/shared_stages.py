@@ -123,13 +123,13 @@ Operation: NEW_DESIGN
 
 Return JSON only. Use canonical categories from the schema.
 Rules:
-- The selected or saved room purpose is authoritative: room_type must be {room_type}.
+- The selected room purpose is authoritative: room_type must be {room_type}.
 - Studio furnishing policy:
   {STUDIO_FURNISHING_GUIDANCE if room_type == "studio" else "Not applicable to this room type."}
   For studio TV requests, use functional_hints `tv_from_bed` when only bed viewing is requested,
   `tv_shared_viewing` when viewing from both bed and sofa is requested, or `tv_from_sitting` when
-  sofa/sitting viewing is explicitly requested. Unrelated edits preserve the saved viewing target;
-  a new TV defaults to sitting. Do not fabricate user counts from studio furnishing defaults.
+  sofa/sitting viewing is explicitly requested. A TV defaults to sitting. Do not fabricate
+  requested items or counts from studio furnishing defaults.
   A conflicting room name in the prose does not change this selected room purpose.
   Bed frames, bunk beds, separate mattresses and headboards are unsupported.
 - This is a new design. requested_items describe the requested room contents.
@@ -161,15 +161,13 @@ Rules:
   a tv and its needed support, not a sofa or coffee table. A working setup or
   study/work-from-home area requests a desk and office_chair as a usable pair;
   preserve explicit desk-only, chair-only, exclusions and optional language.
-  On existing-room turns, reuse suitable current inventory instead of requesting
-  duplicate desks, chairs or media supports. Do not add these functions to a
-  generic bedroom request.
-- For a fresh bedroom, use this furnishing policy:
+  Do not add these functions to a generic bedroom request.
+- For a bedroom, use this furnishing policy:
   {BEDROOM_FURNISHING_GUIDANCE if room_type == "bedroom" else "Not applicable to this room type."}
-  For NEW_DESIGN bedroom TV/support and desk/office_chair requests, mark the group
+  For bedroom TV/support and desk/office_chair requests, mark the group
   optional=true unless the user makes it mandatory (must-have, do not omit, or
   an explicit non-optional exact count). This permits dropping whole lower-priority
-  groups for space. Do not apply this default optionality to existing-room edits.
+  groups for space.
   Wardrobes are also opt-in: extract a wardrobe request only for an explicit wardrobe/armoire
   or hanging-clothes storage request, never from a generic bedroom brief.
 - For a dining room, use this furnishing policy:
@@ -177,13 +175,12 @@ Rules:
   Interpret "seating for six", "a table for six" and "six dining chairs" as dining_chair
   count=6, exact=true. Preserve other explicit seating quantities in the same way.
   A bare request for dining chairs without a stated quantity does not impose count=1;
-  leave it optional=true so the fresh-design default applies. Do not fabricate a
+  leave it optional=true so the default count applies. Do not fabricate a
   user-requested four-chair count when seating quantity is unspecified.
-  Suggested dining storage, overhead lighting and wall art are conditional design
-  choices, not requested_items or requested_categories unless the user asks for them.
+  The sideboard, overhead light and wall art the policy adds are not requested_items
+  or requested_categories unless the user asks for them.
   Preserve explicit minimal-furniture/essentials-only requests in functional_hints
   as minimal_furniture; a minimalist style alone does not mean an unfurnished room.
-  Existing-room requests never reapply fresh-design suggestions or default counts.
   A dining table means a standalone table, not a coffee table, bar table or bundled set.
 - price_constraints should capture per-item catalog price filters. Use max_price
   for under/below/less-than requests, min_price for above/over/more-than
@@ -270,7 +267,7 @@ async def room(state: PipelineState, ctx: StageContext) -> PipelineState:
 FETCH = 30
 KEEP = {"requested": 10, "required": 10, "optional": 6, "decor": 6}
 RANKED_KEEP = {"requested": 6, "required": 6, "optional": 4, "decor": 4}
-DECOR_CATEGORIES = ("planter", "sculpture", "floor_mirror", "wall_mirror")
+DECOR_CATEGORIES = ("planter", "sculpture", "floor_mirror", "wall_mirror", "wall_art")
 _ATTRIBUTE_KEYS = ("colors", "styles", "materials")
 # Requested-item limits a slot carries: sizes in metres, then strict prepared attributes.
 LIMIT_KEYS = ("min_width_m", "max_width_m", "min_depth_m", "max_depth_m", "min_height_m", "max_height_m", *_ATTRIBUTE_KEYS)
@@ -320,8 +317,9 @@ def plan_slots(intent: Record, room: Record, budget: float) -> list[Record]:
     canonical category, or None), `count`, `text`
     (search text), `categories` (prepared category values), `max_price`,
     `limits` (requested size limits and strict attributes), `strict_brands`,
-    `preferred_brands`, `design_only`, `required`, `relaxed` (searched without
-    the request's limits), and `gap`.
+    `preferred_brands`, `design_only`, `required`, `gap_ok` (a completeness
+    piece, a gap when nothing is found), `relaxed` (searched without the
+    request's limits), and `gap`.
     """
     room_type = room["room_type"]
     width, depth = room["room_area"]
@@ -334,7 +332,7 @@ def plan_slots(intent: Record, room: Record, budget: float) -> list[Record]:
     slots: list[Record] = []
 
     def add(kind: str, slot_id: str, canonical: set[str], *, label: str = "", item: Record | None = None,
-            count: int = 0, required: bool = False, design_only: bool = False) -> None:
+            count: int = 0, required: bool = False, design_only: bool = False, gap_ok: bool = False) -> None:
         kept = [asset["category"] for asset in filter_oversized_seating([{"category": c} for c in sorted(canonical)], width, depth)]
         if not kept:
             return
@@ -360,6 +358,7 @@ def plan_slots(intent: Record, room: Record, budget: float) -> list[Record]:
             "preferred_brands": _brands(intent, kept, required=False),
             "design_only": design_only,
             "required": required,
+            "gap_ok": gap_ok,
             "relaxed": False,
             "gap": False,
         })
@@ -375,7 +374,8 @@ def plan_slots(intent: Record, room: Record, budget: float) -> list[Record]:
         add("requested", item["canonical_category"], canonical, label=item["label"], item=item, count=item["count"], required=covers)
     for need in requirements["required"]:
         if need["decor_only"] or not set(need["categories"]) & requested_categories:
-            add("required", need["role"], set(need["categories"]), count=need["count"], required=True, design_only=need["decor_only"])
+            add("required", need["role"], set(need["categories"]), count=need["count"], required=True,
+                design_only=need["decor_only"], gap_ok=need["gap_ok"])
         else:
             # The rest of a covered role stays a choice, such as side tables beside a requested coffee table.
             add("optional", need["role"], set(need["categories"]) - requested_categories - excluded)
@@ -478,10 +478,10 @@ async def retrieve(state: PipelineState, ctx: StageContext) -> PipelineState:
 
     slots, pool = [], {}
     for slot, kept, note in await asyncio.gather(*(search(slot) for slot in plan_slots(intent, room_context, request.budget))):
-        # Only a requested item can be a gap; an empty required slot fails selection validation.
-        gap = not kept and slot["kind"] == "requested"
+        # A requested item or a completeness piece can be a gap; another empty required slot fails selection validation.
+        gap = not kept and (slot["kind"] == "requested" or slot["gap_ok"])
         if gap:
-            note = "; ".join(filter(None, [note, f"requested {slot['label']} has no eligible catalog product; reported as a gap"]))
+            note = "; ".join(filter(None, [note, f"{slot['kind']} {slot['label']} has no eligible catalog product; reported as a gap"]))
         elif not kept and slot["required"]:
             note = "; ".join(filter(None, [note, f"required {slot['label']} has no eligible catalog product"]))
         if note:

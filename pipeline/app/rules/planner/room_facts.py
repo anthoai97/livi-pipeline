@@ -5,6 +5,7 @@ from app.rules.protected_paths import protected_paths_for_intent
 from app.rules.room_policy import normalize_room_type
 
 from app.rules.pipeline_shared import (
+    DEFAULT_WALL_HEIGHT_M,
     door_clearance_rect,
     door_opening_rect,
     infer_wall_from_center,
@@ -354,7 +355,7 @@ def build_room_context(
     """Room context for one request: geometry facts, policy, and the fit estimate.
 
     intent is the cleaned intent (coerce_intent_packet). Returns the request
-    geometry plus:
+    geometry (wall_height falls back to DEFAULT_WALL_HEIGHT_M) plus:
     - protected_paths: circulation paths the layout must keep clear (P1).
     - facts: walls, openings, blocked_zones, candidate_anchor_walls.
     - digest: room_scale, density_budget, max_counts_by_category (category
@@ -398,7 +399,7 @@ def build_room_context(
         "room_type": room_type,
         "room_area": room_area,
         "room_vertices": vertices,
-        "wall_height": wall_height,
+        "wall_height": float(wall_height or DEFAULT_WALL_HEIGHT_M),
         "room_doors": doors,
         "room_windows": windows,
         "protected_paths": protected_paths,

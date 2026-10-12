@@ -263,6 +263,12 @@ def format_issues(issues: dict[str, Any]) -> str:
             "- SERVICE CORRIDOR: "
             f"{item['uid']} is between {item['sofa']} and {item['table']}"
         )
+    for item in issues.get("window_front_violations", []):
+        lines.append(
+            "- WINDOW FRONT (advisory): "
+            f"{item['uid']} ({item['height_m']:.2f}m tall) stands in front of window #{item['window']}, "
+            f"above its {item['sill_height_m']:.2f}m sill"
+        )
     return "\n".join(lines) if lines else "No issues."
 
 def format_layout(layout: dict[str, Any], assets: list[dict[str, Any]]) -> str:

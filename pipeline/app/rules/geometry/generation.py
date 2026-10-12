@@ -5,6 +5,7 @@ from typing import Any
 from shapely.geometry import Polygon
 from app.rules.planner.seed_guidance import build_seed_layout_plan
 from app.rules.pipeline_shared import (
+    DEFAULT_WALL_HEIGHT_M,
     WALL_MOUNT_Z,
     ceiling_mount_z,
     is_ceiling_mounted_asset,
@@ -38,13 +39,15 @@ def generate_deterministic_layout_with_report(
     planner_guidance: dict[str, Any] | None = None,
     protected_paths: list[dict[str, Any]] | None = None,
     placed: dict[str, Any] | None = None,
+    wall_height: float = DEFAULT_WALL_HEIGHT_M,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build a deterministic seed layout for the LLM.
 
     assets are the selected instances (keyed by uid); planner_guidance is
     build_seed_guidance output. placed holds poses fixed beforehand (the code
     solver's groups): they are kept, their floor footprints block the other
-    items, and they get no outcome. Returns (layout, report): layout maps uid to
+    items, and they get no outcome. Ceiling-mounted items hang from wall_height,
+    the room's ceiling. Returns (layout, report): layout maps uid to
     {category, position, rotation, optional on_top_of} for placed items only;
     report holds placed_comfortably and placed_tightly uids, skipped outcomes
     ({uid, category, status: "skipped_<reason>", reason, ...}), and all outcomes.
@@ -118,7 +121,7 @@ def generate_deterministic_layout_with_report(
         if is_wall_mounted_asset(category, uid):
             z = WALL_MOUNT_Z
         elif is_ceiling_mounted_asset(category, uid):
-            z = ceiling_mount_z(asset.get("height", 0.3))
+            z = ceiling_mount_z(asset.get("height", 0.3), wall_height)
         else:
             z = 0.0
 

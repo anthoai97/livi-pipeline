@@ -15,23 +15,45 @@ Tier model
 Use ``build_rules_block`` to assemble the slice each node needs.
 """
 
-from app.rules.pipeline_shared import (
-    CEILING_HEIGHT_M,
-    DOOR_CLEARANCE,
-    WALL_MOUNT_Z,
-)
+from app.rules.pipeline_shared import WALL_MOUNT_Z
 from app.rules.planner.fit_policy import SECTIONAL_MIN_ROOM  # noqa: F401 (re-exported)
-from app.rules.room_policy import BEDROOM_FURNISHING_GUIDANCE, STUDIO_FURNISHING_GUIDANCE
-from app.rules.layout.bedroom import BED_ACCESS_MIN_M, BED_HEADBOARD_MAX_GAP_M, BEDSIDE_HEAD_ZONE_M, BEDSIDE_MAX_GAP_M
-from app.rules.layout.constants import DINING_ACCESS_MIN_M, DINING_LIGHT_TABLE_MIN_GAP_M
-from app.rules.layout.comfort import SOFA_MEDIA_ACCESS_MIN_M, TV_VIEW_WIDTH_RANGE
+from app.rules.layout.bedroom import (
+    BED_ACCESS_MIN_M,
+    BED_HEADBOARD_MAX_GAP_M,
+    BED_TWO_SIDED_MIN_WIDTH_M,
+    BEDROOM_TV_MAX_FACING_DEG,
+    BEDSIDE_HEAD_ZONE_M,
+    BEDSIDE_MAX_GAP_M,
+    STORAGE_FRONT_M,
+)
+from app.rules.layout.constants import (
+    DINING_ACCESS_MIN_M,
+    DINING_CHAIR_FACING_MAX_DELTA_DEG,
+    DINING_CHAIR_GAP_M,
+    DINING_CHAIR_TABLE_MAX_GAP_M,
+    DINING_LIGHT_TABLE_MAX_GAP_M,
+    DINING_LIGHT_TABLE_MIN_GAP_M,
+    DINING_PULLOUT_M,
+    DINING_RUG_EXTENSION_M,
+    DINING_TWO_SIDED_MIN_DEPTH_M,
+    FLOOR_LAMP_REACH_RANGE_M,
+    TASK_CHAIR_DESK_MAX_GAP_M,
+    TASK_CHAIR_FACING_MAX_DELTA_DEG,
+)
+from app.rules.layout.comfort import (
+    SITTING_RUG_MIN_DEPTH_M,
+    SITTING_RUG_MIN_WIDTH_RATIO,
+    SOFA_MEDIA_ACCESS_MIN_M,
+    TV_VIEW_WIDTH_RANGE,
+)
+from app.rules.selection.constants import DINING_LIGHT_TABLE_INSET_M
 
-# Circulation widths (meters). Match the reference spec: 36 in / 22 in.
+# Circulation widths (meters). Match the reference spec: 36 in / 24 in.
 PATH_MAJOR_M = 0.91
-PATH_SECONDARY_M = 0.56
+PATH_SECONDARY_M = 0.60
 SEATING_CENTER_FIELD_M = 0.46  # 18 in radius around the conversation centroid
-SOFA_COFFEE_TABLE_DISTANCE_RANGE_M = (0.46, 0.61)
-SOFA_BACK_WALL_DISTANCE_RANGE_M = (0.08, 0.15)
+SOFA_COFFEE_TABLE_DISTANCE_RANGE_M = (0.38, 0.50)  # 15 to 20 in: reachable from the seat with legroom
+SOFA_BACK_WALL_DISTANCE_RANGE_M = (0.0, 0.15)  # flush is fine
 WALL_FLUSH_MAX_GAP_M = 0.2
 
 
@@ -58,16 +80,19 @@ DESIGN_RULES = {
         "A floor lamp stands right at the end of the seat or bed it lights, within arm's reach, not across the room.",
     ),
     "living_room": (
-        f"Leave the roomy end of {SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[0]:.2f}-{SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[1]:.2f} m "
-        "between the sofa and the coffee table, and about 0.45 m between an accent chair and the coffee table.",
+        (f"Leave the roomy end of {SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[0]:.2f}-{SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[1]:.2f} m "
+         "between the sofa and the coffee table, and about 0.45 m between an accent chair and the coffee table."),
         "Accent chairs face the coffee table and the TV or sofa, not a wall.",
     ),
     "bedroom": (
         "The bed's headboard is against a wall, with access from its sides and foot.",
+        "The bed is seen from the door but not in line with it.",
     ),
     "studio": (
         "The bed's headboard is against a wall, with access from its sides and foot.",
-        "Sleeping, sitting and dining each take their own part of the room.",
+        "The bed takes the corner of the room farthest from the door.",
+        "The sofa's back or a shelf separates sitting from sleeping.",
+        "A dining table stands by the entry wall.",
     ),
     "dining_room": (
         "The table sits where every chair can pull out, with a clear path around it.",
@@ -107,7 +132,7 @@ GEOMETRY_DEFINITIONS = f"""DEFINITIONS:
 - Room boundary: closed finished-floor polygon. All assets stay inside it.
 - Fixed obstacles: columns, fireplaces, built-ins, radiators, vents, stair openings.
 - Openings: doors and windows cut into walls; doors always keep a clear zone, while windows stay clear only for assets that require window clearance.
-- Doorway clear zone: rectangle in front of each doorway, full opening width by {DOOR_CLEARANCE:.2f}m deep, kept furniture-free.
+- Doorway clear zone: rectangle in front of each doorway, full opening width wide and as deep as the opening is wide (the door's swing), kept furniture-free.
 - Major path: circulation band between groups, ≥{PATH_MAJOR_M:.2f}m clear.
 - Secondary path: access band to a single piece, ≥{PATH_SECONDARY_M:.2f}m clear.
 - Hard no-place zone: union of all fixed obstacles, doorway clear zones, protected paths, and any window footprint that the current asset must keep clear.
@@ -126,9 +151,9 @@ GEOMETRY_DEFINITIONS = f"""DEFINITIONS:
 P0_RULES = f"""P0 — ARCHITECTURE & LOCAL HARD CONSTRAINTS (must never be violated):
 - Every asset stays inside the room boundary.
 - No asset overlaps a fixed obstacle or door.
-- No asset sits inside a doorway clear zone ({DOOR_CLEARANCE:.2f}m in front of any door).
+- No asset sits inside a doorway clear zone (in front of any door, as deep as the door is wide).
 - Window rule: floor assets with z≤0.1 may sit under / in front of a window, including sofas; assets with z>0.1 and TV / tv_stand / media_unit pieces must keep windows clear.
-- Z-axis: floor items z=0; wall-mounted items snap to a wall at z={WALL_MOUNT_Z:.2f}m (a wall-mounted TV centers its screen at seated eye level, above any furniture under it) and must keep their full height within the {CEILING_HEIGHT_M:.2f}m wall; ceiling-mounted items hang so the asset top sits at z={CEILING_HEIGHT_M:.2f}m; items resting on another asset (bowl on table, vase on shelf, lamp on side_table, pillow on sofa, etc.) declare `on_top_of` with the parent uid and leave z=0 — the runtime computes z from the parent's top surface (seat height for sofas/chairs/beds)."""
+- Z-axis: floor items z=0; wall-mounted items snap to a wall at z={WALL_MOUNT_Z:.2f}m (a wall-mounted TV centers its screen at seated eye level, or reclined eye level when it serves a bed, above any furniture under it) and must keep their full height within the room's wall height; ceiling-mounted items hang so the asset top sits at the room's wall height; items resting on another asset (bowl on table, vase on shelf, lamp on side_table, pillow on sofa, etc.) declare `on_top_of` with the parent uid and leave z=0 — the runtime computes z from the parent's top surface (seat height for sofas/chairs/beds)."""
 
 
 P1_RULES = f"""P1 — ROOM ZONING, CIRCULATION & DESIGNABILITY (the room must be designable):
@@ -161,7 +186,7 @@ P2_RULES = f"""P2 — COMPOSITION & FUNCTION (apply after P0 and P1 are clean):
   * tv stands and media units face the primary seating.
   * in TV-focused rooms, TV / tv_stand / media_unit pieces center on the focal wall directly opposite the primary sofa whenever the wall span allows.
   * chairs that belong to a seating group (armchairs, accent chairs, lounge chairs paired with a sofa/sectional) face the shared coffee table at the group's center; if there is no coffee table, face the conversation centroid.
-  * compute each group chair's own yaw as atan2(table_y-chair_y, table_x-chair_x). Its FRONT arrow should cross the associated tabletop footprint; aiming at another chair while both arrows miss the table does not satisfy this. Toe chairs inward when needed, using their rotated footprints to recheck clearance. For multiple seating groups, use each chair's own nearby table; task/dining chairs face their desk/dining table. Explicit user-facing directions and frozen edit scope take precedence; table-free conversation groups do not require an imaginary table.
+  * compute each group chair's own yaw as atan2(table_y-chair_y, table_x-chair_x). Its FRONT arrow should cross the associated tabletop footprint; aiming at another chair while both arrows miss the table does not satisfy this. Toe chairs inward when needed, using their rotated footprints to recheck clearance. For multiple seating groups, use each chair's own nearby table; task/dining chairs face their desk/dining table. Explicit user-facing directions take precedence; table-free conversation groups do not require an imaginary table.
   * desks face away from the wall behind them.
 - Visual balance: prefer matched pairs flanking a larger anchor.
 - Open living/dining zones keep at least 0.76m edge-to-edge clearance between the dining table footprint and living-zone seating or coffee tables.
@@ -173,6 +198,90 @@ _TIER_TEXT = {
     "P1": P1_RULES,
     "P2": P2_RULES,
 }
+
+# Each room's layout rules: a header, then short lines numbered in the prompt.
+_DINING_SEAT = (
+    f"Each dining chair faces its table edge within {DINING_CHAIR_FACING_MAX_DELTA_DEG:.0f} degrees, about "
+    f"{DINING_CHAIR_GAP_M:.2f} m from it (at most {DINING_CHAIR_TABLE_MAX_GAP_M:.2f} m), and its FRONT ray crosses the tabletop."
+)
+_DINING_PITCH = (
+    "Each seat takes max(0.60 m, chair width + 0.05 m) of its table edge; a table under "
+    f"{DINING_TWO_SIDED_MIN_DEPTH_M:.2f} m deep seats one long side only, three seats need a long edge, "
+    "and round or oval tables space seats evenly around them."
+)
+_DESK = (
+    f"A desk backs onto a wall; its chair faces the desk front within {TASK_CHAIR_FACING_MAX_DELTA_DEG:.0f} degrees, "
+    f"at most {TASK_CHAIR_DESK_MAX_GAP_M:.2f} m from it, with {BED_ACCESS_MIN_M:.2f} m clear behind the chair to pull it out."
+)
+ROOM_LAYOUT_RULES = {
+    "bedroom": ("BEDROOM RULES (take precedence over living-room guidance):", (
+        ("The complete bed anchors the room. A sofa, coffee table, TV or conversation group is not required; "
+         "living, dining and work rules apply only to selected groups."),
+        "The bed's FRONT points to its foot and its BACK is the headboard; depth runs head to foot, width across the bed.",
+        f"The headboard stands within {BED_HEADBOARD_MAX_GAP_M:.2f} m of a usable wall, facing into the room within 12 degrees.",
+        (f"Keep {BED_ACCESS_MIN_M:.2f} m clear along the foot ({PATH_MAJOR_M:.2f} m when it is the route to the door), "
+         f"and along both sides of a bed {BED_TWO_SIDED_MIN_WIDTH_M:.1f} m wide or more; a narrower bed, or any bed "
+         "in a compact bedroom, needs one clear side."),
+        (f"Nightstands stand beside the head within {BEDSIDE_MAX_GAP_M:.2f} m; only bedside pieces may use the top "
+         f"{BEDSIDE_HEAD_ZONE_M:.2f} m of a side strip. A bedside lamp declares on_top_of its nightstand."),
+        f"Keep {STORAGE_FRONT_M:.2f} m clear in front of each dresser, wardrobe, cabinet or storage unit.",
+        (f"A TV stands toward the bed's foot, facing the bed within {BEDROOM_TV_MAX_FACING_DEG:.0f} degrees, "
+         "and its stand keeps the foot strip clear."),
+        _DESK,
+        ("Group bedside pieces and lighting with the bed, and storage, mirror or reading pieces into useful areas, "
+         "not scattered on distant walls."),
+        "Use the full model half-extents with a 0.02-0.05 m gap from walls and neighbouring pieces; never round them down.",
+    )),
+    "dining_room": ("DINING ROOM RULES (take precedence over living-room guidance):", (
+        ("One standalone dining table anchors the dining chairs; no sofa, coffee table, media wall or bed is required. "
+         "Place the table and chairs first, then storage and decor."),
+        _DINING_SEAT,
+        _DINING_PITCH + " For four chairs prefer two on each long side.",
+        (f"Keep {DINING_PULLOUT_M:.2f} m clear behind each chair to pull it out ({DINING_ACCESS_MIN_M:.2f} m where a door "
+         "route or protected path passes behind), inside the room and free of other furniture."),
+        f"A sideboard or cabinet backs onto a usable wall with {STORAGE_FRONT_M:.2f} m clear in front.",
+        (f"A pendant or chandelier centers over the table, {DINING_LIGHT_TABLE_MIN_GAP_M:.2f}-"
+         f"{DINING_LIGHT_TABLE_MAX_GAP_M:.2f} m from the tabletop to its lowest point; never rescale the model."),
+        f"A rug, when selected, extends {DINING_RUG_EXTENSION_M:.2f} m past each table edge, so pulled-out chairs stay on it.",
+        ("Wall art hangs parallel to a usable wall, clear of openings, related to the table or sideboard. "
+         "No floor lamp stands where a chair pulls out."),
+    )),
+    "studio": ("STUDIO RULES (sleeping, sitting and any dining group share one room):", (
+        ("Place the bed, sofa and any dining table first as separate anchors, reserving their access together, then "
+         "their chairs, bedside pieces and accessories. The bed and sofa use different wall spans."),
+        (f"The headboard stands within {BED_HEADBOARD_MAX_GAP_M:.2f} m of a usable wall, facing in within 12 degrees. "
+         f"Keep {BED_ACCESS_MIN_M:.2f} m clear along the foot and one side, both sides for a bed "
+         f"{BED_TWO_SIDED_MIN_WIDTH_M:.1f} m wide or more outside a compact studio. Nightstands stand beside the head "
+         f"within {BEDSIDE_MAX_GAP_M:.2f} m."),
+        _DINING_SEAT,
+        _DINING_PITCH,
+        (f"Keep {DINING_PULLOUT_M:.2f} m clear behind each dining chair, free of the bed, sofa and other furniture. "
+         "For two diners, compare opposing and adjacent seats on both table axes; no chair backs onto a wall."),
+        ("Each rug, light and surface serves one group: a sitting rug its sofa and table, a dining rug its table and "
+         f"chairs, a pendant its own table at {DINING_LIGHT_TABLE_MIN_GAP_M:.2f}-{DINING_LIGHT_TABLE_MAX_GAP_M:.2f} m above it."),
+        ("A TV serves the sofa by default, or the bed or both when requested; the TV and each viewer face each other "
+         "within 45 degrees. For shared viewing the bed and sofa face the same TV from separate wall spans."),
+        "Prefer a wall-backed media group; a TV stand may stand free between groups as a divider, its back not facing another zone.",
+        f"Keep {STORAGE_FRONT_M:.2f} m clear in front of storage. " + _DESK,
+        "Walkways from the entry to each group stay continuous and cross no furniture or service band. A coffee table is optional.",
+    )),
+}
+MEDIA_RUG_RULES = (
+    f"A media console leaves at least {SOFA_MEDIA_ACCESS_MIN_M:.2f} m clear in the full-width band in front of a sofa.",
+    (f"A TV's viewing distance is {TV_VIEW_WIDTH_RANGE[0]:.1f}-{TV_VIEW_WIDTH_RANGE[1]:.1f} x its width, for each of its "
+     "sitting, bed or shared viewers. Estimate the seated viewer at sofa center minus 0.25 x depth along FRONT, the bed "
+     "viewer at its head edge plus 0.40 m toward the foot, and the screen at TV center plus half its depth. These are "
+     "comfort estimates, not hard limits."),
+    ("A sitting rug reaches under the sofa front into the seating area: its near edge within 0.10 m of the sofa front, "
+     "at least 0.30 m and 35% of its area in front of the sofa, at least "
+     f"{SITTING_RUG_MIN_WIDTH_RATIO:.0%} of the sofa width wide and {SITTING_RUG_MIN_DEPTH_M:.2f} m deep, and off other groups' beds and tables."),
+    "A centered bed rug balances its part under the bed with its part past the foot; bedside runners are fine.",
+    "Rug and viewing preferences never move furniture into access bands or change the selected pieces.",
+)
+
+
+def _numbered(rules: tuple[str, ...] | list[str]) -> str:
+    return "\n".join(f"{number}. {rule}" for number, rule in enumerate(rules, 1))
 
 
 def build_rules_block(
@@ -194,51 +303,11 @@ def build_rules_block(
         text = _TIER_TEXT.get(tier)
         if text:
             parts.append(text)
-    if room_type == "bedroom":
-        parts.append(f"""BEDROOM APPLICABILITY — takes precedence over living-only composition guidance:
-- The complete bed is the sleeping anchor. Do not require a sofa, coffee table, TV, or conversation group. Living/dining/task rules apply only to actual selected groups.
-- Compose the selected inventory as a furnished bedroom, not isolated objects on distant walls: group bedsides and lighting with the bed, and organize storage/mirror or selected reading pieces into useful areas. In spacious rooms use the available wall spans intentionally while preserving circulation; empty floor is not itself a defect. Do not add inventory during layout or override explicit sparse requests.
-- Bed FRONT/yaw points toward its FOOT; BACK is the HEADBOARD. Depth is full head-to-foot model length, width is cross-bed width, not an inferred mattress size.
-- Choose a usable wall for the headboard: full back edge within {BED_HEADBOARD_MAX_GAP_M:.2f}m and facing inward within 12 degrees of its normal. Do not violate openings to reach a wall.
-- Keep at least one continuous side-access strip and the full foot-access strip at least {BED_ACCESS_MIN_M:.2f}m clear. Prefer both sides clear; honor explicit two-sided access requests. A compact bedroom may have single-side access, but not zero-side access.
-- Only associated bedside furniture may occupy the upper {BEDSIDE_HEAD_ZONE_M:.2f}m head zone of a side strip; this is not an exemption for other furniture. Put nightstands beside the head, within {BEDSIDE_MAX_GAP_M:.2f}m edge gap. No detached or foot-end nightstands.
-- Use the full unrounded model half-extents, with a positive 0.02–0.05m safety gap from walls and adjacent furniture. A rounded center can otherwise put a bed through a wall or nightstand. For parallel bed/nightstand orientations, lateral center separation must exceed bed.width/2 + nightstand.width/2; rotate this relationship with the bed. Do not round these extents down.
-- Keep a {BED_ACCESS_MIN_M:.2f}m service band across each dresser/cabinet/wardrobe/storage front. This is access evidence, not a known drawer-extension dimension.
-- Bedside lamps declare on_top_of their fitted nightstand/support; keep existing physical support and child-follow-parent rules. Use complete bed assets only, never assemble separate mattresses, frames, or bedding.
-- A selected bedroom TV serves the bed: place it toward the FOOT, preferably centered opposite the headboard, with the bed front aimed toward the screen and the screen front aimed back toward the bed (both within 45 degrees). Use a clear wall span and the selected media support, if any; a TV does not require a sofa or coffee table. Keep the full bed foot-access strip clear of its stand.
-- A selected work setup is one desk/task-chair group: desk BACK toward the wall and FRONT toward the seated user, chair on the desk's FRONT side within its width, facing the desktop within 50 degrees and no more than 0.45m edge gap. Reserve another {BED_ACCESS_MIN_M:.2f}m behind the chair's full footprint for pull-out and access; neither bed/storage access nor doors/protected paths may be consumed. Check rotated footprints, not just chair centers. Do not add an unselected chair or desk during layout.
-- Preserve the selected rug, mandatory decor plant, exact inventory, door/window/protected-path rules, and frozen edit scope. Model-chosen poses are validated, never silently repaired.""")
-    elif room_type == "dining_room":
-        parts.append(f"""DINING ROOM APPLICABILITY — takes precedence over living-only guidance:
-- One standalone dining table anchors the selected dining chairs. No sofa, coffee table, media wall, bed, or wall-backed table is required. Place the table/chair group first; wall storage and decor follow. Preserve the exact selected inventory and frozen edit scope.
-- Chair FRONT faces its associated table within 50 degrees, with a positive 0.08–0.20m edge gap (maximum 0.45m). Use model dimensions, never center distance. On rectangular tables, chairs along each edge face perpendicular to that edge; distribute them evenly with at least max(0.60m, chair width + 0.05m) seat pitch. Use opposing sides before crowding corners. On round/oval tables distribute seats around the perimeter and check their full rotated footprints.
-- Every chair's FRONT ray must cross its tabletop (maximum miss 0.05m). Check the table's actual rotated long axis: three seats require a long edge; never line up three chairs across a narrow table end. Aim toward usable tabletop, not merely within an angle of its center.
-- Validate capacity on the edges actually occupied. Each rectangular-table seat needs its full max(0.60m, chair width + 0.05m) segment within the tabletop edge, without sharing another diner's segment. For four chairs prefer two on each long side. Two chairs across a roughly 1m short end do not fit even if both front arrows hit the table. Determine the long edge from width/depth AND yaw, not the field name. End seating is valid when it has sufficient space or the user requests it; near-square and curved tables use their own balanced arrangements.
-- Reserve {DINING_ACCESS_MIN_M:.2f}m clear behind every chair's full footprint for pull-out. This is additional to the chair depth and chair/table gap. Keep these bands inside the room and free of all other furniture. They may share empty circulation space. Keep door zones and protected routes clear in the seated layout; do not route entry through the tabletop.
-- Selected sideboards/cabinets face inward with their backs at a usable wall and a {DINING_ACCESS_MIN_M:.2f}m clear front service band. Do not infer drawer extension from model bounds.
-- Rugs are optional. If selected, center a sufficiently large rug under the table and all seated chairs; preferably extend it into chair pull-out space. An undersized decorative rug is a soft composition issue, not justification to remove selected furniture.
-- Selected paintings mount parallel to a usable wall, FRONT inward, clear of openings, and relate visually to the dining table or sideboard. Selected pendant/chandelier lighting centers above the table and follows ceiling-height rules. Leave at least {DINING_LIGHT_TABLE_MIN_GAP_M:.2f}m from tabletop to the light's lowest model point. Do not shorten or rescale the model to make it fit. Multiple requested pendants may distribute evenly along the table. Do not place floor lamps where a chair pulls out.
-- Reserve the complete table/chair/access envelope before placing optional extras. Consider rotating or repositioning the group or sideboard before sacrificing seating. Never change selected inventory during layout: report an infeasible optional item to selection feedback instead of squeezing diners onto the wrong table edges. Any selected centerpiece must leave each seated person's tabletop area usable.
-- Check actual table/chair proportions and metadata; full chair height is not seat height, and table bounds do not establish leg clearance. Keep a positive safety gap when using rounded coordinates.""")
-    if room_type == "studio":
-        parts.append(f"""STUDIO APPLICABILITY — sleeping, sitting and dining coexist in one room:
-- A floor-standing studio media support may stand between groups instead of against a wall. Preserve a usable freestanding TV/support pose, with cardinal heading, physical support, and clear circulation. This overrides the generic media-wall rule; wall-mounted displays still require a usable wall.
-- Prefer a wall-backed media group when a usable wall span supports good viewing and circulation. Compare closer wall-backed arrangements before choosing a floating console. A TV is front-viewed: its back should not become the focal object of another zone. Use freestanding media only as a deliberate zone edge/divider, with a considered exposed back and clear circulation around it. Do not place it arbitrarily in the room center or force it against a distant wall at the expense of viewing comfort. Preserve usable existing placements during targeted edits.
-- Reserve the full dining footprint including chair pull-out before filling the remaining wall spans with sleeping and sitting. For two diners, opposing seats are preferred when they fit; adjacent occupied edges are also valid when they preserve access. Compare both configurations and both table axes. Do not force opposing seats into a narrow strip or put a chair's back against a wall. If the dining group occupies one side of the room, bed/sofa/media must leave its service bands clear.
-- Preserve every selected group and exact inventory. Place the bed, sofa and dining table as independent anchors first, reserving their access envelopes together; then their associated chairs, bedsides, surfaces and accessories. Use different usable wall spans for bed and sofa where needed, not one shared anchor position.
-- Bed FRONT points toward the foot, BACK is the headboard. Keep the headboard within {BED_HEADBOARD_MAX_GAP_M:.2f}m of a usable wall, facing inward within 12 degrees. Reserve {BED_ACCESS_MIN_M:.2f}m continuous foot access and at least one side-access strip. Only a bedside serving the head may occupy the upper {BEDSIDE_HEAD_ZONE_M:.2f}m of a side strip; other groups remain obstacles. Nightstands sit beside the head within {BEDSIDE_MAX_GAP_M:.2f}m.
-- Dining chairs face the actual table edge within 50 degrees; front rays cross the tabletop with 0.08–0.20m edge gaps (maximum 0.45m). Reserve max(0.60m, chair width + 0.05m) per seat on the occupied edge; prefer opposing long edges for rectangular tables. Never put multiple seats on a narrow end that lacks capacity. Reserve {DINING_ACCESS_MIN_M:.2f}m behind each full chair footprint for pull-out, free of beds, sofas and all other furniture. Round/oval tables use balanced perimeter seats.
-- Every selected rug, light and surface belongs to a functional group. A sleeping rug need not reach the sofa or dining chairs; a dining rug covers its table/chairs, and a sitting rug serves its sofa/table. A dining pendant centers above its own table with at least {DINING_LIGHT_TABLE_MIN_GAP_M:.2f}m from tabletop to full model bottom. Other group lighting need not be above the dining table.
-- TV viewing_target is sitting by default, bed when requested, or shared. Plan the TV/support and each intended viewer with opposing headings, facing each other within 45 degrees, and use the screen-size comfort facts below. Perpendicular headings only work on an exact diagonal; move the complete media group to a usable span instead. For shared viewing, place bed and sofa in separate spans facing the same media group. Keep a TV on a support aligned with it and physically supported (a TV without one hangs on the wall), without blocking bed access. Do not force a bed-viewing TV to serve the sofa.
-- Selected wardrobes/storage need {BED_ACCESS_MIN_M:.2f}m front service space. A requested workstation is one desk/task-chair pair, chair at the desk FRONT within 0.45m gap and facing it within 50 degrees, plus {BED_ACCESS_MIN_M:.2f}m behind the chair for pull-out.
-- Keep entrance-to-sleeping, sitting and dining routes continuous; no route crosses furniture or consumes a required service band. All groups remain obstacles in every access check. Optional accessories must not steal core access. A coffee table is not mandatory when a useful sitting surface is absent or intentionally omitted for fit. Paintings remain parallel to usable walls, FRONT inward, clear of openings.
-- Never silently remove a core group to make layout pass. Report measured infeasibility to selection/fit negotiation. Targeted edits preserve unrelated groups and saved viewing targets.""")
+    if room_type in ROOM_LAYOUT_RULES:
+        header, rules = ROOM_LAYOUT_RULES[room_type]
+        parts.append(f"{header}\n{_numbered(rules)}")
     if "P2" in tiers:
-        parts.append(f"""MEDIA COMFORT AND RUG COMPOSITION:
-- A media console must leave at least {SOFA_MEDIA_ACCESS_MIN_M:.2f}m in the full-width service band directly in front of a sofa. Measure rotated footprints, not center distance; side consoles outside the band are different. This is a functional requirement. Coffee-table gaps use their own existing rule. Move only editable items and preserve other access bands.
-- Honor each TV's sitting/bed/shared viewing target. Prefer an estimated viewing distance of {TV_VIEW_WIDTH_RANGE[0]:.1f}–{TV_VIEW_WIDTH_RANGE[1]:.1f} times TV width. Estimate the seated viewer at sofa center minus 0.25*depth along FRONT; the bed viewer at its head edge plus 0.40m toward the foot; the screen at TV center plus half depth along FRONT. These are comfort heuristics, not measured eye positions or hard limits. For shared viewing check both viewers separately. Plan a usable media divider or nearer viewing group when a wall-to-wall arrangement is too distant; do not sacrifice circulation or frozen scope to meet a preference.
-- A sitting area rug should engage the sofa front and extend into the seating/table area, not sit mainly underneath or behind the sofa. Prefer at least 0.30m beyond the sofa front and 35% of rug area in front of it, with no more than 0.10m gap from the sofa front to the rug's near edge. Its lateral span should cover at least 90% of sofa width and its sofa-local depth should be at least 0.90m; a small isolated mat is a soft size issue. Keep sitting rugs off other groups' beds and dining tables. Full-sofa coverage is unnecessary. These preferences must not move furniture into access bands or change selected inventory.
-- For a centered sleeping area rug, balance under-bed depth with extension beyond the foot. Avoid placing most of the rug beyond the foot with less underlap than extension. Partial under-bed layouts and intentional bedside runners are valid. Respect each rug's selected functional group; never pull a sleeping rug toward dining or the sofa merely to satisfy another group's composition. Rug advice yields to access, bounds and frozen scope.""")
+        parts.append(f"MEDIA COMFORT AND RUG COMPOSITION:\n{_numbered(MEDIA_RUG_RULES)}")
     return "\n\n".join(parts)
 
 
@@ -256,81 +325,68 @@ def build_selection_guidance_block(
     """Layout implications that shape which asset set is pickable.
 
     The asset selector never places anything, but its picks decide whether a
-    layout is possible at all. This block translates the P0/P1 rules into
-    choices the selector can act on (anchor wall length, circulation budget,
-    sofa–table pairings, etc.).
+    layout is possible at all. This block translates the layout rules into
+    numbered choices the selector can act on (anchor wall length, circulation
+    budget, access bands, sofa–table pairings, etc.).
     """
+    bed_access = (
+        f"Reserve a usable headboard wall, {BED_ACCESS_MIN_M:.2f} m at the bed's foot, and {BED_ACCESS_MIN_M:.2f} m on "
+        f"both sides of a bed {BED_TWO_SIDED_MIN_WIDTH_M:.1f} m wide or more (one side for a narrower bed or in a compact room)."
+    )
+    dining_access = (
+        f"Allow chair depth + {DINING_CHAIR_GAP_M:.2f} m table gap + {DINING_PULLOUT_M:.2f} m pull-out on each occupied "
+        "table edge, with doors and protected paths clear."
+    )
     if room_type == "studio":
-        return (
-            f"STUDIO FIT FOR SELECTION: {STUDIO_FURNISHING_GUIDANCE} "
-            f"Reserve bed side/foot access of {BED_ACCESS_MIN_M:.2f}m, dining chair depth + 0.08m table gap "
-            f"+ {DINING_ACCESS_MIN_M:.2f}m pull-out on occupied edges, and sitting/entry circulation together. "
-            "Use full catalog dimensions and actual openings; a single group's fit is not proof the whole studio fits. "
-            "Choose a complete standalone bed without embedded bedside furniture and a compact sofa/loveseat. "
-            "A dining chair is never a substitute for sitting seating. Rugs and coffee tables are optional."
-        )
+        return "STUDIO FIT FOR SELECTION:\n" + _numbered((
+            ("Choose one complete standalone bed without built-in nightstands and a compact sofa or loveseat; "
+             "a dining chair never counts as sitting."),
+            bed_access,
+            dining_access,
+            ("Reserve every group's access and the entry walkways together from full catalog dimensions and the actual "
+             "openings; one group fitting does not prove the studio fits."),
+            "Rugs and coffee tables are optional.",
+        ))
     if room_type == "bedroom":
-        return (
-            "BEDROOM FIT FOR SELECTION: choose one complete bed using its full model width/depth, "
-            "not an inferred mattress size. Reserve a usable headboard wall, at least "
-            f"{BED_ACCESS_MIN_M:.2f}m side access on one side and {BED_ACCESS_MIN_M:.2f}m foot access; "
-            "prefer both sides accessible. Keep nightstands beside the head, and verify lamps "
-            "fit their exact supports. Plan useful bedside lighting and clothing storage; in a spacious normal bedroom, "
-            "prefer balanced bedside service and consider a coherent dressing or reading area when useful. "
-            "Honor explicit minimal, single-bedside and no-storage requests. Sparse density is only a guardrail, "
-            "not proof of a complete design. Allow dresser/cabinet/wardrobe front access, required rug/plant, "
-            "openings and protected routes. A sofa/coffee table/media group is not required. "
-            "TV and desk/task-chair setups are opt-in: select them when requested, not as default bedroom filler. "
-            f"{BEDROOM_FURNISHING_GUIDANCE} "
-            "For TV, reserve a view from the bed foot toward the screen and fit the selected media support without blocking bed access. "
-            "For a working setup, select a desk and suitable task chair as a usable pair, reserving the chair footprint "
-            f"plus {BED_ACCESS_MIN_M:.2f}m pull-out space behind it. Honor explicit desk-only requests and exclusions. "
-            "Never substitute a separate frame, mattress or bunk for a complete adult bed."
-        )
+        return "BEDROOM FIT FOR SELECTION:\n" + _numbered((
+            ("Choose one complete bed by its full model width and depth, not an inferred mattress size; never a "
+             "separate frame, mattress or bunk."),
+            bed_access,
+            "Nightstands stand beside the head, and each lamp must fit its own support.",
+            f"A dresser, wardrobe or cabinet needs {STORAGE_FRONT_M:.2f} m clear in front.",
+            "A TV needs a view from the bed's foot and a support that keeps bed access clear.",
+            f"A desk and task chair are one pair, with {BED_ACCESS_MIN_M:.2f} m behind the chair to pull it out.",
+            "A sofa, coffee table or media group is not required.",
+        ))
     if room_type == "dining_room":
-        return (
-            "DINING FIT FOR SELECTION: choose a standalone dining table and dining chairs of compatible scale. "
-            "For rectangular tables reserve at least max(0.60m, chair width + 0.05m) per seat along each occupied edge. "
-            "Round/oval tables need evenly spaced seats and room for their rotated footprints. "
-            f"Allow chair depth + 0.08m table gap + {DINING_ACCESS_MIN_M:.2f}m pull-out on each occupied side, "
-            "plus clear doors and protected routes. Full model height is not seat height. "
-            f"Selected sideboards/cabinets need {DINING_ACCESS_MIN_M:.2f}m front access; "
-            f"overhead lights need at least {DINING_LIGHT_TABLE_MIN_GAP_M:.2f}m between tabletop and model bottom, "
-            "using the full model height with its top at ceiling height. Never assume adjustable hangers. "
-            "Requested rugs should cover the table and seated chairs. Select compact compatible pieces before "
-            "reducing any optional seating count; never reduce a mandatory count."
-        )
+        return "DINING FIT FOR SELECTION:\n" + _numbered((
+            "Choose one standalone dining table and dining chairs of matching scale.",
+            _DINING_PITCH,
+            dining_access,
+            f"A sideboard or cabinet needs {STORAGE_FRONT_M:.2f} m clear in front.",
+            (f"A pendant or chandelier hangs {DINING_LIGHT_TABLE_MIN_GAP_M:.2f}-{DINING_LIGHT_TABLE_MAX_GAP_M:.2f} m above "
+             "the tabletop, measured with its full model height below the ceiling, and stays "
+             f"{DINING_LIGHT_TABLE_INSET_M:.2f} m inside each table edge; never assume an adjustable hanger."),
+            f"A rug extends {DINING_RUG_EXTENSION_M:.2f} m past each table edge.",
+            "Choose a smaller table and chairs before cutting a seat; never cut a stated seat count.",
+        ))
     min_w, min_d = SECTIONAL_MIN_ROOM
     sectional_ok = (room_width >= min_w and room_depth >= min_d) or (
         room_depth >= min_w and room_width >= min_d
     )
-    sectional_note = (
-        "- Sectionals fit this room."
-        if sectional_ok
-        else (
-            f"- Room is below {min_w:.2f}×{min_d:.2f}m — skip sectionals; "
-            "use a loveseat or 2-seat sofa as the anchor."
-        )
-    )
-    return (
-        "LAYOUT FEASIBILITY FOR SELECTION (pick a set the layout stage can actually place):\n"
-        "- Wall-aligned anchors (sofa/sectional/loveseat/bed/tv_stand/media_unit/bookcase/"
-        "cabinet/sideboard/dresser) must sit flush to a wall. Their combined width must not "
-        "exceed the total usable wall length after doors, fireplaces, edge buffers, and any "
-        "windows that the anchor cannot sit in front of are subtracted.\n"
-        f"- Circulation reserves {PATH_MAJOR_M:.2f}m-wide major paths between furniture groups "
-        f"and {PATH_SECONDARY_M:.2f}m-wide access bands to single pieces. Plan ~20–30% of the "
-        "floor for walkways — do not over-fill.\n"
-        f"{sectional_note}\n"
-        "- Every sofa/sectional pairs with a coffee table sized to sit "
-        f"{SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[0]:.2f}–{SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[1]:.2f}m "
-        "in front (edge-to-edge, sofa front face to table's nearest face), plus at least one "
-        "side table or floor lamp within arm's reach.\n"
-        "- If the room is TV-focused, pick a single clean media setup that can center on the focal "
-        "wall opposite the primary sofa instead of forcing off-axis media placement.\n"
-        "- A TV requires a tv_stand or media_unit, and that TV wall span must stay clear of "
-        "doors and windows. A reading chair pairs with a floor lamp "
-        "0.30–0.46m away (edge-to-edge).\n"
-        "- The primary rug must reach under the front legs of the sofa and cover the coffee-"
-        f"table zone, keeping ≥{WALL_FLUSH_MAX_GAP_M:.2f}m clearance from walls (rug edge to wall)."
-    )
+    return "LAYOUT FEASIBILITY FOR SELECTION (pick a set the layout stage can place):\n" + _numbered((
+        ("Wall-aligned anchors (sofa, sectional, loveseat, bed, tv stand, media unit, bookcase, cabinet, sideboard, "
+         "dresser) stand flush to a wall; their combined width must fit the usable wall length after doors, "
+         "fireplaces, edge buffers and the windows they cannot stand in front of."),
+        (f"Keep {PATH_MAJOR_M:.2f} m major paths between groups and {PATH_SECONDARY_M:.2f} m access to single pieces; "
+         "plan about 20-30% of the floor for walkways."),
+        "Sectionals fit this room." if sectional_ok else
+        f"The room is below {min_w:.2f} x {min_d:.2f} m: skip sectionals and anchor on a loveseat or 2-seat sofa.",
+        (f"Every sofa pairs with a coffee table {SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[0]:.2f}-"
+         f"{SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[1]:.2f} m in front (edge to edge) and a side table or floor lamp within reach."),
+        ("In a TV-focused room, pick one media setup that can center on the wall opposite the sofa, on a span clear "
+         "of doors and windows."),
+        f"A reading chair pairs with a floor lamp {FLOOR_LAMP_REACH_RANGE_M[0]:.2f}-{FLOOR_LAMP_REACH_RANGE_M[1]:.2f} m away (edge to edge).",
+        (f"The rug reaches under the sofa's front legs, spans at least {SITTING_RUG_MIN_WIDTH_RATIO:.0%} of the sofa width, "
+         f"covers the coffee table zone and stays at least {WALL_FLUSH_MAX_GAP_M:.2f} m from the walls."),
+    ))

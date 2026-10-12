@@ -161,7 +161,7 @@
    "rationale": "Authoritative room purpose is set to dining_room despite user mentioning a living room. Requested items include the explicitly requested linen sofa and woven baskets, with furniture material constraints of light oak and avoidance of nautical decorations."
   },
   "digest": {
-   "room_scale": "medium",
+   "room_scale": "spacious",
    "required_roles": [
     "dining_table",
     "dining_seating"
@@ -178,58 +178,58 @@
     "wall_art"
    ],
    "max_counts_by_category": {
-    "accent_chair": 4,
-    "bench": 4,
-    "bookcase": 2,
-    "cabinet": 2,
-    "ceiling_light": 5,
-    "chaise_lounge": 1,
-    "chandelier": 5,
-    "coffee_table": 1,
-    "console_table": 4,
-    "decor": 5,
-    "desk": 4,
-    "dining_chair": 4,
+    "accent_chair": 6,
+    "bench": 6,
+    "bookcase": 3,
+    "cabinet": 3,
+    "ceiling_light": 8,
+    "chaise_lounge": 2,
+    "chandelier": 8,
+    "coffee_table": 2,
+    "console_table": 6,
+    "decor": 8,
+    "desk": 6,
+    "dining_chair": 6,
     "dining_table": 1,
-    "dresser": 2,
-    "floor_lamp": 3,
-    "floor_mirror": 5,
-    "lamp": 3,
-    "loveseat": 1,
+    "dresser": 3,
+    "floor_lamp": 5,
+    "floor_mirror": 8,
+    "lamp": 5,
+    "loveseat": 2,
     "media_unit": 2,
-    "office_chair": 4,
-    "ottoman": 4,
-    "painting": 5,
-    "pendant_light": 5,
-    "planter": 4,
+    "office_chair": 6,
+    "ottoman": 6,
+    "painting": 8,
+    "pendant_light": 8,
+    "planter": 6,
     "projector": 2,
-    "recliner": 4,
-    "rug": 1,
-    "sculpture": 5,
+    "recliner": 6,
+    "rug": 2,
+    "sculpture": 8,
     "sectional": 1,
-    "side_table": 4,
-    "sideboard": 2,
-    "sleeper_sofa": 1,
-    "sofa": 1,
-    "sofa_bed": 1,
-    "stool": 4,
-    "storage_unit": 2,
-    "swivel_chair": 4,
-    "table": 4,
-    "table_lamp": 5,
+    "side_table": 6,
+    "sideboard": 3,
+    "sleeper_sofa": 2,
+    "sofa": 2,
+    "sofa_bed": 2,
+    "stool": 6,
+    "storage_unit": 3,
+    "swivel_chair": 6,
+    "table": 6,
+    "table_lamp": 8,
     "tv": 2,
     "tv_stand": 2,
-    "vase": 5,
-    "wall_art": 5,
-    "wall_mirror": 5,
-    "wardrobe": 2
+    "vase": 8,
+    "wall_art": 8,
+    "wall_mirror": 8,
+    "wardrobe": 3
    },
    "density_budget": {
-    "comfortable_max_score": 0.55,
-    "overcrowded_min_score": 0.75,
-    "sparse_below_score": 0.32,
-    "comfortable_load_sqm": 11.1487,
-    "overcrowded_load_sqm": 15.2027,
+    "comfortable_max_score": 0.28,
+    "overcrowded_min_score": 0.36,
+    "sparse_below_score": 0.0,
+    "comfortable_load_sqm": 5.6001,
+    "overcrowded_load_sqm": 7.2001,
     "sparse_below_load_sqm": 0.0
    }
   },
@@ -574,8 +574,9 @@
     },
     "valid": false,
     "errors": [
-     "DINING GROUP: Select exactly one standalone dining_table and 4 dining_chairs; found 0 tables and 4 chairs. Preserve the requested seating count.",
-     "SELECTION CONSTRAINT AUDIT: attribute constraint \"woven baskets\" is not satisfied by ['storage_unit_9']"
+     "DINING GROUP: Select exactly one standalone dining_table and 4–6 dining_chairs; found 0 tables and 4 chairs. Preserve the requested seating count.",
+     "SELECTION CONSTRAINT AUDIT: attribute constraint \"woven baskets\" is not satisfied by ['storage_unit_9']",
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0."
     ]
    },
    {
@@ -720,7 +721,8 @@
     },
     "valid": false,
     "errors": [
-     "SELECTION CONSTRAINT AUDIT: attribute constraint \"woven baskets\" is not satisfied by ['storage_unit_9']"
+     "SELECTION CONSTRAINT AUDIT: attribute constraint \"woven baskets\" is not satisfied by ['storage_unit_9']",
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0."
     ]
    },
    {
@@ -872,7 +874,8 @@
     },
     "valid": false,
     "errors": [
-     "COUNT LIMIT: Requested 1 storage_unit; selected 2."
+     "COUNT LIMIT: Requested 1 storage_unit; selected 2.",
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0."
     ]
    },
    {
@@ -1188,7 +1191,8 @@
     },
     "valid": false,
     "errors": [
-     "COUNT LIMIT: Requested 1 storage_unit; selected 2."
+     "COUNT LIMIT: Requested 1 storage_unit; selected 2.",
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0."
     ]
    },
    {
@@ -1329,8 +1333,10 @@
       }
      ]
     },
-    "valid": true,
-    "errors": []
+    "valid": false,
+    "errors": [
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0."
+    ]
    },
    {
     "variant": 1,
@@ -1464,8 +1470,11 @@
       }
      ]
     },
-    "valid": true,
-    "errors": []
+    "valid": false,
+    "errors": [
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0.",
+     "MISSING REQUIRED: Select 1 overhead lighting (chandelier, pendant_light); found 0."
+    ]
    },
    {
     "variant": 2,
@@ -1605,8 +1614,11 @@
       }
      ]
     },
-    "valid": true,
-    "errors": []
+    "valid": false,
+    "errors": [
+     "MISSING REQUIRED: Select 1 serving storage (cabinet, sideboard); found 0.",
+     "MISSING REQUIRED: Select 1 overhead lighting (chandelier, pendant_light); found 0."
+    ]
    }
   ],
   "layout_assets": {
@@ -2269,11 +2281,17 @@
     },
     "valid": null,
     "blocking": {
+     "overlaps": [
+      {
+       "a": "sleeper_sofa_13",
+       "b": "dining_chair_723_1"
+      }
+     ],
      "dining_access_violations": [
       {
        "uid": "dining_chair_723_1",
        "gap": 0.0,
-       "min_gap": 0.56,
+       "min_gap": 0.46,
        "clear": false,
        "blockers": [
         "sleeper_sofa_13"
@@ -2285,11 +2303,11 @@
          2.1098
         ],
         [
-         0.945675,
+         1.0456750000000001,
          2.1098
         ],
         [
-         0.945675,
+         1.0456750000000001,
          2.7702
         ],
         [
@@ -2303,7 +2321,7 @@
        ],
        "center_bounds_for_room_bbox": {
         "x": [
-         0.8744,
+         0.7744,
          3.9528
         ],
         "y": [
@@ -2312,7 +2330,8 @@
         ]
        },
        "kind": "chair_pullout_blocked",
-       "clearance_shortfall_m": 0.56,
+       "path_behind": false,
+       "clearance_shortfall_m": 0.46,
        "table": "dining_table_688",
        "group_members": [
         "dining_table_688",
@@ -2325,7 +2344,7 @@
       {
        "uid": "dining_chair_723_2",
        "gap": 0.0,
-       "min_gap": 0.56,
+       "min_gap": 0.46,
        "clear": false,
        "blockers": [],
        "boundary_blocked": true,
@@ -2335,12 +2354,12 @@
          2.7702023091514776
         ],
         [
-         4.854322574191756,
-         2.770206423141193
+         4.754322574194455,
+         2.7702056885001727
         ],
         [
-         4.854327425761057,
-         2.1098064231590143
+         4.754327425763756,
+         2.109805688517994
         ],
         [
          4.294327425776168,
@@ -2354,7 +2373,7 @@
        "center_bounds_for_room_bbox": {
         "x": [
          0.3144,
-         3.3928
+         3.4928
         ],
         "y": [
          0.3303,
@@ -2362,7 +2381,8 @@
         ]
        },
        "kind": "chair_pullout_blocked",
-       "clearance_shortfall_m": 0.56,
+       "path_behind": false,
+       "clearance_shortfall_m": 0.46,
        "table": "dining_table_688",
        "group_members": [
         "dining_table_688",
@@ -2379,12 +2399,6 @@
        "living_item": "sleeper_sofa_13",
        "gap": 0.6517000000000001,
        "min_gap": 0.76
-      }
-     ],
-     "overlaps": [
-      {
-       "a": "sleeper_sofa_13",
-       "b": "dining_chair_723_1"
       }
      ]
     }
@@ -2503,8 +2517,15 @@
       ]
      }
     },
-    "valid": true,
-    "blocking": {}
+    "valid": false,
+    "blocking": {
+     "door_violations": [
+      {
+       "uid": "bookcase_272",
+       "door": 0
+      }
+     ]
+    }
    },
    {
     "label": "variant 2 repair candidate_01",
@@ -2622,108 +2643,6 @@
     },
     "valid": null,
     "blocking": {
-     "dining_access_violations": [
-      {
-       "uid": "dining_chair_831_3",
-       "gap": 0.5247,
-       "min_gap": 0.56,
-       "clear": false,
-       "blockers": [],
-       "boundary_blocked": true,
-       "region": [
-        [
-         3.7424506908610518,
-         3.060349208035209
-        ],
-        [
-         4.3024506908590805,
-         3.060347722024925
-        ],
-        [
-         4.302449309134875,
-         2.5396477220267584
-        ],
-        [
-         3.7424493091368465,
-         2.5396492080370425
-        ]
-       ],
-       "center_xy": [
-        3.444,
-        2.8
-       ],
-       "center_bounds_for_room_bbox": {
-        "x": [
-         0.2985,
-         3.4087
-        ],
-        "y": [
-         0.2604,
-         4.6164
-        ]
-       },
-       "kind": "chair_pullout_blocked",
-       "clearance_shortfall_m": 0.0353,
-       "table": "dining_table_688",
-       "group_members": [
-        "dining_table_688",
-        "dining_chair_831_1",
-        "dining_chair_831_2",
-        "dining_chair_831_3",
-        "dining_chair_831_4"
-       ]
-      },
-      {
-       "uid": "dining_chair_831_4",
-       "gap": 0.5247,
-       "min_gap": 0.56,
-       "clear": false,
-       "blockers": [],
-       "boundary_blocked": true,
-       "region": [
-        [
-         3.7424506908610518,
-         2.4603492080352094
-        ],
-        [
-         4.3024506908590805,
-         2.4603477220249252
-        ],
-        [
-         4.302449309134875,
-         1.9396477220267585
-        ],
-        [
-         3.7424493091368465,
-         1.9396492080370427
-        ]
-       ],
-       "center_xy": [
-        3.444,
-        2.2
-       ],
-       "center_bounds_for_room_bbox": {
-        "x": [
-         0.2985,
-         3.4087
-        ],
-        "y": [
-         0.2604,
-         4.6164
-        ]
-       },
-       "kind": "chair_pullout_blocked",
-       "clearance_shortfall_m": 0.0353,
-       "table": "dining_table_688",
-       "group_members": [
-        "dining_table_688",
-        "dining_chair_831_1",
-        "dining_chair_831_2",
-        "dining_chair_831_3",
-        "dining_chair_831_4"
-       ]
-      }
-     ],
      "door_violations": [
       {
        "uid": "bookcase_272",
@@ -2902,7 +2821,7 @@
    "rationale": "The user specifies a dining room for four, translating to 1 dining table and exactly 4 dining chairs. Bare floor explicitly excludes rugs, and uncluttered maps to minimal_furniture."
   },
   "digest": {
-   "room_scale": "medium",
+   "room_scale": "spacious",
    "required_roles": [
     "dining_table",
     "dining_seating"
@@ -2911,58 +2830,58 @@
     "planter"
    ],
    "max_counts_by_category": {
-    "accent_chair": 4,
-    "bench": 4,
-    "bookcase": 2,
-    "cabinet": 2,
-    "ceiling_light": 5,
-    "chaise_lounge": 1,
-    "chandelier": 5,
-    "coffee_table": 1,
-    "console_table": 4,
-    "decor": 5,
-    "desk": 4,
+    "accent_chair": 6,
+    "bench": 6,
+    "bookcase": 3,
+    "cabinet": 3,
+    "ceiling_light": 8,
+    "chaise_lounge": 2,
+    "chandelier": 8,
+    "coffee_table": 2,
+    "console_table": 6,
+    "decor": 8,
+    "desk": 6,
     "dining_chair": 4,
     "dining_table": 1,
-    "dresser": 2,
-    "floor_lamp": 3,
-    "floor_mirror": 5,
-    "lamp": 3,
-    "loveseat": 1,
+    "dresser": 3,
+    "floor_lamp": 5,
+    "floor_mirror": 8,
+    "lamp": 5,
+    "loveseat": 2,
     "media_unit": 2,
-    "office_chair": 4,
-    "ottoman": 4,
-    "painting": 5,
-    "pendant_light": 5,
-    "planter": 4,
+    "office_chair": 6,
+    "ottoman": 6,
+    "painting": 8,
+    "pendant_light": 8,
+    "planter": 6,
     "projector": 2,
-    "recliner": 4,
+    "recliner": 6,
     "rug": 0,
-    "sculpture": 5,
+    "sculpture": 8,
     "sectional": 1,
-    "side_table": 4,
-    "sideboard": 2,
-    "sleeper_sofa": 1,
-    "sofa": 1,
-    "sofa_bed": 1,
-    "stool": 4,
-    "storage_unit": 2,
-    "swivel_chair": 4,
-    "table": 4,
-    "table_lamp": 5,
+    "side_table": 6,
+    "sideboard": 3,
+    "sleeper_sofa": 2,
+    "sofa": 2,
+    "sofa_bed": 2,
+    "stool": 6,
+    "storage_unit": 3,
+    "swivel_chair": 6,
+    "table": 6,
+    "table_lamp": 8,
     "tv": 2,
     "tv_stand": 2,
-    "vase": 5,
-    "wall_art": 5,
-    "wall_mirror": 5,
-    "wardrobe": 2
+    "vase": 8,
+    "wall_art": 8,
+    "wall_mirror": 8,
+    "wardrobe": 3
    },
    "density_budget": {
-    "comfortable_max_score": 0.55,
-    "overcrowded_min_score": 0.75,
-    "sparse_below_score": 0.32,
-    "comfortable_load_sqm": 11.1487,
-    "overcrowded_load_sqm": 15.2027,
+    "comfortable_max_score": 0.28,
+    "overcrowded_min_score": 0.36,
+    "sparse_below_score": 0.0,
+    "comfortable_load_sqm": 5.6001,
+    "overcrowded_load_sqm": 7.2001,
     "sparse_below_load_sqm": 0.0
    }
   },
@@ -3679,8 +3598,54 @@
       ]
      }
     },
-    "valid": true,
-    "blocking": {}
+    "valid": false,
+    "blocking": {
+     "dining_storage_access_violations": [
+      {
+       "uid": "sideboard_1",
+       "gap": 0.5963,
+       "min_gap": 0.76,
+       "clear": false,
+       "blockers": [
+        "dining_table_3"
+       ],
+       "boundary_blocked": false,
+       "region": [
+        [
+         3.76,
+         3.062
+        ],
+        [
+         3.0,
+         3.062
+        ],
+        [
+         3.0,
+         1.5379999999999998
+        ],
+        [
+         3.76,
+         1.5379999999999998
+        ]
+       ],
+       "center_xy": [
+        3.9886,
+        2.3
+       ],
+       "center_bounds_for_room_bbox": {
+        "x": [
+         0.9886,
+         4.0386
+        ],
+        "y": [
+         0.762,
+         4.1148
+        ]
+       },
+       "kind": "storage_front_blocked"
+      }
+     ]
+    }
    },
    {
     "label": "variant 1 final",
@@ -4014,7 +3979,7 @@
    "rationale": "The user requested a dining room for six with a rectangular table and matching comfortable chairs, which specifies an exact count of 6 dining chairs and 1 table. The sideboard is marked optional because it was requested conditionally ('if it fits without reducing chair access')."
   },
   "digest": {
-   "room_scale": "medium",
+   "room_scale": "spacious",
    "required_roles": [
     "dining_table",
     "dining_seating"
@@ -4029,58 +3994,58 @@
     "wall_art"
    ],
    "max_counts_by_category": {
-    "accent_chair": 4,
-    "bench": 4,
-    "bookcase": 2,
-    "cabinet": 2,
-    "ceiling_light": 5,
-    "chaise_lounge": 1,
-    "chandelier": 5,
-    "coffee_table": 1,
-    "console_table": 4,
-    "decor": 5,
-    "desk": 4,
+    "accent_chair": 6,
+    "bench": 6,
+    "bookcase": 3,
+    "cabinet": 3,
+    "ceiling_light": 8,
+    "chaise_lounge": 2,
+    "chandelier": 8,
+    "coffee_table": 2,
+    "console_table": 6,
+    "decor": 8,
+    "desk": 6,
     "dining_chair": 6,
     "dining_table": 1,
-    "dresser": 2,
-    "floor_lamp": 3,
-    "floor_mirror": 5,
-    "lamp": 3,
-    "loveseat": 1,
+    "dresser": 3,
+    "floor_lamp": 5,
+    "floor_mirror": 8,
+    "lamp": 5,
+    "loveseat": 2,
     "media_unit": 2,
-    "office_chair": 4,
-    "ottoman": 4,
-    "painting": 5,
-    "pendant_light": 5,
-    "planter": 4,
+    "office_chair": 6,
+    "ottoman": 6,
+    "painting": 8,
+    "pendant_light": 8,
+    "planter": 6,
     "projector": 2,
-    "recliner": 4,
-    "rug": 1,
-    "sculpture": 5,
+    "recliner": 6,
+    "rug": 2,
+    "sculpture": 8,
     "sectional": 1,
-    "side_table": 4,
-    "sideboard": 2,
-    "sleeper_sofa": 1,
-    "sofa": 1,
-    "sofa_bed": 1,
-    "stool": 4,
-    "storage_unit": 2,
-    "swivel_chair": 4,
-    "table": 4,
-    "table_lamp": 5,
+    "side_table": 6,
+    "sideboard": 3,
+    "sleeper_sofa": 2,
+    "sofa": 2,
+    "sofa_bed": 2,
+    "stool": 6,
+    "storage_unit": 3,
+    "swivel_chair": 6,
+    "table": 6,
+    "table_lamp": 8,
     "tv": 2,
     "tv_stand": 2,
-    "vase": 5,
-    "wall_art": 5,
-    "wall_mirror": 5,
-    "wardrobe": 2
+    "vase": 8,
+    "wall_art": 8,
+    "wall_mirror": 8,
+    "wardrobe": 3
    },
    "density_budget": {
-    "comfortable_max_score": 0.55,
-    "overcrowded_min_score": 0.75,
-    "sparse_below_score": 0.32,
-    "comfortable_load_sqm": 11.1487,
-    "overcrowded_load_sqm": 15.2027,
+    "comfortable_max_score": 0.28,
+    "overcrowded_min_score": 0.36,
+    "sparse_below_score": 0.0,
+    "comfortable_load_sqm": 5.6001,
+    "overcrowded_load_sqm": 7.2001,
     "sparse_below_load_sqm": 0.0
    }
   },
@@ -4963,8 +4928,56 @@
       ]
      }
     },
-    "valid": true,
-    "blocking": {}
+    "valid": false,
+    "blocking": {
+     "dining_storage_access_violations": [
+      {
+       "uid": "sideboard_29",
+       "gap": 0.6096,
+       "min_gap": 0.76,
+       "clear": false,
+       "blockers": [
+        "dining_table_502",
+        "dining_chair_68_1",
+        "dining_chair_68_4"
+       ],
+       "boundary_blocked": false,
+       "region": [
+        [
+         0.4586,
+         1.4380000000000002
+        ],
+        [
+         1.2186000000000001,
+         1.4380000000000002
+        ],
+        [
+         1.2186000000000001,
+         2.962
+        ],
+        [
+         0.4586,
+         2.962
+        ]
+       ],
+       "center_xy": [
+        0.23,
+        2.2
+       ],
+       "center_bounds_for_room_bbox": {
+        "x": [
+         0.2286,
+         3.2786
+        ],
+        "y": [
+         0.762,
+         4.1148
+        ]
+       },
+       "kind": "storage_front_blocked"
+      }
+     ]
+    }
    },
    {
     "label": "variant 2 final",

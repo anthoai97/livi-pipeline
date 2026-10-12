@@ -113,7 +113,7 @@ or placed as a generic floor piece without it.
 | 16 | Room exclusions | `pipeline/app/rules/room_policy.py:74`, `:93` `excluded_room_categories` | Rooms that may never hold it | Optional |
 | 17 | Budget | `taxonomy.py:59` `NON_SELLABLE_CATEGORIES` (`BUDGET_EXCLUDED_CATEGORIES` in `selection/constants.py:13`) | Only for pieces never bought, like `tv` | Optional |
 | 18 | Decor slots | `pipeline/app/shared_stages.py:273` `DECOR_CATEGORIES` | Decor that gets a slot without a request | Optional |
-| 19 | Taste | `pipeline/app/rules/layout_rules.py:51` `DESIGN_RULES` | A sentence for the final review | Optional |
+| 19 | Taste | `pipeline/app/rules/layout_rules.py:73` `DESIGN_RULES` | A sentence for the final review | Optional |
 | 20 | Tests, benchmark | `pipeline/tests/test_solver.py`, `pipeline/scripts/benchmark_requests.json` | Solver tests; a case for a new room composition | Required |
 
 ## Add a credenza (case a)
@@ -164,7 +164,7 @@ make it its own category.
    `sideboard` (`bedroom.py`), and the dining check measures `sideboard`,
    `cabinet` and `storage_unit` (`dining.py`). Add `credenza` to the sets the
    room should check, and to the same rooms in `_STORAGE_FRONTS`
-   (`solver.py`), which reserves a 0.56 m band in front of it. The two lists
+   (`solver.py`), which reserves a 0.76 m band in front of it (`STORAGE_FRONT_M`). The two lists
    must match: a band with no check only steers the search, and a check with no
    band makes the solver find the problem late. A living room measures no
    storage front, so a credenza there gets no band.
@@ -241,8 +241,11 @@ Run from `pipeline/` with `conda activate livinit`.
   `ROLE_CATEGORIES` holds canonical names only; an alias there does nothing.
 - **Some roles get no optional slot.** `COUNT_GUIDANCE_ROLE_CATEGORIES` uses
   fixed sets for `surface`, `lighting` and `media`, and has no `tabletop` or
-  `wall_or_ceiling` entry. A new piece in those roles is searched only when the
-  brief asks for it, unless you add it to the set or to `DECOR_CATEGORIES`.
+  `wall_or_ceiling` entry; of the wall and ceiling pieces only pendants and
+  chandeliers (`overhead_lighting`, dining rooms and studios) and wall art
+  (`DECOR_CATEGORIES`) get a slot. A new piece in those roles is searched only
+  when the brief asks for it, unless you add it to the set or to
+  `DECOR_CATEGORIES`.
 - **A catalog label with no alias is never searched.** A slot searches only its
   canonical names and their aliases. Today `buffet`, `counter_stool`,
   `bar_stool` and `chest_of_drawers` are catalog labels that map to no

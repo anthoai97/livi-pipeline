@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from typing import Any
-from app.rules.room_policy import BEDROOM_FURNISHING_GUIDANCE, DINING_FURNISHING_GUIDANCE, STUDIO_FURNISHING_GUIDANCE, dining_chair_count, normalize_room_type, excluded_room_categories
+from app.rules.room_policy import BEDROOM_FURNISHING_GUIDANCE, DINING_FURNISHING_GUIDANCE, STUDIO_FURNISHING_GUIDANCE, dining_chair_count, normalize_room_type, excluded_room_categories, studio_dining_required
 
 from ._util import clean_list as _clean_list, room_scale as _room_scale, round4 as _round
 from .fit_policy import (
@@ -91,8 +91,9 @@ def _max_counts_by_category(
     return caps
 
 
-def _density_budget(*, room_scale: str, available_furnishing_area_sqm: float) -> dict[str, Any]:
-    thresholds = ROOM_THRESHOLDS.get(room_scale, ROOM_THRESHOLDS["medium"])
+def _density_budget(*, room_type: str, room_scale: str, available_furnishing_area_sqm: float) -> dict[str, Any]:
+    """Floor furniture footprint limits (real width x depth): the sparse floor, the comfortable target and the maximum."""
+    thresholds = ROOM_THRESHOLDS[room_type][room_scale]
     return {
         "comfortable_max_score": thresholds["comfortable"],
         "overcrowded_min_score": thresholds["overcrowded"],
@@ -120,7 +121,7 @@ def _room_completion_guidance(
     else:
         strategy = "full_room"
         zone_count = 1
-        notes = ["Use one complete seating group and avoid separate room zones."]
+        notes = ["Use one complete seating group; a reading corner or desk zone may use the extra space."]
 
     if opening_pressure == "high":
         notes.append("Openings reduce usable wall frontage; avoid wall-heavy additions.")
@@ -157,7 +158,7 @@ def build_feasibility_digest(
     area_sqm = float(summary.get("area") or room_facts.get("area") or 0.0)
     door_count = int(opening_counts.get("doors") or 0)
     window_count = int(opening_counts.get("windows") or 0)
-    room_scale = _room_scale(area_sqm)
+    room_scale = _room_scale(area_sqm, room_type)
 
     blocked_zones = room_facts.get("blocked_zones") or []
     door_clearance_area_sqm = sum(
@@ -215,13 +216,14 @@ def build_feasibility_digest(
     if anchor_group:
         required_roles.append(anchor_role)
         required_groups.append(anchor_group)
+    studio_dining = studio and studio_dining_required(intent_packet, area_sqm)
     if studio:
         for role, categories in (("anchor_seating", {"sofa", "loveseat"}), ("dining_table", {"dining_table"})):
             group = _group(role, categories, excluded, blocked_categories)
-            if group:
+            if group and (role != "dining_table" or studio_dining):
                 required_roles.append(role)
                 required_groups.append(group)
-    if dining or studio:
+    if dining or studio_dining:
         dining_seating = _group("dining_seating", {"dining_chair"}, excluded, blocked_categories)
         if dining_seating:
             required_roles.append("dining_seating")
@@ -259,7 +261,7 @@ def build_feasibility_digest(
         optional_categories.extend(["rug", "floor_lamp", "ottoman"])
         discouraged_categories.update({"bookcase", "cabinet"})
     elif room_scale == "medium":
-        optional_categories.extend(["rug", "accent_chair", "floor_lamp", "planter"])
+        optional_categories.extend(["rug", "accent_chair", "floor_lamp", "planter", "storage_unit"])
     else:
         optional_categories.extend(
             ["rug", "accent_chair", "floor_lamp", "planter", "bookcase", "cabinet", "storage_unit"]
@@ -272,7 +274,7 @@ def build_feasibility_digest(
     if {"cozy", "luxury"} & style_hints:
         optional_categories.extend(["rug", "planter", "floor_lamp"])
     if bedroom:
-        optional_categories = ["nightstand", "dresser", "table_lamp", "rug", "planter"]
+        optional_categories = ["dresser"] if room_scale == "compact" else []
         if "wardrobe" in requested:
             optional_categories.append("wardrobe")
         if room_scale == "spacious":
@@ -288,7 +290,7 @@ def build_feasibility_digest(
                 ) if category not in excluded_optional
             )
     if studio:
-        optional_categories = ["nightstand", "table_lamp", "side_table", "planter"]
+        optional_categories = ["side_table", "planter", "storage_unit", "floor_lamp", "bookcase"]
         optional_categories.extend(sorted(requested - {"bed", "sofa", "loveseat", "dining_table", "dining_chair"}))
 
     optional_categories = [
@@ -308,14 +310,12 @@ def build_feasibility_digest(
         max_counts_by_category.pop("nightstand", None)
     if dining or studio:
         max_counts_by_category["dining_table"] = 1
-        max_counts_by_category["dining_chair"] = dining_chair_count(intent_packet)
+        max_counts_by_category["dining_chair"] = dining_chair_count(intent_packet, room_scale)
     density_budget = _density_budget(
+        room_type=room_type,
         room_scale=room_scale,
         available_furnishing_area_sqm=available_furnishing_area_sqm,
     )
-    if dining or studio:
-        # Dining completeness is table capacity and usable seats, not floor fill.
-        density_budget["sparse_below_load_sqm"] = 0.0
     room_completion_guidance = _room_completion_guidance(
         room_scale=room_scale,
         opening_pressure=opening_pressure,
@@ -323,18 +323,17 @@ def build_feasibility_digest(
     )
     if bedroom:
         room_completion_guidance["notes"] = [
-            "Use one complete adult bed as the sleeping anchor and design a complete bedroom around its everyday functions: useful bedside surfaces, lighting and clothing storage.",
-            "For a normal spacious bedroom, prefer a coordinated bedside pair when both sides are usable, and purposeful clothing storage. Consider a dressing or reading area when it improves the room's composition; explain the purpose of each addition.",
+            "Use one complete adult bed as the sleeping anchor and design a complete bedroom around its everyday functions: bedside surfaces, lighting and clothing storage.",
             BEDROOM_FURNISHING_GUIDANCE,
-            "The density floor only catches extreme sparsity; a bed can satisfy most of it without making the bedroom complete. Assess the whole room's usable zones before stopping.",
-            "These are design choices, not fixed counts. Explicit single-bedside, no-storage, sparse or essentials-only requests take priority. In compact rooms, prioritize access and the most useful bedside support; do not force a pair or a secondary zone.",
-            "Wardrobes/armoires are clothing-storage assets. Dressers store folded clothes; generic cabinets and bookcases do not establish hanging-clothes capability. Claim hanging storage only when the selected product's metadata confirms it, and explain unavailable functions.",
+            "The density floor only catches extreme sparsity; a bed can satisfy most of it without making the bedroom complete.",
+            "In a spacious bedroom, a reading corner or dressing area may use the extra space; a compact bedroom keeps access first.",
+            "A dresser stores folded clothes and a wardrobe or armoire hanging clothes; claim hanging storage only when the product's metadata confirms it.",
             "Preserve bed-side and foot access, opening clearance, and storage-front access.",
         ]
     if dining:
         room_completion_guidance["notes"] = [DINING_FURNISHING_GUIDANCE]
     if studio:
-        room_completion_guidance.update(strategy="three_function_groups", zone_count=3,
+        room_completion_guidance.update(strategy="separate_function_groups", zone_count=3 if studio_dining else 2,
                                         notes=[STUDIO_FURNISHING_GUIDANCE])
 
     if best_anchor_wall:
@@ -415,9 +414,10 @@ def format_feasibility_digest_for_prompt(digest: Mapping[str, Any] | None) -> st
         f"- required_roles: {required_roles}\n"
         f"- optional_categories: {optional_categories}\n"
         f"- max_counts_by_category: {max_counts}\n"
-        f"- density_budget: floor>={float(density_budget.get('sparse_below_load_sqm') or 0.0):.2f} sqm, "
-        f"comfortable<={float(density_budget.get('comfortable_load_sqm') or 0.0):.2f} sqm, "
-        f"overcrowded>={float(density_budget.get('overcrowded_load_sqm') or 0.0):.2f} sqm\n"
+        f"- density_budget (floor furniture footprint, width x depth): floor>="
+        f"{float(density_budget.get('sparse_below_load_sqm') or 0.0):.2f} sqm, "
+        f"target<={float(density_budget.get('comfortable_load_sqm') or 0.0):.2f} sqm, "
+        f"maximum<={float(density_budget.get('overcrowded_load_sqm') or 0.0):.2f} sqm\n"
         f"- completion_strategy: {completion.get('strategy') or 'unknown'} "
         f"({int(completion.get('zone_count') or 0)} zone(s)); {completion_notes}\n"
         f"- blocked_categories: {blocked_categories}\n"

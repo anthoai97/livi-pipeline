@@ -12,8 +12,9 @@ import {
   draftFromParams,
   draftToParams,
   draftVertices,
+  EXAMPLES,
   openingsProblem,
-  PROMPT_STARTERS,
+  placeOpenings,
   ROOM_TYPES,
   WINDOW_WIDTH,
   type RoomDraft,
@@ -80,9 +81,9 @@ export function Brief() {
   const [submitted, setSubmitted] = useState(false);
   const reduce = useReducedMotion();
   const errors = submitted ? check(draft) : {};
-  const starter = PROMPT_STARTERS.find(
-    (example) =>
-      example.roomType === draft.roomType && example.prompt === draft.prompt && example.width === draft.width && example.length === draft.length,
+  // The example the form still matches, field for field.
+  const chosen = EXAMPLES.findIndex((example) =>
+    (Object.keys(example.draft) as (keyof RoomDraft)[]).every((key) => example.draft[key] === draft[key]),
   );
   // The preview keeps the last sensible size while a field is mid-edit or out of range.
   const preview = useMemo(() => {
@@ -102,7 +103,7 @@ export function Brief() {
       const next = { ...current, ...change };
       const vertices = draftVertices(next);
       const wall = defaultWall(polygonEdges(vertices), viewCorner(vertices, [next.width, next.length]));
-      return { ...next, doorWall: wall, windowWall: wall };
+      return placeOpenings({ ...next, doorWall: wall, windowWall: wall });
     });
   const edges = draftEdges(draft);
   const cuts = SHAPES.find((s) => s.value === draft.shape)?.cuts;
@@ -131,28 +132,27 @@ export function Brief() {
           aria-label="Room details"
           className="flex flex-col gap-6 pt-4"
         >
-          <Field label="Example prompt" hint="Choose an example or write your own below.">
+          <Field label="Example" hint="Fills in the prompt, budget, room size, door and window. Benchmark cases match the pipeline's test requests.">
             {(id) => (
               <select
                 id={id}
-                value={starter?.prompt ?? ""}
+                value={chosen}
                 onChange={(event) => {
-                  const example = PROMPT_STARTERS.find((item) => item.prompt === event.target.value);
-                  if (example) {
-                    const { roomType, prompt, width, length } = example;
-                    reshape({ roomType, prompt, width, length });
-                  }
+                  const example = EXAMPLES[Number(event.target.value)];
+                  if (example) setDraft(example.draft);
                 }}
                 className={input}
               >
-                <option value="" disabled>Choose an example</option>
-                {ROOM_TYPES.map((room) => (
-                  <optgroup key={room.value} label={room.label}>
-                    {PROMPT_STARTERS.filter((example) => example.roomType === room.value).map((example) => (
-                      <option key={example.label} value={example.prompt}>
-                        {room.label}: {example.label}, {example.width} x {example.length} m
-                      </option>
-                    ))}
+                <option value={-1} disabled>Choose an example</option>
+                {[...new Set(EXAMPLES.map((example) => example.group))].map((group) => (
+                  <optgroup key={group} label={group}>
+                    {EXAMPLES.map((example, index) =>
+                      example.group === group ? (
+                        <option key={index} value={index}>
+                          {example.label}, {example.draft.width} x {example.draft.length} m, ${example.draft.budget.toLocaleString("en-US")}
+                        </option>
+                      ) : null,
+                    )}
                   </optgroup>
                 ))}
               </select>
@@ -250,7 +250,12 @@ export function Brief() {
             {(["doorWall", "windowWall"] as const).map((key) => (
               <Field key={key} label={key === "doorWall" ? "Door" : "Window"}>
                 {(id) => (
-                  <select id={id} value={draft[key]} onChange={(event) => set(key, Number(event.target.value))} className={input}>
+                  <select
+                    id={id}
+                    value={draft[key]}
+                    onChange={(event) => setDraft((current) => placeOpenings({ ...current, [key]: Number(event.target.value) }))}
+                    className={input}
+                  >
                     {edges.map((edge) => (
                       <option
                         key={edge.index}

@@ -100,7 +100,7 @@ The pipeline automatically continued after a coarse category-size estimate; the 
 Original requested counts: {_format_fit_counts(requested_counts)}
 Keep these requests as the goal and try compact catalog items with their actual dimensions.
 The estimate does not establish that any requested item cannot fit and its recommended counts are not caps.
-Only omit optional furniture when concrete selection or layout constraints require it, and explain the constraint in gaps.
+Only omit optional furniture when concrete selection or layout constraints require it, and name the constraint in gaps.
 For bedrooms, preserve the bed and access, then prioritize requested wardrobe, requested TV/support, and requested desk/chair, in that order. These groups are opt-in; do not add a wardrobe that was not requested. Omit a lower-priority group before a higher-priority one and keep each functional group complete.
 All actual footprint, support, budget, and layout checks still apply.
 """

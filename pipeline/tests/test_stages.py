@@ -49,6 +49,8 @@ INSTANCE_KEYS = {
     "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4": "planter_1",
 }
 PLACEMENTS = {INSTANCE_KEYS[uid]: pose for uid, pose in LAYOUT.items()}
+# The recorded sideboard faced the table across 0.60 m; the 0.76 m storage front slides it along its wall past the table.
+PLACEMENTS["sideboard_1"] = {**PLACEMENTS["sideboard_1"], "position": [PLACEMENTS["sideboard_1"]["position"][0], 3.6, 0.0]}
 TABLE_CENTER = PLACEMENTS["dining_table_1"]["position"]
 
 
@@ -303,8 +305,9 @@ def test_selection_the_solver_cannot_place_steps_to_compact_then_capped_counts_t
             f"selection turn {turn} failed" for turn in range(1, MAX_SELECTION_TURNS + 1)]
         # Removing products cannot fix what the solver leaves out, so select drops nothing; finish removes the items left out.
         assert not [note for note in notes if note.startswith("selection turn") and " dropped " in note]
+        # The oversized anchor table is never removed: the design is delivered with the findings naming only it.
         [dropped] = [note for note in notes if note.startswith("dropped ")]
-        assert "dining_table_1" in dropped
+        assert "dining_table_1" not in dropped and "blocking findings that name no removable item" in dropped
     assert len(of_type(events, "variant_ready")) == 3
 
 
@@ -417,6 +420,22 @@ def test_required_item_searched_without_its_limits_can_pass_selection(tmp_path, 
     [slot] = [slot for slot in record["slots"] if slot["slot"] == "dining_table"]
     assert slot["candidates"] == 2 and "without them" in slot["note"]
     assert all("candidates ignore them" in prompt for prompt in genai.of("Selection"))
+
+
+def test_completeness_piece_with_no_catalog_product_is_a_gap_and_selection_passes(tmp_path, searches, monkeypatch):
+    solve_as(monkeypatch, PLACEMENTS)
+    # Without the minimal brief this spacious dining room also needs a sideboard (the pool has one) and a
+    # pendant or chandelier (it has none).
+    packet = {**intent_packet(), "functional_hints": [], "fit_flexibility": "balanced"}
+    genai = FakeGenai({"IntentPacket": packet, "Selection": selection()})
+
+    events, record = run_pipeline(tmp_path, genai)
+
+    [slot] = [slot for slot in record["slots"] if slot["slot"] == "overhead_lighting"]
+    assert slot["gap"] and slot["candidates"] == 0 and "reported as a gap" in slot["note"]
+    assert all("(overhead_lighting)" in prompt.split("CATALOG GAPS")[1] for prompt in genai.of("Selection"))
+    assert [stage_runs(record, "select", index) for index in range(3)] == [1, 1, 1]
+    assert len(of_type(events, "variant_ready")) == 3
 
 
 def test_layout_that_still_fails_the_final_check_loses_the_failing_item_and_is_delivered(tmp_path, searches, monkeypatch):
@@ -588,7 +607,7 @@ def test_each_design_takes_a_different_tied_layout(tmp_path, searches, monkeypat
         assert REQUEST["user_intent"] in prompt and "planter_1 (planter)" in prompt and "door_0" in prompt
         assert "REQUESTED ITEMS: light wood dining table for four x1, soft neutral dining chairs x4" in prompt
         assert "STYLE HINTS: scandinavian, cozy, minimalist" in prompt
-        assert "P0 — ARCHITECTURE" in prompt and "DINING ROOM APPLICABILITY" in prompt and "COORDINATES:" in prompt
+        assert "P0 — ARCHITECTURE" in prompt and "DINING ROOM RULES" in prompt and "COORDINATES:" in prompt
     poses = [json.loads(prompt.split("POSES (instance key: [x, y, rotation_z]):\n")[1].split("\n")[0]) for prompt in genai.of("Arrangement")]
     assert sorted(pose["planter_1"][:2] for pose in poses) == [[0.5, 2.3], [0.6, 0.6], [3.6, 0.6]]
     assert [(data["review"], data["valid"]) for data in stage_data(events, "render_scene")] == [(REVIEW, True)] * 3
@@ -947,7 +966,8 @@ def test_retrieve_applies_the_checks_after_each_slot_search(monkeypatch):
     assert tv_filters["price_exempt"] == ["television", "tv"]
     assert all(f["max_price"] <= 4400 and f["known_price"] for f in calls)
     assert all(f["price_exempt"] == [] for f in calls if f is not tv_filters)
-    assert not any(slot["gap"] for slot in slots.values())
+    # No requested slot is a gap; the living room's required lamp has no product in these rows, so it is a catalog gap.
+    assert [slot_id for slot_id, slot in slots.items() if slot["gap"]] == ["lighting"]
     assert {entry["slot"]: entry["candidates"] for entry in run.slots}["sofa"] == 2
 
 
@@ -961,9 +981,9 @@ def test_retrieve_merges_categories_round_robin_and_keeps_up_to_fetch(monkeypatc
         monkeypatch, "living_room", packet, lambda filters: [row for row in lamps if row["category"] in filters["categories"]]
     )
 
-    assert slots["lighting"]["kind"] == "optional"
+    assert slots["lighting"]["kind"] == "required"  # a living room requires a lamp (issue #54)
     assert pool["lighting"][:5] == ["floor_0", "table_0", "floor_1", "table_1", "floor_2"]
-    assert len(pool["lighting"]) == shared_stages.FETCH > shared_stages.KEEP["optional"]
+    assert len(pool["lighting"]) == shared_stages.FETCH > shared_stages.KEEP["required"]
     assert {entry["slot"]: entry["candidates"] for entry in run.slots}["lighting"] == shared_stages.FETCH
 
 
@@ -1088,3 +1108,27 @@ def test_select_swaps_a_tv_too_wide_for_the_selected_stand_for_one_that_fits():
     assert "selection turn 1: replaced TV tv_wide with tv_fits" in notes
     [tv] = [instance for instance in update["instances"] if instance["category"] == "tv"]
     assert tv["placement_mode"] == "tabletop" and tv["paired_support_uid"] == "tv_stand_1"
+
+
+@pytest.mark.parametrize(("room_type", "header"), [
+    ("living_room", "MEDIA COMFORT AND RUG COMPOSITION:"), ("bedroom", "BEDROOM RULES"),
+    ("dining_room", "DINING ROOM RULES"), ("studio", "STUDIO RULES"),
+])
+def test_prompts_carry_no_retired_edit_or_infeasibility_instructions(room_type, header):
+    request = PipelineRequest(**{**REQUEST, "room_type": room_type})
+    intent = coerce_intent_packet({**RUN["intent"], "room_type": room_type}, room_type=room_type)
+    room = build_room_context(room_type=room_type, room_area=request.room_area, room_vertices=REQUEST["room_vertices"],
+                              wall_height=request.wall_height, room_doors=REQUEST["room_doors"],
+                              room_windows=REQUEST["room_windows"], intent=intent)
+    slot = {"id": "all", "kind": "optional", "category": None, "label": "all", "gap": False, "relaxed": False}
+    state = {"direction": "", "pool": {"all": POOL}, "instances": [], "layout": {}, "findings": [],
+             "shared": {"request": request, "intent": intent, "room": room, "slots": [slot]}}
+    rules = variant_stages.build_rules_block(room_type=room_type)
+    prompts = [shared_stages._intent_prompt(REQUEST["user_intent"], room_type),
+               variant_stages._selection_prompt(state, intent, None, 1.0), rules,
+               variant_stages._arrangement_prompt(state, b"")[0]]
+
+    assert [[phrase for phrase in ("existing-room", "frozen", "infeasib", "explain") if phrase in prompt.lower()]
+            for prompt in prompts] == [[]] * 4
+    block = rules.split(f"{header}")[1].split("\n\n")[0]
+    assert "\n1. " in block and "\n2. " in block

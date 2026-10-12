@@ -108,6 +108,8 @@ class VariantState(TypedDict, total=False):
     selection_validation: Record  # select: legacy validator report for `selection`; "valid" or the last turn ends selection
     selection_turns: int  # graph: select calls so far
     fit_step: str | None  # select: None, "compact" (smaller products), or "capped" (capped counts)
+    style_kept: list[str]  # select: uids whose style mismatch this design accepts (no slot candidate matches the anchor)
+    jev_rejected: list[str]  # select: uids the Jev check rejected (style or attribute) in this design's turns
     instances: list[Record]  # select, finish: instance records of `selection`, keyed by uid = instance_key
     layout: Record  # place, finish: best layout so far
     issues: Record  # place, finish: analyze_layout issues for `layout`

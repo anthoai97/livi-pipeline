@@ -327,13 +327,23 @@ same category and the same slot of this variant's pool, in ranked order:
 
 A replacement must pass before it is used: not selected, purchasable when the
 product is, within the reuse limit, and no `SIZE` error beside the other
-pieces. The repair takes up to 3 such candidates per product and asks Jev the
-style question for all of them in one request, against the anchor; a product
-takes its first candidate with yes at or above 0.3. With the Jev check off or
-failed, candidates pass on the code checks alone, and the note says
+pieces. A product Jev rejects for style gets every such candidate in its slot;
+any other product gets up to 3. One request asks Jev the style question for
+all of them, against the anchor, and a product takes its first candidate in
+ranked order with yes at or above 0.3. With the Jev check off or failed,
+candidates pass on the code checks alone, and the note says
 `code checks only`. For example, a sideboard Jev rejects is swapped for the
-next sideboard in its slot that Jev accepts, and an over-budget chair set
-skips a cheaper chair Jev would reject and takes the next one.
+first sideboard in its slot that Jev accepts, even the fifth, and an
+over-budget chair set skips a cheaper chair Jev would reject and takes the
+next one.
+
+When Jev rejects every candidate in the slot, or the slot has none, the
+product stays and its style mismatch is no longer an error: the validation
+report gets a `STYLE KEPT` warning, and the run record notes
+`style kept: <uid> (no candidate in the slot matches the anchor)`. The
+selection is checked again without another Jev request. The product stays
+accepted for the rest of the design's turns (`style_kept` in the variant
+state).
 
 The swapped selection goes through the same checks, including the Jev check
 and the solver check above. A round is kept when it passes or leaves fewer
@@ -344,7 +354,11 @@ turn that ends failing adds `selection turn <n> failed: <errors>` to the run
 record.
 
 If validation still fails, the next turn repeats with the previous selection's
-product IDs and its errors, one per line, not the whole validation report. The
+product IDs and its errors, one per line, not the whole validation report,
+then every product the Jev check rejected for style or an attribute in this
+design's turns, except the kept ones, as `REJECTED BY THE STYLE AND ATTRIBUTE
+CHECK (do not pick again): <uid>, ...`. These products stay in the catalog
+block, so the prompt cache still covers it. The
 prompt puts the parts all three designs share first (room, budget, intent,
 room facts, digest, selection guidance), then the design's catalog, then what
 changes per design and turn, so the model's prompt cache covers the longest

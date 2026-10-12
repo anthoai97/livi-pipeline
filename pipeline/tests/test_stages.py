@@ -408,28 +408,39 @@ def test_over_budget_selection_the_repair_cannot_validate_is_retried_keeping_req
                and "Do not drop requested items to save money." in prompt for prompt in retries)
 
 
-def test_style_rejection_is_repaired_with_the_next_candidate_in_the_slot(tmp_path, monkeypatch):
+@pytest.mark.parametrize("matching", [True, False])
+def test_style_rejection_is_repaired_from_the_whole_slot_or_kept_as_a_warning(tmp_path, monkeypatch, matching):
     sideboard = next(record for record in POOL if record["asset_id"] == "sideboard_1")
-    search_pool(monkeypatch, [*POOL, *({**sideboard, "asset_id": uid, "title": uid} for uid in ("sideboard_2", "sideboard_3"))])
+    others = [f"sideboard_{n}" for n in range(2, 6)]
+    search_pool(monkeypatch, [*POOL, *({**sideboard, "asset_id": uid, "title": uid} for uid in others)])
     solve_as(monkeypatch, PLACEMENTS)
-    genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection()})
-    jev = FakeJevClient(lambda text: 0.1 if "style and palette" in text and "sideboard_1" in text else 0.9)
+    # A requested sideboard keeps all five sideboards in its slot.
+    genai = FakeGenai({"IntentPacket": intent_packet(item("sideboard", "sideboard")), "Selection": selection()})
+    # Jev rejects the style of every sideboard but the fifth, or of all of them.
+    styled = {"sideboard_1", *others[:3], *([] if matching else others[3:])}
+    jev = FakeJevClient(lambda text: 0.1 if "style and palette" in text and any(uid in text for uid in styled) else 0.9)
 
     events, record = run_pipeline(tmp_path, genai, jev)
 
-    # One model call per design: the repair swaps the rejected sideboard for the next one in its slot.
+    # One model call per design: the repair asks about all four other sideboards in one request, and swaps the
+    # rejected one for the first match, deeper than three in the slot, or keeps it with a warning when none matches.
     assert [call["stage"] for call in record["model_calls"]].count("select") == 3
     ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
     assert len(ready) == 3
+    kept = "style kept: sideboard_1 (no candidate in the slot matches the anchor)"
     for variant in ready:
-        assert [asset["asset_id"] for asset in variant["selected_assets"] if asset["category"] == "sideboard"] == ["sideboard_2"]
+        sideboards = [asset["asset_id"] for asset in variant["selected_assets"] if asset["category"] == "sideboard"]
+        assert sideboards == ["sideboard_5" if matching else "sideboard_1"]
+        assert any(warning.startswith("STYLE KEPT: sideboard_1 ")
+                   for warning in variant["selection_validation"]["warnings"]) is not matching
     for index in range(3):
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
-        assert "swap repair: sideboard_1 -> sideboard_2 (style)" in notes
+        assert ("swap repair: sideboard_1 -> sideboard_5 (style)" in notes) is matching
+        assert (kept in notes) is not matching
         assert not [note for note in notes if " failed: " in note]
-        # The audit, one repair request asking about both other sideboards, and the audit of the repaired selection.
+        # The audit, one repair request, and, after a swap, the audit of the repaired selection.
         checks = [call["questions"] for call in record["jev_calls"] if call["use"] == "check" and call["variant_index"] == index]
-        assert len(checks) == 3 and checks[1] == 2
+        assert checks[1] == 4 and len(checks) == (3 if matching else 2)
 
 
 @pytest.mark.parametrize("lights", [("pendant_big", "pendant_small"), ("pendant_big",)])
@@ -549,20 +560,23 @@ def test_jev_style_and_attribute_failures_reject_the_selection(tmp_path, searche
 
     events, record = run_pipeline(tmp_path, genai, FakeJevClient(answer))
 
-    # The last turn drops the mismatched sideboard; the requested chairs stay, so their attribute failure remains.
+    # The slot holds no other sideboard, so the mismatched one stays as a warning; the requested chairs' attribute
+    # failure fails every turn, and each retry names the chairs as rejected.
     ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
-    assert len(ready) == 3 and all("sideboard_1" not in variant["render_manifest"]["layout"] for variant in ready)
+    assert len(ready) == 3 and all("sideboard_1" in variant["render_manifest"]["layout"] for variant in ready)
     for index in range(3):
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
+        assert notes.count("style kept: sideboard_1 (no candidate in the slot matches the anchor)") == 1
         failures = [note for note in notes if note.startswith("selection turn") and " failed: " in note]
-        assert all("SELECTION CONSTRAINT AUDIT: sideboard_1 does not match the style and palette of the anchor dining_table_3" in note
-                   for note in failures[:-1])
-        [dropped] = [note for note in notes if " dropped " in note]
-        assert dropped.startswith(f"selection turn {MAX_SELECTION_TURNS}: dropped sideboard_1; still fails: SELECTION CONSTRAINT AUDIT: "
-                                  "attribute constraint \"soft neutral\" is not satisfied by ['dining_chair_39']")
-    rejections = [note["text"] for note in record["notes"] if note["text"].startswith("jev check rejected")]
-    assert len(rejections) == 3 * MAX_SELECTION_TURNS
-    assert rejections[0] == "jev check rejected: style ['sideboard_1']; attributes \"soft neutral\" by ['dining_chair_39']"
+        assert failures == [f"selection turn {turn} failed: SELECTION CONSTRAINT AUDIT: attribute constraint \"soft neutral\" "
+                            "is not satisfied by ['dining_chair_39']" for turn in range(1, MAX_SELECTION_TURNS + 1)]
+        # The kept sideboard is no longer a rejection after the first check.
+        rejections = [note for note in notes if note.startswith("jev check rejected")]
+        assert rejections == ["jev check rejected: style ['sideboard_1']; attributes \"soft neutral\" by ['dining_chair_39']",
+                              *["jev check rejected: style []; attributes \"soft neutral\" by ['dining_chair_39']"] * (MAX_SELECTION_TURNS - 1)]
+    retries = [prompt for prompt in genai.of("Selection") if "FAILED VALIDATION" in prompt]
+    assert len(retries) == 3 * (MAX_SELECTION_TURNS - 1)
+    assert all("REJECTED BY THE STYLE AND ATTRIBUTE CHECK (do not pick again): dining_chair_39\n" in prompt for prompt in retries)
     # Each check is one Jev request: the chairs and sideboard against the table, and four attribute constraints.
     [check] = [call for call in record["jev_calls"] if call["use"] == "check" and call["variant_index"] == 0][:1]
     assert check["questions"] == 2 + 4

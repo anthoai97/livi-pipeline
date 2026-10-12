@@ -146,8 +146,9 @@ def _bedroom(room_area: tuple[float, float], requested: dict[str, int], required
 @pytest.mark.parametrize(
     ("room_area", "dropped", "kept"),
     [
-        ((5.0, 5.5), {"desk", "office_chair"}, {"tv", "tv_stand", "wardrobe"}),
-        ((4.5, 5.0), {"desk", "office_chair", "tv", "tv_stand"}, {"wardrobe"}),
+        # Medium bedrooms the requested pieces overfill (real footprint against the 35% target).
+        ((3.8, 4.0), {"desk", "office_chair"}, {"tv", "tv_stand", "wardrobe"}),
+        ((3.6, 3.8), {"desk", "office_chair", "tv", "tv_stand"}, {"wardrobe"}),
     ],
 )
 def test_capped_counts_keep_bed_and_drop_whole_lower_priority_groups(room_area, dropped, kept):
@@ -161,9 +162,9 @@ def test_capped_counts_keep_bed_and_drop_whole_lower_priority_groups(room_area, 
 
 
 def test_capped_counts_keep_explicitly_requested_items_and_cap_optional_ones():
-    # The benchmark bedroom: the fit estimate fits only the bed and dresser.
+    # A 3 x 3 m bedroom: the fit estimate fits only the bed and dresser.
     requested = {"bed": 1, "nightstand": 2, "table_lamp": 2, "dresser": 1, "bench": 1}
-    intent, room = _bedroom((4.0, 4.5), requested, {"bed", "nightstand", "table_lamp", "dresser"})
+    intent, room = _bedroom((3.0, 3.0), requested, {"bed", "nightstand", "table_lamp", "dresser"})
 
     assert room["fit"]["counts"]["recommended"] == {"bed": 1, "dresser": 1}
     assert capped_counts(room, intent) == {**requested, "bench": 0}

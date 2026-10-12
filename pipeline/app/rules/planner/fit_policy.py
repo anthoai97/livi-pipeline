@@ -10,20 +10,20 @@ from __future__ import annotations
 
 SECTIONAL_MIN_ROOM = (3.66, 4.27)  # sectionals need at least 12ft x 14ft
 
-# width, depth, clearance, density weight
+# Default width and depth of a requested piece, and whether it covers floor (rugs, tabletop and mounted pieces do not).
 ROLE_PROFILES = {
-    "sleeping_anchor": (1.6, 2.1, 0.6, 1.0),
-    "bedside": (0.5, 0.4, 0.1, 1.0),
-    "anchor_seating": (2.1, 0.95, 0.55, 1.0),
-    "accent_seating": (0.75, 0.75, 0.45, 1.0),
-    "surface": (0.9, 0.55, 0.35, 1.0),
-    "media": (1.4, 0.45, 0.30, 1.0),
-    "storage": (0.9, 0.4, 0.35, 1.0),
-    "lighting": (0.35, 0.35, 0.20, 1.0),
-    "tabletop": (0.25, 0.25, 0.05, 0.10),
-    "rug": (2.0, 1.6, 0.0, 0.15),
-    "wall_or_ceiling": (0.0, 0.0, 0.0, 0.0),
-    "other": (0.6, 0.6, 0.30, 1.0),
+    "sleeping_anchor": (1.6, 2.1, True),
+    "bedside": (0.5, 0.4, True),
+    "anchor_seating": (2.1, 0.95, True),
+    "accent_seating": (0.75, 0.75, True),
+    "surface": (0.9, 0.55, True),
+    "media": (1.4, 0.45, True),
+    "storage": (0.9, 0.4, True),
+    "lighting": (0.35, 0.35, True),
+    "tabletop": (0.25, 0.25, False),
+    "rug": (2.0, 1.6, False),
+    "wall_or_ceiling": (0.0, 0.0, False),
+    "other": (0.6, 0.6, True),
 }
 
 # Share of the usable floor (doors excluded) that floor furniture covers, as real footprint (width x depth; rugs,
@@ -50,13 +50,6 @@ ROOM_THRESHOLDS = {
         "medium": {"comfortable": 0.32, "overcrowded": 0.40, "sparse": 0.0},
         "spacious": {"comfortable": 0.30, "overcrowded": 0.38, "sparse": 0.0},
     },
-}
-
-# The pre-selection fit estimate's density scores, by size class: category loads with their clearance ring.
-FIT_ESTIMATE_THRESHOLDS = {
-    "compact": {"comfortable": 0.52, "overcrowded": 0.72, "sparse": 0.30},
-    "medium": {"comfortable": 0.55, "overcrowded": 0.75, "sparse": 0.32},
-    "spacious": {"comfortable": 0.60, "overcrowded": 0.82, "sparse": 0.25},
 }
 
 ROLE_CAPS = {

@@ -73,7 +73,7 @@ gets living-room behavior, without it.
 | 3 | Room policy | `room_policy.py:93` `excluded_room_categories` | Categories the room may never hold | Required |
 | 4 | Interpret | `pipeline/app/shared_stages.py:116` `_intent_prompt` | A policy bullet, like the dining one | Required |
 | 5 | Feasibility digest | `pipeline/app/rules/planner/feasibility_digest.py:151-336`; `planner/_util.py` `ROOM_SCALE_CUTOFFS_SQM` | Anchor role, required groups, optional categories, caps, notes; the compact and medium size cutoffs | Required |
-| 6 | Fit estimate | `pipeline/app/rules/planner/fit_check.py:160` `_recommend_counts` | Categories the estimate must never cut | Optional |
+| 6 | Fit estimate | `pipeline/app/rules/planner/fit_check.py:140` `_recommend_counts` | Categories the estimate must never cut | Optional |
 | 7 | Seed guidance | `pipeline/app/rules/planner/seed_guidance.py:169` `build_seed_guidance` | `room_mode` and `primary_anchor_uid` | Required |
 | 8 | Catalog slots | `pipeline/app/rules/selection/validation.py:134` `room_requirements` | Required items | Required |
 | 9 | Selection prompt | `pipeline/app/variant_stages.py:387` `_selection_prompt` | Anchor name, role guidance, size, optional-piece and rug text | Required |

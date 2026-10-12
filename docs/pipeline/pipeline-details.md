@@ -113,8 +113,12 @@ It computes:
   usable: a 5.72 m² target and a 7.42 m² maximum. The sparse floor is 15%
   (compact), 16% (medium) or 12.5% (spacious).
 - Maximum counts per category for this room size.
-- A fit estimate. If the requested items will probably not fit, it sets
-  `fit_warning`, and selection starts with smaller products.
+- A fit estimate: the requested items' real footprint, from default sizes per
+  role, against the same target and maximum. Above the target the room "may
+  feel tight", above the maximum "may feel overcrowded". When a requested
+  count does not fit, it sets `fit_warning`, and selection starts with smaller
+  products. Clearances are left to the layout checks, so a bed or sofa counts
+  at its own size.
 
 ## 3. Find candidate products
 

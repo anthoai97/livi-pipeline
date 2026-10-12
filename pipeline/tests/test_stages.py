@@ -323,11 +323,11 @@ def test_lamp_too_large_for_its_side_table_keeps_the_fit_step(tmp_path, monkeypa
     events, record = run_pipeline(tmp_path, genai)
 
     assert len(of_type(events, "variant_ready")) == 3
-    # The room fit estimate starts at compact; the solver cannot place the lamp, but a left-out tabletop item never
-    # steps down to capped counts.
+    # The room fits its pieces, so no fit step; the solver cannot place the lamp, but a left-out tabletop item never
+    # steps down to compact or capped counts.
     for index in range(3):
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
-        assert [note for note in notes if "fit step" in note] == ["selection turn 1: fit step compact"]
+        assert [note for note in notes if "fit step" in note] == []
         assert stage_runs(record, "select", index) == MAX_SELECTION_TURNS
     retries = [prompt for prompt in genai.of("Selection") if "FAILED VALIDATION" in prompt]
     assert len(retries) == 3 * (MAX_SELECTION_TURNS - 1)

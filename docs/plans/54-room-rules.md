@@ -349,6 +349,40 @@ Phase 2:
   storage and lights suggestions and list the bedside pieces as optional; the
   selection prompt's new lines state what is required.
 
+Phase 4 (crowding):
+
+Benchmark designs sat near 155% of the comfortable load in small living rooms
+and studios, because selection enforced only the floor. Load limits are now the
+share of the usable floor (doors excluded) that floor furniture covers, as real
+footprint (width x depth, no x2), comfortable target / maximum:
+
+| Room | Compact | Medium | Spacious |
+|---|---|---|---|
+| Living room | 0.22 / 0.30 | 0.27 / 0.35 | 0.30 / 0.38 |
+| Bedroom | 0.42 / 0.50 | 0.35 / 0.43 | 0.30 / 0.38 |
+| Dining room | 0.32 / 0.40 | 0.30 / 0.38 | 0.28 / 0.36 |
+| Studio | 0.35 / 0.43 | 0.32 / 0.40 | 0.30 / 0.38 |
+
+- Load limits by room type and size class (`ROOM_THRESHOLDS`). The sparse
+  floor is halved to real-footprint units (0.15 / 0.16 / 0.125), still 0 for
+  dining rooms and studios. Only floor furniture counts: rugs, wall- and
+  ceiling-mounted pieces, tabletop items and a TV on its stand do not. The
+  digest keeps its field names; `comfortable_load_sqm` and
+  `overcrowded_load_sqm` hold the target and the maximum.
+- `validate_selection` enforces the maximum with an `OVERCROWDED` error. It is
+  a warning after a fit step, or when the pieces filling the required roles
+  alone go over it. The prompt asks the model to stay at or under the target
+  and states the maximum.
+- Fewer required extras: a living room requires one accent seat only when
+  spacious (none when compact or medium); a nightstand on each side of a
+  1.4 m+ bed is required only in a spacious bedroom.
+- The final check never removes the anchor (bed, sofa, dining table); findings
+  that name only the anchor stay and the design is delivered with them.
+- The pre-selection fit estimate (`build_fit_check`, `fit_warning`) measures
+  category loads with a clearance ring, a different unit, so it keeps the old
+  size-only ratios as `FIT_ESTIMATE_THRESHOLDS`. Its uncalled `exact_assets`
+  path (measured footprint x2) is deleted.
+
 ## Unresolved questions
 
 None. The values were chosen from design practice as asked; any row above can

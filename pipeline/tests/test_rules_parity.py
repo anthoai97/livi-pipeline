@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from app import variant_stages
 from app.rules.geometry.generation import generate_deterministic_layout_with_report
 from app.rules.layout.analysis import analyze_layout, final_layout_check, findings_by_level
 from app.rules.layout.cleanup import (
@@ -408,14 +409,14 @@ NIGHTSTANDS = [_record("nightstand", "nightstand", 0.5, 0.4, 0.55)] * 2
 BED = _record("bed", "bed", 1.6, 2.1, 1.1)
 
 
-def _validate(room_type, room_area, selected, pool=(), **intent):
+def _validate(room_type, room_area, selected, pool=(), fit_step=None, **intent):
     """validate_selection of `selected` (one unit per record) from a pool of `selected` and `pool`."""
     intent = coerce_intent_packet({"normalized_prompt": "a room", **intent}, room_type=room_type)
     room = build_room_context(room_type=room_type, room_area=room_area, room_vertices=None, wall_height=2.7,
                               room_doors=[{"center": [room_area[0] / 2, 0.0], "width": 0.9, "depth": 0.05}],
                               room_windows=[], intent=intent)
     return validate_selection(items=[{"asset": record, "quantity": 1} for record in selected], intent=intent, room=room,
-                              budget=100000, candidates=[*selected, *pool])
+                              budget=100000, candidates=[*selected, *pool], fit_step=fit_step)
 
 
 def _missing(result, piece):
@@ -511,3 +512,77 @@ def test_selection_size_rules_hold_at_their_boundaries(room_type, piece, context
 def test_a_table_under_0_75_m_deep_seats_one_long_side(depth, seats_five):
     # 1.2 m long sides seat two each at a 0.60 m pitch, the ends one each: five chairs need both long sides.
     assert bool(dining_fit_envelopes({"width": 1.2, "depth": depth}, [{"width": 0.5, "depth": 0.5}] * 5)) is seats_five
+
+
+# --- issue #54 phase 4: crowding
+
+
+RUG = _record("rug", "rug", 2.4, 1.7, 0.01)
+LIVING = [_record("sofa", "sofa", 2.2, 1.0, 0.8), _record("table", "coffee_table", 1.2, 0.6, 0.45), RUG, LAMP, PLANT]
+LIVING_EXTRAS = [*[_record("chair", "accent_chair", 0.85, 0.85, 0.8)] * 2, _record("cabinet", "cabinet", 1.8, 0.5, 0.8),
+                 _record("media", "media_unit", 2.0, 0.5, 0.6)]
+COMPACT_BEDROOM = [BED, *NIGHTSTANDS, LAMP, _record("rug", "rug", 2.5, 1.7, 0.01), PLANT]
+SIDEBOARD = _record("sideboard", "sideboard", 1.6, 0.45, 0.8)
+
+
+def _overcrowded(result):
+    return [any(text.startswith("OVERCROWDED") for text in result[key]) for key in ("errors", "warnings")]
+
+
+@pytest.mark.parametrize(("ottoman", "overcrowded"), [(False, False), (True, True)])
+def test_a_medium_living_room_over_its_maximum_is_overcrowded(ottoman, overcrowded):
+    # 22 m2 with a 0.81 m2 door zone: target 0.27 x 21.19 = 5.72 m2, maximum 0.35 x 21.19 = 7.42 m2.
+    extra = [_record("ottoman", "ottoman", 1.0, 1.0, 0.45)] if ottoman else []
+    result = _validate("living_room", (5.0, 4.4), [*LIVING, *LIVING_EXTRAS, *extra])
+    assert result["metrics"]["total_footprint"] == (7.67 if ottoman else 6.67)
+    assert _overcrowded(result) == [overcrowded, False]
+    assert result["valid"] is not overcrowded, result["errors"]
+
+
+@pytest.mark.parametrize(("extra", "fit_step", "finding"), [
+    ([], None, None),
+    ([SIDEBOARD], None, "error"),
+    ([SIDEBOARD], "compact", "warning"),  # after a fit step, as the requirement errors
+])
+def test_a_compact_bedroom_fits_a_queen_bed_and_two_nightstands_but_not_a_sideboard_too(extra, fit_step, finding):
+    # 10.5 m2: maximum 0.50 x 9.69 = 4.84 m2; the bed, nightstands, lamp and plant cover 4.17 m2, the sideboard 0.72 m2.
+    result = _validate("bedroom", (3.0, 3.5), [*COMPACT_BEDROOM, *extra], fit_step=fit_step)
+    assert _overcrowded(result) == [finding == "error", finding == "warning"]
+    assert result["valid"] is (finding != "error"), result["errors"]
+
+
+def test_required_pieces_alone_over_the_maximum_are_a_warning():
+    # A 2.0 x 2.2 m bed with one nightstand, a lamp and the plant cover 5.01 m2 of the 4.84 m2 maximum.
+    bedroom = [_record("bed", "bed", 2.0, 2.2, 1.1), NIGHTSTANDS[0], LAMP, _record("rug", "rug", 2.9, 1.7, 0.01), PLANT]
+    result = _validate("bedroom", (3.0, 3.5), bedroom)
+    assert _overcrowded(result) == [False, True]
+    assert result["valid"], result["errors"]
+
+
+def test_footprint_counts_floor_furniture_only():
+    extras = [_record("art", "wall_art", 1.0, 0.05, 0.8, placement_type="wall"), _record("stand", "tv_stand", 1.6, 0.4, 0.55),
+              _record("tv", "tv", 1.2, 0.08, 0.7, placement_type="surface"),
+              _record("lamp2", "table_lamp", 0.3, 0.3, 0.5, placement_type="surface")]
+    bare = _validate("living_room", (5.0, 4.4), LIVING)
+    decorated = _validate("living_room", (5.0, 4.4), [*LIVING, *extras])
+    # The rug, the wall art, the TV on its stand and the table lamp add nothing; the stand adds 1.6 x 0.4.
+    assert bare["metrics"]["total_footprint"] == pytest.approx(2.2 + 0.72 + 0.16 + 0.25)
+    assert decorated["metrics"]["total_footprint"] == pytest.approx(bare["metrics"]["total_footprint"] + 0.64)
+
+
+@pytest.mark.parametrize(("room_area", "missing"), [((5.0, 4.4), False), ((6.0, 5.5), True)])
+def test_a_medium_living_room_needs_no_accent_seat_and_a_spacious_one_needs_one(room_area, missing):
+    result = _validate("living_room", room_area, LIVING, [_record("chair", "accent_chair", 0.85, 0.85, 0.8)])
+    assert _missing(result, "accent seating") is missing
+
+
+def test_the_final_check_never_removes_the_anchor():
+    # The bed blocks the bedroom door and a nightstand overlaps it: the nightstand goes, the bed stays with its findings.
+    _, room, assets = _golden_inputs({"room": "bedroom"})
+    instances = [asset for asset in assets if asset["uid"] in {"bed_1", "nightstand_1"}]
+    state = {"shared": {"room": room}, "instances": instances}
+    state |= variant_stages._measure(state, {"bed_1": _pose(1.05, 0.8, 0.0), "nightstand_1": _pose(1.05, 0.8, 0.0)})
+    current, removed = variant_stages._drop_items(state)
+    assert removed == ["nightstand_1"]
+    assert [asset["uid"] for asset in current["instances"]] == ["bed_1"]
+    assert {finding["finding"]["uid"] for finding in current["blocking_findings"]} == {"bed_1"}

@@ -166,11 +166,11 @@ def room_requirements(
     studio, with the dining table and chairs when studio_dining_required;
     perimeter storage in a spacious living room; and a design-only plant
     outside studios. A rug or plant the intent excludes is not required.
-    Completeness pieces (gap_ok): a lamp, and one accent seat in a medium
-    living room or two in a spacious one; a nightstand and a lamp in a bedroom
-    or studio, and a dresser or wardrobe unless the room is compact; a
-    sideboard or cabinet and a pendant or chandelier in a medium or spacious
-    dining room. One is not required when the intent excludes any of its
+    Completeness pieces (gap_ok): a lamp, and one accent seat in a spacious
+    living room; a nightstand and a lamp in a bedroom or studio (in a spacious
+    bedroom validate_selection asks for a nightstand each side of a wide bed),
+    and a dresser or wardrobe unless the room is compact; a sideboard or
+    cabinet and a pendant or chandelier in a medium or spacious dining room. One is not required when the intent excludes any of its
     categories or their siblings (sibling_categories), and the accent seats,
     clothes storage and dining pieces not for a minimal or space-first brief.
     validate_selection does not require one the candidate pool has no product
@@ -199,8 +199,8 @@ def room_requirements(
         need("anchor_seating", REQUIRED_CATEGORIES["anchor_seating"])
         need("surface", REQUIRED_CATEGORIES["surface"] | ({"desk"} if work else set()))
         need("lighting", COUNT_GUIDANCE_ROLE_CATEGORIES["lighting"], gap_ok=True)
-        if furnished:
-            need("accent_seating", LIVING_ACCENT_SEATING, 2 if scale == "spacious" else 1, gap_ok=True)
+        if furnished and scale == "spacious":
+            need("accent_seating", LIVING_ACCENT_SEATING, gap_ok=True)
     if room_type in {"bedroom", "studio"}:
         need("sleeping_anchor", {"bed"})
         need("bedside", {"nightstand"}, gap_ok=True)
@@ -399,11 +399,16 @@ def validate_selection(
     with asset_id as the uid. Whether the selection fits the room is left to
     the code solver.
 
-    Checks budget (110% allowance), the density floor, category caps and
-    counts, required items (room_requirements), fit targets, layout
-    preflight, piece sizes (_size_findings), and strict attributes. A
-    completeness piece blocks unless a fit decision was accepted or the pool
-    has no product for it. Returns valid, status, errors, warnings, metrics,
+    Checks budget (110% allowance), the density floor and maximum, category
+    caps and counts, required items (room_requirements), fit targets, layout
+    preflight, piece sizes (_size_findings), and strict attributes. The
+    density limits measure floor furniture as width x depth: rugs and
+    wall-mounted, ceiling-mounted and tabletop pieces (a TV on its stand
+    included) do not count. Going over the maximum (the digest's
+    overcrowded_load_sqm) blocks, unless a fit decision was accepted or the
+    pieces filling the required roles alone go over it. A completeness piece
+    blocks unless a fit decision was accepted or the pool has no product for
+    it. Returns valid, status, errors, warnings, metrics,
     retry_context (when invalid), feedback (JSON text for the model, with
     asset_id as the uid), and instances (build_instances output).
     """
@@ -444,7 +449,6 @@ def validate_selection(
         for category in (intent_packet.get("excluded_categories") or [])
     }
     total_cost = 0
-    total_footprint = 0
     not_found = []
     accepted_fit_decision = decision in {
         "use_recommendation",
@@ -460,15 +464,15 @@ def validate_selection(
             # against the budget cap.
             if cat not in BUDGET_EXCLUDED_CATEGORIES:
                 total_cost += asset.get("price", 0)
-
-            if cat != "rug":
-                total_footprint += (
-                    asset.get("width", 0) * asset.get("depth", 0)
-                ) * 2
         else:
             not_found.append(uid)
 
-    max_allowed_footprint = furniture_area
+    # Density counts floor furniture only: rugs, mounted and tabletop pieces (a TV on its stand) take no floor.
+    floor_pieces = [
+        asset for asset in instances
+        if normalize_category(asset.get("category")) != "rug" and placement_mode_for_asset(asset) == "floor"
+    ]
+    total_footprint = sum(asset["width"] * asset["depth"] for asset in floor_pieces)
     flex_budget = budget * (1 + BUDGET_FLEX_PCT)
     is_over_budget = total_cost > flex_budget
 
@@ -492,6 +496,7 @@ def validate_selection(
     density_budget = feasibility_digest.get("density_budget") or {}
     footprint_floor = float(density_budget.get("sparse_below_load_sqm") or 0.0)
     comfortable_load = float(density_budget.get("comfortable_load_sqm") or 0.0)
+    max_load = float(density_budget.get("overcrowded_load_sqm") or 0.0)
     if (
         is_valid
         and not accepted_fit_decision
@@ -648,7 +653,7 @@ def validate_selection(
     stated_counts = count_constraints_from_intent_packet(intent_packet)
     available = {normalize_category(asset.get("category")) for asset in assets_by_uid.values()}
     selected_list = [normalize_category(assets_by_uid[uid].get("category")) for uid in canonical_uids if uid in assets_by_uid]
-    two_sided_bed = room_type == "bedroom" and scale != "compact" and any(
+    two_sided_bed = room_type == "bedroom" and scale == "spacious" and any(
         normalize_category(assets_by_uid[uid].get("category")) == "bed"
         and _asset_width_depth(assets_by_uid[uid])[0] >= BED_TWO_SIDED_MIN_WIDTH_M - 1e-9
         for uid in canonical_uids if uid in assets_by_uid
@@ -673,6 +678,26 @@ def validate_selection(
             else:
                 errors.append(message)
                 is_valid = False
+    if max_load > 0 and total_footprint > max_load + 1e-9:
+        # The selected pieces that fill each required role, up to its count, cannot be dropped.
+        required_keys: set[str] = set()
+        for need in requirements:
+            count = 2 if need["role"] == "bedside" and two_sided_bed else need["count"]
+            filling = [asset["uid"] for asset in floor_pieces
+                       if normalize_category(asset.get("category")) in need_categories[need["role"]]]
+            required_keys.update(filling[:count])
+        required_footprint = sum(asset["width"] * asset["depth"] for asset in floor_pieces
+                                 if asset["uid"] in required_keys)
+        message = (
+            f"OVERCROWDED: floor furniture covers {total_footprint:.2f}m² of {furniture_area:.2f}m² usable; "
+            f"at most {max_load:.2f}m² (target {comfortable_load:.2f}m²) for a {scale} {room_type.replace('_', ' ')}. "
+            "Drop optional pieces or choose smaller ones."
+        )
+        if accepted_fit_decision or required_footprint > max_load + 1e-9:
+            warnings.append(message)
+        else:
+            errors.append(message)
+            is_valid = False
     requested_fit_counts, recommended_fit_counts = _fit_warning_counts(room)
     requested_fit_counts = {
         category: count for category, count in requested_fit_counts.items() if category not in waived
@@ -783,7 +808,7 @@ def validate_selection(
             "total_cost": round(total_cost, 2),
             "remaining_budget": round(budget - total_cost, 2),
             "total_footprint": round(total_footprint, 2),
-            "footprint_limit_80pct": round(max_allowed_footprint, 2),
+            "footprint_max": round(max_load, 2),
             "footprint_floor": round(footprint_floor, 2),
             "footprint_comfortable_load": round(comfortable_load, 2),
             "category_counts": count_guidance["metrics"]["category_counts"],
@@ -1227,6 +1252,7 @@ def _selection_retry_context(
     current_total = float(metrics.get("total_cost") or 0.0)
     current_footprint = float(metrics.get("total_footprint") or 0.0)
     footprint_floor = float(metrics.get("footprint_floor") or 0.0)
+    footprint_max = float(metrics.get("footprint_max") or 0.0)
     return {
         "budget_facts": {
             "budget_cap": round(max_total, 2),
@@ -1238,6 +1264,10 @@ def _selection_retry_context(
             "footprint_floor_sqm": round(footprint_floor, 2),
             "add_footprint_at_least_sqm": round(
                 max(0.0, footprint_floor - current_footprint), 2
+            ),
+            "footprint_max_sqm": round(footprint_max, 2),
+            "remove_footprint_at_least_sqm": round(
+                max(0.0, current_footprint - footprint_max), 2
             ),
         },
         "circulation_feasible_living_clusters": (
@@ -1257,6 +1287,8 @@ def _selection_retry_context(
             "coverage, not a design recommendation. "
             "Stay under the budget cap; when under-furnished, add the fewest "
             "coherent, useful pieces needed to meet the footprint floor, preferring "
-            "one or two substantial additions over several small fillers."
+            "one or two substantial additions over several small fillers; when "
+            "overcrowded, drop optional pieces or choose smaller ones to get under "
+            "the footprint maximum."
         ),
     }

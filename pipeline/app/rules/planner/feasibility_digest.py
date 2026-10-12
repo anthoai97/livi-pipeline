@@ -91,8 +91,9 @@ def _max_counts_by_category(
     return caps
 
 
-def _density_budget(*, room_scale: str, available_furnishing_area_sqm: float) -> dict[str, Any]:
-    thresholds = ROOM_THRESHOLDS.get(room_scale, ROOM_THRESHOLDS["medium"])
+def _density_budget(*, room_type: str, room_scale: str, available_furnishing_area_sqm: float) -> dict[str, Any]:
+    """Floor furniture footprint limits (real width x depth): the sparse floor, the comfortable target and the maximum."""
+    thresholds = ROOM_THRESHOLDS[room_type][room_scale]
     return {
         "comfortable_max_score": thresholds["comfortable"],
         "overcrowded_min_score": thresholds["overcrowded"],
@@ -311,12 +312,10 @@ def build_feasibility_digest(
         max_counts_by_category["dining_table"] = 1
         max_counts_by_category["dining_chair"] = dining_chair_count(intent_packet, room_scale)
     density_budget = _density_budget(
+        room_type=room_type,
         room_scale=room_scale,
         available_furnishing_area_sqm=available_furnishing_area_sqm,
     )
-    if dining or studio:
-        # Dining completeness is table capacity and usable seats, not floor fill.
-        density_budget["sparse_below_load_sqm"] = 0.0
     room_completion_guidance = _room_completion_guidance(
         room_scale=room_scale,
         opening_pressure=opening_pressure,
@@ -415,9 +414,10 @@ def format_feasibility_digest_for_prompt(digest: Mapping[str, Any] | None) -> st
         f"- required_roles: {required_roles}\n"
         f"- optional_categories: {optional_categories}\n"
         f"- max_counts_by_category: {max_counts}\n"
-        f"- density_budget: floor>={float(density_budget.get('sparse_below_load_sqm') or 0.0):.2f} sqm, "
-        f"comfortable<={float(density_budget.get('comfortable_load_sqm') or 0.0):.2f} sqm, "
-        f"overcrowded>={float(density_budget.get('overcrowded_load_sqm') or 0.0):.2f} sqm\n"
+        f"- density_budget (floor furniture footprint, width x depth): floor>="
+        f"{float(density_budget.get('sparse_below_load_sqm') or 0.0):.2f} sqm, "
+        f"target<={float(density_budget.get('comfortable_load_sqm') or 0.0):.2f} sqm, "
+        f"maximum<={float(density_budget.get('overcrowded_load_sqm') or 0.0):.2f} sqm\n"
         f"- completion_strategy: {completion.get('strategy') or 'unknown'} "
         f"({int(completion.get('zone_count') or 0)} zone(s)); {completion_notes}\n"
         f"- blocked_categories: {blocked_categories}\n"

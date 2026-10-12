@@ -9,11 +9,11 @@ from app.rules.room_policy import BEDROOM_FIT_GROUPS, normalize_room_type
 
 from .fit_policy import (
     CATEGORY_CAPS,
+    FIT_ESTIMATE_THRESHOLDS,
     PROTECTED_MIN_ROLES,
     REMOVAL_PRIORITY,
     ROLE_CAPS,
     ROLE_PROFILES,
-    ROOM_THRESHOLDS,
 )
 from ._util import room_scale as _room_scale, round4 as _round
 from .taxonomy import ROLE_CATEGORIES, normalize_category
@@ -64,33 +64,17 @@ def _available_area(
     return max(0.0, area_sqm - door_clearance_area)
 
 
-def _asset_load(
-    asset: Mapping[str, Any], fallback_index: int, *, exact_assets: bool = False,
-) -> dict[str, Any]:
+def _asset_load(asset: Mapping[str, Any], fallback_index: int) -> dict[str, Any]:
     category = _normalize_category(asset.get("category") or asset.get("type")) or "unknown"
     role = _role_for_category(category)
     default_width, default_depth, clearance, weight = ROLE_PROFILES[role]
-    width = float(asset["width"]) if exact_assets else _positive_float(asset.get("width"), default_width)
-    depth = float(asset["depth"]) if exact_assets else _positive_float(asset.get("depth"), default_depth)
+    width = _positive_float(asset.get("width"), default_width)
+    depth = _positive_float(asset.get("depth"), default_depth)
     footprint = width * depth
     adjusted = (width + clearance * 2.0) * (depth + clearance * 2.0) * weight
     mode = str(asset.get("placement_mode") or "").strip().lower()
     if asset.get("support_uid") or mode in {"tabletop", "wall", "ceiling"}:
         footprint = adjusted = 0.0
-    if exact_assets:
-        # Concrete selections share the selector's 2x floor-footprint density
-        # basis. Rugs and supported/mounted pieces do not consume another floor
-        # footprint; actual floor placement overrides broad category roles.
-        occupies_floor = (
-            category != "rug"
-            and not asset.get("support_uid")
-            and (
-                mode == "floor"
-                or (not mode and (category == "floor_mirror" or role not in {"tabletop", "wall_or_ceiling"}))
-            )
-        )
-        footprint = width * depth if occupies_floor else 0.0
-        adjusted = footprint * 2.0
     uid = str(asset.get("uid") or asset.get("id") or asset.get("asset_uid") or "").strip()
 
     return {
@@ -171,7 +155,7 @@ def _recommend_counts(
         for category, count in source_counts.items()
         if min(count, _category_cap(category, room_scale)) > 0
     }
-    target_load = available_area_sqm * ROOM_THRESHOLDS[room_scale]["comfortable"]
+    target_load = available_area_sqm * FIT_ESTIMATE_THRESHOLDS[room_scale]["comfortable"]
 
     if room_type == "bedroom":
         for group in reversed(BEDROOM_FIT_GROUPS):
@@ -224,7 +208,7 @@ def _completion_report(
     density_score: float,
     selected_counts: Mapping[str, int],
 ) -> dict[str, Any]:
-    thresholds = ROOM_THRESHOLDS[room_scale]
+    thresholds = FIT_ESTIMATE_THRESHOLDS[room_scale]
     if density_score < thresholds["sparse"]:
         level = "sparse"
     elif density_score > thresholds["comfortable"]:
@@ -244,14 +228,10 @@ def build_fit_check(
     selected_assets: list[Mapping[str, Any]] | None = None,
     feasibility_digest: Mapping[str, Any] | None = None,
     requested_counts: Mapping[str, Any] | None = None,
-    exact_assets: bool = False,
     room_type: str | None = None,
 ) -> dict[str, Any]:
     """Estimate whether selected/requested furniture can fit before placement."""
-    loads = [
-        _asset_load(asset, index, exact_assets=exact_assets)
-        for index, asset in enumerate(selected_assets or [])
-    ]
+    loads = [_asset_load(asset, index) for index, asset in enumerate(selected_assets or [])]
     selected_counts = _normalize_counts(Counter(load["category"] for load in loads))
     requested = _normalize_counts(requested_counts)
     source_counts = requested or selected_counts
@@ -264,14 +244,14 @@ def build_fit_check(
     )
     room_type = normalize_room_type(room_type or (feasibility_digest or {}).get("room_type"))
     room_scale = str((feasibility_digest or {}).get("room_scale") or "").strip() or _room_scale(area_sqm, room_type)
-    if room_scale not in ROOM_THRESHOLDS:
+    if room_scale not in FIT_ESTIMATE_THRESHOLDS:
         room_scale = _room_scale(area_sqm, room_type)
 
     average_loads = _average_loads(loads)
     selected_adjusted_sqm = sum(float(load["clearance_adjusted_sqm"]) for load in loads)
     source_adjusted_sqm = _estimated_load(source_counts, average_loads) if requested else selected_adjusted_sqm
     density_score = source_adjusted_sqm / available_area_sqm if available_area_sqm > 0 else 0.0
-    thresholds = ROOM_THRESHOLDS[room_scale]
+    thresholds = FIT_ESTIMATE_THRESHOLDS[room_scale]
 
     if density_score > thresholds["overcrowded"]:
         severity = "overcrowded"
@@ -310,7 +290,7 @@ def build_fit_check(
         warnings.append("This room may feel underfurnished for its size.")
 
     return {
-        "load_basis": "measured_floor_footprint_x2" if exact_assets else "category_clearance_estimate",
+        "load_basis": "category_clearance_estimate",
         "severity": severity,
         "message": message,
         "room_scale": room_scale,

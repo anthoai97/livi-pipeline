@@ -95,7 +95,23 @@ It computes:
 - A size class (compact, medium, or spacious) by floor area per room type:
   living room below 18 and 30 m², bedroom 11 and 16 m², dining room 10 and
   16 m², studio 25 and 40 m². A 15 m² bedroom is medium.
-- A density budget: the minimum and maximum furniture footprint for the room.
+- A density budget: how much of the usable floor (doors excluded) floor
+  furniture may cover, by room type and size class. Footprint is width x depth
+  of each floor piece; rugs, wall- and ceiling-mounted pieces, tabletop items
+  and a TV on its stand do not count. Each room gets a comfortable target and a
+  maximum (`comfortable_load_sqm`, `overcrowded_load_sqm`); a living room or
+  bedroom also gets a sparse floor (`sparse_below_load_sqm`):
+
+  | Room | Compact | Medium | Spacious |
+  |---|---|---|---|
+  | Living room | 22% / 30% | 27% / 35% | 30% / 38% |
+  | Bedroom | 42% / 50% | 35% / 43% | 30% / 38% |
+  | Dining room | 32% / 40% | 30% / 38% | 28% / 36% |
+  | Studio | 35% / 43% | 32% / 40% | 30% / 38% |
+
+  For example, a 22 m² living room with a 0.81 m² door zone has 21.19 m²
+  usable: a 5.72 m² target and a 7.42 m² maximum. The sparse floor is 15%
+  (compact), 16% (medium) or 12.5% (spacious).
 - Maximum counts per category for this room size.
 - A fit estimate. If the requested items will probably not fit, it sets
   `fit_warning`, and selection starts with smaller products.
@@ -120,7 +136,7 @@ The required items per room (`room_requirements`):
 
 | Room | Core | Completeness pieces |
 |---|---|---|
-| Living room | sofa; coffee or side table (a desk counts only when work is requested); rug; design-only plant; perimeter storage when spacious | a lamp; one accent chair when medium, two when spacious |
+| Living room | sofa; coffee or side table (a desk counts only when work is requested); rug; design-only plant; perimeter storage when spacious | a lamp; one accent chair when spacious |
 | Bedroom | one bed; rug; design-only plant | a nightstand and a lamp; a dresser or wardrobe from medium size |
 | Dining room | one table and its chairs (4, or 6 when spacious; 4 to 6 pass); design-only plant | a sideboard or cabinet and a pendant or chandelier from medium size |
 | Studio | bed; sofa or loveseat; a table with 2 chairs when the brief asks for one or the studio is 25 m² or more | a nightstand and a lamp; a dresser or wardrobe from medium size |
@@ -259,15 +275,21 @@ toward the reuse limit. Each variant's selection prompt lists its own pool.
    - counts, required items, and requested attributes, plus the Jev results.
      A missing completeness piece fails the turn unless a fit step was
      applied or the variant's candidates hold no product for it. A bed 1.4 m
-     or wider in a medium or spacious bedroom needs a nightstand on each side,
-     unless the brief states a nightstand count
+     or wider in a spacious bedroom needs a nightstand on each side, unless
+     the brief states a nightstand count
    - piece sizes: a living-room coffee table 0.35 to 0.50 m high and a side
      table 0.45 to 0.65 m high; a dining light 0.15 m inside each table edge;
      a bedroom rug that is a runner (at most 0.90 m wide) or reaches 0.45 m
      past each side of the bed. A failing piece is an error only when the
      candidates hold one that passes, else a warning. A coffee table 0.5 to
      0.75 x the sofa width is only a warning
-   - footprint reaches the density floor
+   - footprint reaches the density floor and stays at or under the maximum.
+     Over the maximum is an `OVERCROWDED` error, for example `OVERCROWDED:
+     floor furniture covers 7.67m² of 21.19m² usable; at most 7.42m² (target
+     5.72m²) for a medium living room. Drop optional pieces or choose smaller
+     ones.` It is a warning after a fit step, or when the pieces filling the
+     required roles alone go over the maximum. The prompt asks the model to
+     stay at or under the target
    - tabletop items have a support (a TV no longer needs a stand)
    - at most `PRODUCT_REUSE_RATE` of the distinct selected products are marked
      shared (`REUSE LIMIT` error)
@@ -458,10 +480,11 @@ breaks them.
    or rejected. The `node_complete` data carries `review`.
 3. **Check.** The final layout check runs: every selected unit is placed
    exactly once and no blocking finding remains. When it fails, code removes the
-   items it fails on, one named item a round, non-anchor items first, choosing
-   the removal that leaves the fewest findings. Items resting on a removed item
-   go with it. For example, a chair stuck inside the dining table is removed and
-   the room keeps three chairs.
+   items it fails on, one named item a round, choosing the removal that leaves
+   the fewest findings. Items resting on a removed item go with it. It never
+   removes the anchor (bed, sofa, or dining table): findings that name only the
+   anchor stay, and the design is delivered with them. For example, a chair
+   stuck inside the dining table is removed and the room keeps three chairs.
 4. **Send.** Finish builds the render manifest (model references and
    placements), the selected-asset list, and the total cost. The graph then
    renders a top-down preview in a worker thread and sends `variant_ready` with

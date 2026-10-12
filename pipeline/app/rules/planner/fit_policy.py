@@ -26,7 +26,34 @@ ROLE_PROFILES = {
     "other": (0.6, 0.6, 0.30, 1.0),
 }
 
+# Share of the usable floor (doors excluded) that floor furniture covers, as real footprint (width x depth; rugs,
+# mounted, tabletop and supported pieces excluded): the comfortable target, the maximum, and the sparse floor below
+# which a living room or bedroom is under-furnished. Dining rooms and studios have no floor.
 ROOM_THRESHOLDS = {
+    "living_room": {
+        "compact": {"comfortable": 0.22, "overcrowded": 0.30, "sparse": 0.15},
+        "medium": {"comfortable": 0.27, "overcrowded": 0.35, "sparse": 0.16},
+        "spacious": {"comfortable": 0.30, "overcrowded": 0.38, "sparse": 0.125},
+    },
+    "bedroom": {
+        "compact": {"comfortable": 0.42, "overcrowded": 0.50, "sparse": 0.15},
+        "medium": {"comfortable": 0.35, "overcrowded": 0.43, "sparse": 0.16},
+        "spacious": {"comfortable": 0.30, "overcrowded": 0.38, "sparse": 0.125},
+    },
+    "dining_room": {
+        "compact": {"comfortable": 0.32, "overcrowded": 0.40, "sparse": 0.0},
+        "medium": {"comfortable": 0.30, "overcrowded": 0.38, "sparse": 0.0},
+        "spacious": {"comfortable": 0.28, "overcrowded": 0.36, "sparse": 0.0},
+    },
+    "studio": {
+        "compact": {"comfortable": 0.35, "overcrowded": 0.43, "sparse": 0.0},
+        "medium": {"comfortable": 0.32, "overcrowded": 0.40, "sparse": 0.0},
+        "spacious": {"comfortable": 0.30, "overcrowded": 0.38, "sparse": 0.0},
+    },
+}
+
+# The pre-selection fit estimate's density scores, by size class: category loads with their clearance ring.
+FIT_ESTIMATE_THRESHOLDS = {
     "compact": {"comfortable": 0.52, "overcrowded": 0.72, "sparse": 0.30},
     "medium": {"comfortable": 0.55, "overcrowded": 0.75, "sparse": 0.32},
     "spacious": {"comfortable": 0.60, "overcrowded": 0.82, "sparse": 0.25},

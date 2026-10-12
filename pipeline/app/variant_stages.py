@@ -406,6 +406,7 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
     density_budget = digest.get("density_budget") or {}
     footprint_floor = float(density_budget.get("sparse_below_load_sqm") or 0.0)
     comfortable_load = float(density_budget.get("comfortable_load_sqm") or 0.0)
+    max_load = float(density_budget.get("overcrowded_load_sqm") or 0.0)
     plant_guidance = ""
     bedroom = room_type == "bedroom"
     dining = room_type == "dining_room"
@@ -428,7 +429,7 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
     dining_pieces = required_pieces(("serving_storage", "a sideboard or cabinet"),
                                     ("overhead_lighting", "a pendant or chandelier over the table"))
     living_pieces = required_pieces(("lighting", "a lamp (floor_lamp/table_lamp/lamp)"),
-                                    ("accent_seating", f"{needs.get('accent_seating', {}).get('count')} accent chair(s)"))
+                                    ("accent_seating", "an accent chair"))
     anchor_name = "complete bed, compact sofa and dining table" if studio else "complete adult bed" if bedroom else "dining table" if dining else "sofa"
     required_role_guidance = (
         ("Apply the studio furnishing policy in the feasibility digest: preserve one complete standalone bed, "
@@ -466,7 +467,7 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
         "when product metadata confirms that capability; never relabel a generic cabinet as a wardrobe. "
         "Do not infer mattress size from exterior furniture dimensions. Include fitting lighting. "
         + (f"A fresh bedroom needs {bedside_pieces}; a selection missing them fails validation. " if bedside_pieces else "")
-        + f"Unless the room is compact, a bed {BED_TWO_SIDED_MIN_WIDTH_M:.2f}m or wider needs a nightstand on each side. "
+        + f"In a spacious room, a bed {BED_TWO_SIDED_MIN_WIDTH_M:.2f}m or wider needs a nightstand on each side. "
         f"A bedroom rug is a runner at most {RUNNER_MAX_WIDTH_M:.2f}m wide or spans the bed width plus "
         f"{BED_RUG_EXTRA_WIDTH_M:.2f}m."
         if bedroom else
@@ -602,7 +603,7 @@ CONSTRAINTS:
 {plant_guidance}- Budget target: aim for {BUDGET_TARGET_PCT - 0.05:.0%}-{BUDGET_TARGET_PCT + 0.05:.0%} of ${budget:.2f}. The total must be at least ${budget * BUDGET_FLOOR_PCT:.2f} ({BUDGET_FLOOR_PCT:.0%}) and at most ${budget * (1 + BUDGET_FLEX_PCT):.2f} (${budget:.2f} + 10% flex). Spend first on better versions of the {anchor_name} and the main pieces (better made, better materials, the right size), then on useful pieces the room is missing; never on filler. A design may stay under {BUDGET_FLOOR_PCT:.0%} only when the room is complete and no fitting product would improve it; say why in gaps.
 - Non-shoppable decor: once the room is functionally complete, add non-shoppable decor that suits the room (plants, sculptures, floor and wall mirrors) whether or not budget remains; it adds nothing to the total. Decide how many pieces from the room size and the brief: a spacious room takes more than a compact one, within the room caps and without blocking circulation. Non-shoppable decor UIDs: {', '.join(free_decor_uids) or 'none available'}. Skip it for minimal briefs and follow any decor limit in the request. Non-shoppable decor is a finishing layer, not filler: this rule takes priority over the guidance below to omit optional pieces or avoid filler.
 - Retail decor: once the room is functionally complete, if the total is under ${budget:.2f}, add up to 2 retail decor pieces that suit the room (a sculpture, a plant, a floor mirror), keeping the total at or under ${budget:.2f}. Retail decor UIDs: {', '.join(decor_uids) or 'none available'}. A required decor plant does not count toward these. Skip decor for minimal briefs.
-- Furnish the room: total footprint (width x depth x 2 per asset, rugs excluded) must be at least {footprint_floor:.2f} sqm and at most {furniture_area:.2f} sqm. The comfortable load of {comfortable_load:.2f} sqm is an upper reference, not a target. Once the requested functions and density floor are satisfied, do not add pieces merely to approach it.
+- Furnish the room without crowding it: floor furniture footprint (width x depth per floor piece; rugs, wall- and ceiling-mounted pieces, tabletop items and a TV on its stand do not count) must be at least {footprint_floor:.2f} sqm. Stay at or under the comfortable target of {comfortable_load:.2f} sqm; a selection over the maximum of {max_load:.2f} sqm fails validation. Once the requested functions and density floor are satisfied, do not add pieces merely to approach the target.
 {perimeter_storage_guidance}- Physical layout preflight must pass: rugs must fit the room; every tabletop asset must fit an eligible selected support surface; desk/dining clusters must fit with their chairs; and tiny rooms must not receive extra seating or floor lamps.
 - {count_guidance_constraint}
 - Assets with is_decor_item=true are non-shoppable: their zero budget contribution is bookkeeping, not a retail price. is_placeholder=true identifies temporary furniture for layout evaluation; a verified wardrobe placeholder can satisfy clothing storage, but cannot be purchased or count as spending more budget. Never describe these items as free products.
@@ -1489,7 +1490,8 @@ async def finish(state: VariantState, ctx: StageContext) -> VariantState:
         current, removed = await asyncio.to_thread(_drop_items, {**state, **current})
         left = current["blocking_findings"]
         ctx.run.note(f"dropped {', '.join(removed) or 'nothing'} for the final check"
-                     + (f"; delivered with {len(left)} blocking findings that name no item" if left else ""), ctx.variant_index)
+                     + (f"; delivered with {len(left)} blocking findings that name no removable item" if left else ""),
+                     ctx.variant_index)
     ctx.data.update(valid=not left, errors=len(left), dropped=len(removed))
     return {**current, **_delivery(state["shared"], current["layout"], current["instances"])}
 
@@ -1521,10 +1523,13 @@ def _drop_items(state: VariantState) -> tuple[VariantState, list[str]]:
 
     Reads `shared`, `instances`, `layout`, and its findings. First removes the
     instances the layout is missing. Then, while blocking findings remain and
-    name an item, removes one named item a round: non-anchor items first, then
-    the removal that leaves the best layout_issue_score, then the smallest
-    footprint. Items resting on a removed item go with it. Returns the update
-    (`instances`, `layout`, and its findings) and the removed instance keys.
+    name an item other than the room's anchor (_ANCHOR_CATEGORIES: the bed,
+    the anchor seating, the dining table), removes one named item a round: the
+    removal that leaves the best layout_issue_score, then the smallest
+    footprint. Items resting on a removed item go with it. An anchor is never
+    removed: findings that name only anchors stay, and the design is delivered
+    with them. Returns the update (`instances`, `layout`, and its findings) and
+    the removed instance keys.
     """
     anchors = set().union(*_ANCHOR_CATEGORIES.get(state["shared"]["room"]["room_type"], (FIT_ANCHOR_SEATING,)))
     current: VariantState = {key: state[key] for key in ("instances", "layout", "issues", "findings", "blocking_findings",
@@ -1538,17 +1543,17 @@ def _drop_items(state: VariantState) -> tuple[VariantState, list[str]]:
         layout = {key: pose for key, pose in current["layout"].items() if key not in gone}
         return {"instances": instances, **_measure({**state, "instances": instances}, layout)}
 
-    def rank(key: str, trial: VariantState) -> tuple[bool, Any, float]:
+    def rank(key: str, trial: VariantState) -> tuple[Any, float]:
         asset = by_key[key]
-        return (normalize_category(asset.get("category")) in anchors, layout_issue_score(trial["issues"]),
-                float(asset.get("width") or 0) * float(asset.get("depth") or 0))
+        return layout_issue_score(trial["issues"]), float(asset.get("width") or 0) * float(asset.get("depth") or 0)
 
     removed = [_key(asset) for asset in current["instances"] if _key(asset) not in current["layout"]]
     if removed:
         current = without(set(removed))
     while current["blocking_findings"]:
         by_key = {_key(asset): asset for asset in current["instances"]}
-        trials = {key: without({key}) for key in _named_items(current["blocking_findings"], set(by_key))}
+        removable = {key for key, asset in by_key.items() if normalize_category(asset.get("category")) not in anchors}
+        trials = {key: without({key}) for key in _named_items(current["blocking_findings"], removable)}
         if not trials:
             break
         key = min(trials, key=lambda key: rank(key, trials[key]))

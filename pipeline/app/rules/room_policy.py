@@ -35,7 +35,7 @@ DINING_FURNISHING_GUIDANCE = (
 )
 BEDROOM_FURNISHING_GUIDANCE = (
     "A bedroom centers on one complete adult bed with a nightstand and a bedside lamp; "
-    f"a bed {BED_TWO_SIDED_MIN_WIDTH_M:.1f} m wide or more gets a nightstand on each side unless the room is compact. "
+    f"a bed {BED_TWO_SIDED_MIN_WIDTH_M:.1f} m wide or more gets a nightstand on each side in a spacious room. "
     "A medium or spacious bedroom also needs a dresser or wardrobe, unless the brief excludes them or asks for "
     "minimal or space-first furniture. "
     "A rug and a plant are required; a bench, accent chair, floor lamp, mirror and wall art are optional. "

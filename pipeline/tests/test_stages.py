@@ -305,8 +305,9 @@ def test_selection_the_solver_cannot_place_steps_to_compact_then_capped_counts_t
             f"selection turn {turn} failed" for turn in range(1, MAX_SELECTION_TURNS + 1)]
         # Removing products cannot fix what the solver leaves out, so select drops nothing; finish removes the items left out.
         assert not [note for note in notes if note.startswith("selection turn") and " dropped " in note]
+        # The oversized anchor table is never removed: the design is delivered with the findings naming only it.
         [dropped] = [note for note in notes if note.startswith("dropped ")]
-        assert "dining_table_1" in dropped
+        assert "dining_table_1" not in dropped and "blocking findings that name no removable item" in dropped
     assert len(of_type(events, "variant_ready")) == 3
 
 

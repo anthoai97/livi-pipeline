@@ -225,11 +225,11 @@
     "wardrobe": 3
    },
    "density_budget": {
-    "comfortable_max_score": 0.6,
-    "overcrowded_min_score": 0.82,
-    "sparse_below_score": 0.25,
-    "comfortable_load_sqm": 12.0002,
-    "overcrowded_load_sqm": 16.4002,
+    "comfortable_max_score": 0.28,
+    "overcrowded_min_score": 0.36,
+    "sparse_below_score": 0.0,
+    "comfortable_load_sqm": 5.6001,
+    "overcrowded_load_sqm": 7.2001,
     "sparse_below_load_sqm": 0.0
    }
   },
@@ -2877,11 +2877,11 @@
     "wardrobe": 3
    },
    "density_budget": {
-    "comfortable_max_score": 0.6,
-    "overcrowded_min_score": 0.82,
-    "sparse_below_score": 0.25,
-    "comfortable_load_sqm": 12.0002,
-    "overcrowded_load_sqm": 16.4002,
+    "comfortable_max_score": 0.28,
+    "overcrowded_min_score": 0.36,
+    "sparse_below_score": 0.0,
+    "comfortable_load_sqm": 5.6001,
+    "overcrowded_load_sqm": 7.2001,
     "sparse_below_load_sqm": 0.0
    }
   },
@@ -4041,11 +4041,11 @@
     "wardrobe": 3
    },
    "density_budget": {
-    "comfortable_max_score": 0.6,
-    "overcrowded_min_score": 0.82,
-    "sparse_below_score": 0.25,
-    "comfortable_load_sqm": 12.0002,
-    "overcrowded_load_sqm": 16.4002,
+    "comfortable_max_score": 0.28,
+    "overcrowded_min_score": 0.36,
+    "sparse_below_score": 0.0,
+    "comfortable_load_sqm": 5.6001,
+    "overcrowded_load_sqm": 7.2001,
     "sparse_below_load_sqm": 0.0
    }
   },

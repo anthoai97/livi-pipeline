@@ -215,6 +215,31 @@ calls per design at most 1.5 median, failed turns per design under 0.5,
 duplicates under 3% of calls, selection cost per run down by half, every
 design delivered, review scores within chance (0.5). Then decide the turn cap.
 
+## Changes during implementation
+
+- **Size tolerance.** Catalog sizes come from 3D bounding boxes, so a product
+  passes a size rule within `SIZE_TOLERANCE_M` (5 cm) of its limit, in the
+  retrieval filter and in the selection size check. Prompts state the limits.
+- **Style repair checks the whole slot.** Three candidates were often all
+  rejected, and the model then alternated between rejected products. The
+  repair asks Jev about every eligible candidate in the slot in one request.
+  When none matches the anchor, the product stays with a `STYLE KEPT` warning
+  for the rest of the design's selection. Retries name the products Jev
+  rejected.
+- **Brief-wide attributes are checked for the room.** A phrase with no
+  category ("boucle textures", "Scandinavian") passes when at least one
+  selected piece meets it; it fails only when none does. Category-scoped
+  phrases stay per product.
+- **Turn cap stays at 4.** In the final benchmark 25 of 90 designs (28%)
+  reached turn 4, mostly small rooms the solver cannot fit; the cap needs
+  under 5%.
+
+Result, 10 cases x 3 runs against `main` run with the same set: selection
+calls per design 3.00 -> 2.23, failed turns 2.22 -> 1.34, cost per run
+$0.145 -> $0.114, median run 43.7 -> 37.2 s, review scores unchanged
+(overall 3.13 -> 3.10). The 1.5 target is not reached: the remaining retries
+are small-room layout fit (left as is) and budget.
+
 ## Unresolved questions
 
 None.

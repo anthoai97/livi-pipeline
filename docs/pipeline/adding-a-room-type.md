@@ -86,7 +86,7 @@ gets living-room behavior, without it.
 | 16 | Issue tiers | `layout/constants.py:98`, `:152`; `layout/formatting.py`; `layout/metrics.py:100` | Register the new issue keys | Required with 15 |
 | 17 | Solver | `pipeline/app/rules/layout/solver.py:164`, `:321`, `:740` | `_STORAGE_FRONTS`, `_groups`, `_preference` | Optional |
 | 18 | Final review prompt | `variant_stages.py:1291` `_arrangement_prompt` | Nothing: it reads the room's `DESIGN_RULES` key (`layout_rules.py:73`) | Optional |
-| 19 | Web brief | `web/src/lib/types.ts:4`, `web/src/lib/room.ts:102`, `:111` | `RoomType`, `ROOM_TYPES`, four `PROMPT_STARTERS` with sizes | Required |
+| 19 | Web brief | `web/src/lib/types.ts:4`, `web/src/lib/room.ts` | `RoomType`, `ROOM_TYPES`, four `EXAMPLES` with size, budget and openings | Required |
 | 20 | Benchmark, tests | `pipeline/scripts/benchmark_requests.json`, `pipeline/tests/` | One case and focused tests | Required |
 
 ## Steps
@@ -205,8 +205,9 @@ gets living-room behavior, without it.
 
     ```ts
     { value: "home_office", label: "Home office" },  // ROOM_TYPES
-    { roomType: "home_office", label: "Warm minimal", width: 3.2, length: 3.6,  // PROMPT_STARTERS
-      prompt: "A warm, minimal home office in oak: a desk facing the window, a supportive task chair, a bookcase and a floor lamp." },
+    example("Home office", "Warm minimal", "home_office",  // EXAMPLES
+      "A warm, minimal home office in oak: a desk facing the window, a supportive task chair, a bookcase and a floor lamp.",
+      4000, [3.2, 3.6, 2.7], DOOR, WINDOW),
     ```
 
 15. **Add a benchmark case** to `benchmark_requests.json` with `label`,

@@ -2,12 +2,11 @@
 
 import json
 import math
-import time
 from pathlib import Path
 
 import pytest
 from shapely.ops import unary_union
-from test_rules_parity import GOLDEN, _golden_id, _golden_inputs
+from test_rules import GOLDEN, _golden_inputs
 
 from app.rules.geometry.primitives import asset_polygon
 from app.rules.layout.analysis import analyze_layout, findings_by_level
@@ -24,6 +23,9 @@ from app.rules.planner.room_facts import build_room_context
 
 BENCHMARK = {entry["label"]: entry["request"] for entry in
              json.loads((Path(__file__).parents[1] / "scripts" / "benchmark_requests.json").read_text())}
+# Recorded legacy variants and the synthetic rooms, as (room, variant).
+ROOMS = [("run0", "0"), ("run0", "1"), ("run1", "0"), ("run2", "0"),
+         ("living", "0"), ("bedroom", "0"), ("studio", "0"), ("hallway_living", "0")]
 # Recorded legacy variant whose selection does not fit its room: legacy's final layout failed on it too.
 UNFIT = ("run0", "1")
 
@@ -53,14 +55,15 @@ def dining_room(table, *extra):
     return intent, room, [item("dining_table_1", "dining_table", *table), *chairs, *extra]
 
 
-@pytest.mark.parametrize("case", GOLDEN["seeds"], ids=_golden_id)
-def test_solver_places_every_item_without_blocking_findings(case):
-    intent, room, assets = _golden_inputs(case)
+@pytest.mark.parametrize(("name", "variant"), ROOMS, ids=[f"{name}-{variant}" for name, variant in ROOMS])
+def test_solver_places_every_item_without_blocking_findings_in_under_two_seconds(name, variant):
+    intent, room, assets = _golden_inputs({"room": name, "variant": variant})
 
     layout, report = solve_layout(assets, room, intent)
 
+    assert report["elapsed"] < 2.0
     assert set(layout) == {asset["uid"] for asset in assets}
-    if (case["room"], case["variant"]) == UNFIT:
+    if (name, variant) == UNFIT:
         # Four chairs need 3.91 m of pull-out envelope both ways, which the sleeper sofa leaves no room for.
         assert set(report["unplaceable"]) == {"dining_table_688", *(f"dining_chair_723_{n}" for n in range(1, 5))}
         assert blocking(layout, assets, room)
@@ -170,17 +173,6 @@ def test_l_shaped_room_places_every_item_inside_the_outline():
 
     assert set(layout) == {asset["uid"] for asset in assets} and report["unplaceable"] == []
     assert blocking(layout, assets, room) == {}
-
-
-@pytest.mark.parametrize("name", ["living", "studio"])  # the most items, and the largest room
-def test_a_solve_takes_under_two_seconds(name):
-    intent, room, assets = _golden_inputs({"room": name})
-
-    started = time.perf_counter()
-    _, report = solve_layout(assets, room, intent)
-
-    assert time.perf_counter() - started < 2.0
-    assert report["elapsed"] < 2.0
 
 
 @pytest.mark.parametrize("benchmark", [False, True], ids=["golden", "benchmark"])

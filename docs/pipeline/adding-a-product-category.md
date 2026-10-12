@@ -106,8 +106,8 @@ or placed as a generic floor piece without it.
 | 9 | Placement mode | `pipeline/app/rules/placement_mode.py:26`, `:43` | Nothing: reads rows 2 and 8 | None |
 | 10 | Seed role | `pipeline/app/rules/planner/seed_guidance.py:18`, `:19` `_ROLE_PRIORITY`, `:78` `_classify_asset_role`, `:283` seed modes | A seed role and seed mode | Required for (b) |
 | 11 | Solver | `pipeline/app/rules/layout/solver.py:159` `ZONE_KINDS`, `:162` `_STORAGE_FRONTS`, `:313` `_groups`, `:491` `_dining_templates`, `:535` `_work_templates`, `:554` `_placements`, `:732` `_preference` | Front bands (a); a group, its templates and candidates (b) | Optional; required for (b) |
-| 12 | Layout checks | `pipeline/app/rules/layout/analysis.py:53-76`, `:118-175`; `layout/bedroom.py:185`, `layout/dining.py:226` | A measurement and its issue keys; storage-front lists | Required for (c) |
-| 13 | Issue tiers | `layout/constants.py:118` `ISSUE_KEYS_BY_TIER`, `:152` `CRITICAL_P2_ISSUE_KEYS`; `layout/metrics.py:98` `serialize_layout_issues`; `layout/formatting.py:15` `format_issues` | Register the new keys | Required with 12 |
+| 12 | Layout checks | `pipeline/app/rules/layout/analysis.py:53-76`, `:118-175`; `layout/bedroom.py:185`, `layout/dining.py:194` | A measurement and its issue keys; storage-front lists | Required for (c) |
+| 13 | Issue tiers | `layout/constants.py:118` `ISSUE_KEYS_BY_TIER`, `:152` `CRITICAL_P2_ISSUE_KEYS`; `layout/metrics.py:78` `serialize_layout_issues` | Register the new keys | Required with 12 |
 | 14 | Caps | `pipeline/app/rules/planner/feasibility_digest.py:69` `_max_counts_by_category`; `fit_policy.py:35` `ROLE_CAPS`, `:74` `CATEGORY_CAPS` | Nothing, or a per-category cap | Optional |
 | 15 | Required items | `pipeline/app/rules/selection/validation.py:134` `room_requirements`, `:253` `validate_selection` | A required entry and its matching error | Optional |
 | 16 | Room exclusions | `pipeline/app/rules/room_policy.py:74`, `:93` `excluded_room_categories` | Rooms that may never hold it | Optional |
@@ -221,7 +221,7 @@ Run from `pipeline/` with `conda activate livinit`.
    - Case (c): one test per new blocking key, failing and passing.
 
    ```bash
-   python -m pytest tests/test_solver.py tests/test_rules_parity.py tests/test_stages.py
+   python -m pytest tests/test_solver.py tests/test_rules.py tests/test_stages.py
    ```
 
 2. If the category brings a room composition no benchmark case has, such as a

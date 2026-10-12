@@ -83,7 +83,7 @@ gets living-room behavior, without it.
 | 13 | Variant directions | `variant_stages.py:113` `_ROOM_DIRECTIVES` | Two direction texts, variants 1 and 2 | Optional |
 | 14 | Layout rules text | `layout_rules.py:216` `ROOM_LAYOUT_RULES` | A header and numbered rules, like the dining entry | Required |
 | 15 | Layout checks | `pipeline/app/rules/layout/analysis.py:119-124`, new `layout/home_office.py` | A measurement function and its issue keys | Optional |
-| 16 | Issue tiers | `layout/constants.py:98`, `:152`; `layout/formatting.py`; `layout/metrics.py:100` | Register the new issue keys | Required with 15 |
+| 16 | Issue tiers | `layout/constants.py:98`, `:152`; `layout/metrics.py:80` | Register the new issue keys | Required with 15 |
 | 17 | Solver | `pipeline/app/rules/layout/solver.py:164`, `:321`, `:740` | `_STORAGE_FRONTS`, `_groups`, `_preference` | Optional |
 | 18 | Final review prompt | `variant_stages.py:1291` `_arrangement_prompt` | Nothing: it reads the room's `DESIGN_RULES` key (`layout_rules.py:73`) | Optional |
 | 19 | Web brief | `web/src/lib/types.ts:4`, `web/src/lib/room.ts` | `RoomType`, `ROOM_TYPES`, four `EXAMPLES` with size, budget and openings | Required |
@@ -275,7 +275,7 @@ flags; the sitting-rug cost mirrors a comfort check.
 Run from `pipeline/` with `conda activate livinit`.
 
 1. Add unit tests modeled on the dining ones:
-   - Like `tests/test_rules_parity.py`: `validate_selection` passes the core
+   - Like `tests/test_rules.py`: `validate_selection` passes the core
      group and fails without it.
    - `room_requirements` returns the room's required roles and no `bed`.
    - Like `tests/test_solver.py`: a `home_office(...)` helper builds the
@@ -284,7 +284,7 @@ Run from `pipeline/` with `conda activate livinit`.
    - One test per new blocking layout key.
 
    ```bash
-   python -m pytest tests/test_rules_parity.py tests/test_solver.py tests/test_stages.py
+   python -m pytest tests/test_rules.py tests/test_solver.py tests/test_stages.py
    ```
 
 2. Run the case end to end against the local service. It prints `ready_of_3`

@@ -1,9 +1,7 @@
 """Boundary, collision, opening, and protected-path checks."""
 
 from typing import Any
-import math
 from shapely.geometry import Point, Polygon
-from app.rules.door_geometry import room_walls
 from app.rules.geometry.primitives import asset_polygon, extract_placement, is_rug
 from app.rules.layout_rules import WALL_FLUSH_MAX_GAP_M
 from app.rules.layout.studio import is_freestanding_studio_media_support
@@ -34,10 +32,8 @@ from app.rules.layout.relations import (
     _is_media_display_asset,
     _is_near_cardinal,
     _is_wall_mounted_layout_asset,
-    _inward_rotation_for_wall,
     _matches_item,
     _supported_parent_uid,
-    _wall_mount_z,
     _window_seating_clearance_poly,
     floor_assets,
 )
@@ -60,94 +56,6 @@ def compute_overlaps(
             if poly_a.intersects(poly_b):
                 overlaps.append((uid_a, uid_b))
     return overlaps
-
-
-def overlap_separation_facts(
-    layout: dict[str, Any], assets: list[dict[str, Any]], pairs: list[tuple[str, str]],
-) -> list[dict[str, Any]]:
-    """Exact rectangular penetration and separating translations, without moving anything."""
-    facts = []
-    for uid_a, uid_b in pairs:
-        polygons, yaws = [], []
-        for uid in (uid_a, uid_b):
-            pos, yaw, width, depth, _ = extract_placement(layout[uid], get_asset_by_uid(uid, assets))
-            polygons.append(asset_polygon(pos, yaw, width, depth))
-            yaws.append(yaw)
-        axes = {(round(math.cos(yaw + offset), 8), round(math.sin(yaw + offset), 8))
-                for yaw in yaws for offset in (0.0, math.pi / 2)}
-        options = []
-        for nx, ny in sorted(axes):
-            projections = [[x * nx + y * ny for x, y in polygon.exterior.coords]
-                           for polygon in polygons]
-            a, b = projections
-            for delta in (min(b) - max(a), max(b) - min(a)):
-                padded = delta + math.copysign(.02, delta)
-                options.append((abs(delta), [round(padded * nx, 5), round(padded * ny, 5)]))
-        options.sort(key=lambda option: option[0])
-        facts.append({
-            "a": uid_a, "b": uid_b,
-            "penetration_m": round(options[0][0], 5),
-            "translations_for_a_to_clear_b_m": [vector for _, vector in options],
-            "translation_for_b_is_negative_of_a": True,
-            "clearance_margin_m": .02,
-        })
-    return facts
-
-
-def wall_mount_placement_facts(
-    layout: dict[str, Any], assets: list[dict[str, Any]], boundary: list[list[float]],
-    room_doors: list[dict[str, Any]], room_windows: list[dict[str, Any]],
-    room_area: tuple[float, float],
-) -> list[dict[str, Any]]:
-    """Opening-free wall spans and center intervals at each wall item's current height.
-
-    Intervals describe individual actual wall segments, including concave rooms.
-    They do not certify collisions with other furniture or artwork.
-    """
-    specs = _build_blocker_specs(room_doors, room_windows, boundary=boundary, room_area=room_area)
-    facts = []
-    for asset in assets:
-        uid = str(asset.get("instance_key") or asset.get("uid") or "")
-        if not _is_wall_mounted_layout_asset(asset, uid):
-            continue
-        placement = layout.get(uid, {})
-        if _supported_parent_uid(uid, placement, layout, assets):
-            continue
-        width, depth = float(asset.get("width") or 0), float(asset.get("depth") or 0)
-        height = float(asset.get("height") or 0)
-        z = float((placement.get("position") or [0, 0, _wall_mount_z(asset, DEFAULT_WALL_HEIGHT_M)])[2])
-        walls = []
-        for wall in room_walls(boundary):
-            yaw = _inward_rotation_for_wall(wall.name)
-            nx, ny = math.cos(yaw), math.sin(yaw)
-            strip = Polygon([wall.start, wall.end,
-                             (wall.end[0] + nx * (depth + .04), wall.end[1] + ny * (depth + .04)),
-                             (wall.start[0] + nx * (depth + .04), wall.start[1] + ny * (depth + .04))])
-            spans = [wall.span()]
-            openings = []
-            axis = 1 if wall.vertical else 0
-            for spec in specs:
-                if not _opening_overlaps_height(spec, z, height) or not strip.intersects(spec["poly"]):
-                    continue
-                coords = [point[axis] for point in spec["poly"].exterior.coords]
-                start, end = min(coords), max(coords)
-                openings.append({"kind": spec["kind"], "index": spec["index"],
-                                 "span_m": [round(start, 5), round(end, 5)]})
-                spans = [part for low, high in spans
-                         for part in ((low, min(high, start)), (max(low, end), high))
-                         if part[1] > part[0]]
-            half_span = width / 2 + .02
-            walls.append({
-                "wall": wall.name, "start_xy": wall.start, "end_xy": wall.end,
-                "rotation_z": yaw, "along_world_axis": "y" if wall.vertical else "x",
-                "available_spans_m": [[round(low, 5), round(high, 5)] for low, high in spans],
-                "center_intervals_m": [[round(low + half_span, 5), round(high - half_span, 5)]
-                                       for low, high in spans if high - low >= 2 * half_span],
-                "blocking_openings": openings,
-            })
-        facts.append({"uid": uid, "width_m": width, "bottom_z_m": z,
-                      "height_m": height, "edge_margin_m": .02, "walls": walls})
-    return facts
 
 
 def _opening_overlaps_height(spec: dict[str, Any], z: float, height: float) -> bool:

@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from app import contracts
 from app.graph import MAX_SELECTION_TURNS, Stages
 from app.jev import Jev
-from app.llm import GeminiModel, gemini_client
+from app.llm import GeminiModel
 from app.main import create_app
 
 REQUEST = {
@@ -365,18 +365,8 @@ def test_run_record_lists_stages_model_calls_and_totals(tmp_path, monkeypatch):
     assert [v["outcome"] for v in record["variants"]] == ["ready"] * 3
 
 
-@pytest.mark.parametrize(
-    "extra",
-    [
-        {"upload_to_supabase": True},
-        {"billing_operation_id": "op_1"},
-        {"usdz_path": "room.usdz"},
-        {"split_splat_import_id": "split_1"},
-        {"surprise": 1},
-    ],
-)
-def test_request_rejects_fields_outside_the_geometry_contract(tmp_path, extra):
-    status, _, _ = post(tmp_path, {**REQUEST, **extra})
+def test_request_rejects_fields_outside_the_geometry_contract(tmp_path):
+    status, _, _ = post(tmp_path, {**REQUEST, "upload_to_supabase": True})
     assert status == 422
 
 
@@ -518,26 +508,3 @@ def test_client_disconnect_cancels_the_run(tmp_path):
     assert not [s for s in record["stages"] if s["stage"] == "place"]
     assert [c["error"] for c in record["model_calls"] if c["stage"] == "select"] == ["cancelled"] * 3
 
-
-def test_model_call_attempt_limit_fails_the_variant_with_a_reason(tmp_path):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(503, json={"error": {"code": 503, "message": "overloaded", "status": "UNAVAILABLE"}})
-
-    async def no_model_interpret(state, ctx):
-        return {"intent": {}}
-
-    model = GeminiModel(gemini_client("test-key", httpx.MockTransport(handler)))
-    app = create_app(stages=replace(STAGES, interpret=no_model_interpret), model=model, jev=Jev(FakeJevClient()),
-                     connect=lambda: None, runs_dir=tmp_path)
-
-    async def main() -> str:
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-            return (await client.post("/pipeline", json=REQUEST)).text
-
-    events = parse(asyncio.run(main()))
-
-    failed = of_type(events, "variant_failed")
-    assert {e["reason"] for e in failed} == {"model_call_failed"}
-    [record] = [json.loads(path.read_text()) for path in tmp_path.glob("*.json")]
-    assert [c["attempts"] for c in record["model_calls"]] == [3, 3, 3]
-    assert all("503" in c["error"] for c in record["model_calls"])

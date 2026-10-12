@@ -18,6 +18,7 @@
 - Delegate concrete independent work when the benefit outweighs coordination overhead. Use collaboration tools unless the requested workflow specifies Herdr.
 - DO NOT CHANGE ANY CONTRACT VERSION JUST REPLACE DIRECTLY
 - PR always target to `trunk` branch
+- DO NOT CALL LLM WITH API KEY IN UNIT TEST
 
 ## Conversational Style
 

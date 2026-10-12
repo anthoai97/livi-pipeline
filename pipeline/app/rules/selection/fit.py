@@ -70,21 +70,6 @@ def _fit_decision_target_counts(
         for category in requested_counts
     }
 
-def capped_counts(room: dict[str, Any], intent: dict[str, Any]) -> dict[str, int]:
-    """Selection targets for fit step "capped": each requested count capped at the count that fits.
-
-    The room fit estimate drops lower-priority optional furniture first, keeps
-    functional groups whole, and keeps required items such as the bed. An
-    explicitly requested, non-optional item keeps its requested count.
-    """
-    requested_counts, recommended_counts = _fit_warning_counts(room)
-    return _fit_decision_target_counts(
-        decision="use_recommendation",
-        requested_counts=requested_counts,
-        recommended_counts=recommended_counts,
-        intent=intent,
-    )
-
 def fit_step_guidance(fit_step: str | None, room: dict[str, Any], intent: dict[str, Any]) -> str:
     """Selection prompt block for the applied fit step ("" when none or nothing was requested)."""
     decision = FIT_STEP_DECISIONS.get(str(fit_step or ""), "")

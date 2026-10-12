@@ -1,4 +1,4 @@
-"""Layout issue metrics, diffs, and serializable summaries."""
+"""Layout issue metrics and serializable summaries."""
 
 from typing import Any, NamedTuple
 from shapely.geometry import Polygon
@@ -74,26 +74,6 @@ def layout_issue_magnitudes(issues: dict[str, Any]) -> tuple[float, float, float
         viewing.append(max(0.0, (low - distance) / max(low, 1e-6), (distance - high) / max(high, 1e-6)))
     return round(shortfall, 5), round(max(viewing, default=0.0), 5), round(sum(viewing), 5)
 
-
-def layout_change_summary(
-    before: dict[str, Any] | None,
-    after: dict[str, Any] | None,
-) -> dict[str, Any]:
-    previous = before or {}
-    current = after or {}
-    added = sorted(set(current) - set(previous))
-    removed = sorted(set(previous) - set(current))
-    changed = sorted(
-        uid for uid in set(previous) & set(current) if previous[uid] != current[uid]
-    )
-    return {
-        "changed": changed,
-        "added": added,
-        "removed": removed,
-        "changed_count": len(changed),
-        "added_count": len(added),
-        "removed_count": len(removed),
-    }
 
 def serialize_layout_issues(issues: dict[str, Any]) -> dict[str, Any]:
     return {

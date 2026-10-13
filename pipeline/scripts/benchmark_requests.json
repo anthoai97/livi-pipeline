@@ -600,5 +600,429 @@
         }
       ]
     }
+  },
+  {
+    "label": "living_room_l",
+    "set": [
+      "full"
+    ],
+    "geometry": "5.5 x 6.5 m L, back-right corner cut 2.2 x 2.6 m; door on the back wall, window on the left wall.",
+    "request": {
+      "user_intent": "A warm living room in the L's main space: a three-seat sofa, an armchair, a coffee table, and a rug, with a reading lamp in the short leg.",
+      "budget": 9000,
+      "room_type": "living_room",
+      "room_area": [
+        5.5,
+        6.5
+      ],
+      "room_vertices": [
+        [
+          0,
+          0
+        ],
+        [
+          5.5,
+          0
+        ],
+        [
+          5.5,
+          3.9
+        ],
+        [
+          3.3,
+          3.9
+        ],
+        [
+          3.3,
+          6.5
+        ],
+        [
+          0,
+          6.5
+        ]
+      ],
+      "wall_height": 2.7,
+      "room_doors": [
+        {
+          "height": 2.08,
+          "center": [
+            1.65,
+            6.5
+          ],
+          "width": 0.9,
+          "depth": 0.05
+        }
+      ],
+      "room_windows": [
+        {
+          "height": 1.2,
+          "sill_height": 0.9,
+          "center": [
+            0,
+            3.25
+          ],
+          "width": 1.1,
+          "depth": 0.05
+        }
+      ]
+    }
+  },
+  {
+    "label": "bedroom_alcove",
+    "set": [
+      "full"
+    ],
+    "geometry": "4.5 x 5 m with a 1.5 m wide, 1.5 m deep alcove centred in the back wall; door on the left wall, window in the alcove's back wall.",
+    "request": {
+      "user_intent": "A calm bedroom with the queen bed set into the alcove, two nightstands, and a dresser on the main wall.",
+      "budget": 7000,
+      "room_type": "bedroom",
+      "room_area": [
+        4.5,
+        5
+      ],
+      "room_vertices": [
+        [
+          0,
+          0
+        ],
+        [
+          4.5,
+          0
+        ],
+        [
+          4.5,
+          3.5
+        ],
+        [
+          3,
+          3.5
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          1.5,
+          5
+        ],
+        [
+          1.5,
+          3.5
+        ],
+        [
+          0,
+          3.5
+        ]
+      ],
+      "wall_height": 2.7,
+      "room_doors": [
+        {
+          "height": 2.08,
+          "center": [
+            0,
+            1.75
+          ],
+          "width": 0.9,
+          "depth": 0.05
+        }
+      ],
+      "room_windows": [
+        {
+          "height": 1.2,
+          "sill_height": 0.9,
+          "center": [
+            2.25,
+            5
+          ],
+          "width": 1.1,
+          "depth": 0.05
+        }
+      ]
+    }
+  },
+  {
+    "label": "living_room_t",
+    "set": [
+      "full"
+    ],
+    "geometry": "6 x 6.5 m T, 2.4 m wide stem at the front, 2.9 m deep bar at the back; door on the back wall, window on the left wall.",
+    "request": {
+      "user_intent": "A family living room across the wide bar: a sofa facing a TV stand, two armchairs, and a coffee table. Keep the stem clear as the entrance.",
+      "budget": 10000,
+      "room_type": "living_room",
+      "room_area": [
+        6,
+        6.5
+      ],
+      "room_vertices": [
+        [
+          1.8,
+          0
+        ],
+        [
+          4.2,
+          0
+        ],
+        [
+          4.2,
+          3.575
+        ],
+        [
+          6,
+          3.575
+        ],
+        [
+          6,
+          6.5
+        ],
+        [
+          0,
+          6.5
+        ],
+        [
+          0,
+          3.575
+        ],
+        [
+          1.8,
+          3.575
+        ]
+      ],
+      "wall_height": 2.7,
+      "room_doors": [
+        {
+          "height": 2.08,
+          "center": [
+            4.2,
+            6.5
+          ],
+          "width": 0.9,
+          "depth": 0.05
+        }
+      ],
+      "room_windows": [
+        {
+          "height": 1.2,
+          "sill_height": 0.9,
+          "center": [
+            0,
+            5.038
+          ],
+          "width": 1.1,
+          "depth": 0.05
+        }
+      ]
+    }
+  },
+  {
+    "label": "dining_room_angled",
+    "set": [
+      "full"
+    ],
+    "geometry": "4.5 x 5.5 m with the back-left corner cut 1.2 x 2.0 m on a diagonal; door on the back wall, window on the left wall.",
+    "request": {
+      "user_intent": "A modern dining room for six with a long table, six chairs, and a sideboard along the straight wall. Keep the angled corner open.",
+      "budget": 9000,
+      "room_type": "dining_room",
+      "room_area": [
+        4.5,
+        5.5
+      ],
+      "room_vertices": [
+        [
+          0,
+          0
+        ],
+        [
+          4.5,
+          0
+        ],
+        [
+          4.5,
+          5.5
+        ],
+        [
+          1.215,
+          5.5
+        ],
+        [
+          0,
+          3.465
+        ]
+      ],
+      "wall_height": 2.7,
+      "room_doors": [
+        {
+          "height": 2.08,
+          "center": [
+            3.186,
+            5.5
+          ],
+          "width": 0.9,
+          "depth": 0.05
+        }
+      ],
+      "room_windows": [
+        {
+          "height": 1.2,
+          "sill_height": 0.9,
+          "center": [
+            0,
+            1.733
+          ],
+          "width": 1.1,
+          "depth": 0.05
+        }
+      ]
+    }
+  },
+  {
+    "label": "studio_z",
+    "set": [
+      "full"
+    ],
+    "geometry": "5.5 x 7 m Z, front-left and back-right corners cut 1.8 x 2.3 m; door on the back wall, window on the left wall.",
+    "request": {
+      "user_intent": "A studio with a double bed in the back half, a compact sofa facing a TV in the front half, and a small dining table for two between them.",
+      "budget": 9000,
+      "room_type": "studio",
+      "room_area": [
+        5.5,
+        7
+      ],
+      "room_vertices": [
+        [
+          1.833,
+          0
+        ],
+        [
+          5.5,
+          0
+        ],
+        [
+          5.5,
+          4.667
+        ],
+        [
+          3.667,
+          4.667
+        ],
+        [
+          3.667,
+          7
+        ],
+        [
+          0,
+          7
+        ],
+        [
+          0,
+          2.333
+        ],
+        [
+          1.833,
+          2.333
+        ]
+      ],
+      "wall_height": 2.7,
+      "room_doors": [
+        {
+          "height": 2.08,
+          "center": [
+            1.833,
+            7
+          ],
+          "width": 0.9,
+          "depth": 0.05
+        }
+      ],
+      "room_windows": [
+        {
+          "height": 1.2,
+          "sill_height": 0.9,
+          "center": [
+            0,
+            4.667
+          ],
+          "width": 1.1,
+          "depth": 0.05
+        }
+      ]
+    }
+  },
+  {
+    "label": "living_room_u",
+    "set": [
+      "full"
+    ],
+    "geometry": "6 x 6 m U, 2 m wide, 3 m deep notch centred in the back wall; door on the left wall, window on the back wall of the left leg.",
+    "request": {
+      "user_intent": "A living room with a sofa and coffee table in one leg of the U, a reading chair and floor lamp in the other, and a rug tying them together.",
+      "budget": 10000,
+      "room_type": "living_room",
+      "room_area": [
+        6,
+        6
+      ],
+      "room_vertices": [
+        [
+          0,
+          0
+        ],
+        [
+          6,
+          0
+        ],
+        [
+          6,
+          6
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          4,
+          3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          6
+        ],
+        [
+          0,
+          6
+        ]
+      ],
+      "wall_height": 2.7,
+      "room_doors": [
+        {
+          "height": 2.08,
+          "center": [
+            0,
+            3
+          ],
+          "width": 0.9,
+          "depth": 0.05
+        }
+      ],
+      "room_windows": [
+        {
+          "height": 1.2,
+          "sill_height": 0.9,
+          "center": [
+            1,
+            6
+          ],
+          "width": 1.1,
+          "depth": 0.05
+        }
+      ]
+    }
   }
 ]

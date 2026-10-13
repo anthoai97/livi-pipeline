@@ -400,6 +400,11 @@ keys and was not run). A smoke run built walls,
 openings, paths and facts for all seven shapes with a door on every wall,
 corner and inner walls included, without an error.
 
+Benchmark of the six shaped rooms, one run each, with reviewer scores:
+[report-2026-10-13-shapes](../pipeline/report-2026-10-13-shapes.md)
+(overall 3.11 against 3.25 for the rectangle cases; the gaps are the ones
+phase 2 is for).
+
 Deferred to later phases, as planned: fit and the selection prompt's
 viewing reference still use the bounding box; the solver's wall candidates
 and the cardinal wall checks still use the box walls; a routed path is never

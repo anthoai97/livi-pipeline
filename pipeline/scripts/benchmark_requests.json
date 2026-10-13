@@ -174,8 +174,7 @@
             4.88
           ],
           "width": 0.9,
-          "depth": 0.05,
-          "wall": "top"
+          "depth": 0.05
         }
       ],
       "room_windows": [
@@ -188,8 +187,7 @@
             4.88
           ],
           "width": 1.1,
-          "depth": 0.05,
-          "wall": "top"
+          "depth": 0.05
         }
       ]
     }
@@ -237,8 +235,7 @@
             3.8
           ],
           "width": 0.9,
-          "depth": 0.05,
-          "wall": "top"
+          "depth": 0.05
         }
       ],
       "room_windows": [
@@ -251,8 +248,7 @@
             3.8
           ],
           "width": 1.1,
-          "depth": 0.05,
-          "wall": "top"
+          "depth": 0.05
         }
       ]
     }

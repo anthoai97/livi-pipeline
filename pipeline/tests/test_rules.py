@@ -9,6 +9,7 @@ import math
 from pathlib import Path
 
 import pytest
+from shapely.geometry import Polygon, box
 
 from app import variant_stages
 from app.rules.layout.analysis import analyze_layout
@@ -16,7 +17,9 @@ from app.rules.layout.dining import dining_fit_envelopes
 from app.rules.layout.metrics import has_blocking_issues
 from app.rules.layout.normalization import normalize_layout
 from app.rules.planner.intent_packet import coerce_intent_packet
-from app.rules.planner.room_facts import build_room_context
+from app.rules.door_geometry import room_walls
+from app.rules.planner.room_facts import build_room_context, build_room_facts, format_room_facts_for_prompt
+from app.rules.protected_paths import build_protected_paths, protected_path_polygon
 from app.rules.selection.catalog import catalog_asset
 from app.rules.selection.constants import (
     BED_RUG_EXTRA_WIDTH_M,
@@ -413,3 +416,90 @@ def test_the_final_check_never_removes_the_anchor():
     assert removed == ["nightstand_1"]
     assert [asset["uid"] for asset in current["instances"]] == ["bed_1"]
     assert {finding["finding"]["uid"] for finding in current["blocking_findings"]} == {"bed_1"}
+
+
+# --- issue #53 phase 1: real walls, openings, area and paths for any room shape
+
+
+def shape(kind: str, w: float, l: float) -> list[list[float]]:
+    """The builder's presets and its Z and U templates at their default proportions (docs/plans/53-room-shapes.md)."""
+    if kind == "L":  # top-right corner cut, 0.4w x 0.4l
+        keep_w, keep_l = w - 0.4 * w, l - 0.4 * l
+        return [[0, 0], [w, 0], [w, keep_l], [keep_w, keep_l], [keep_w, l], [0, l]]
+    if kind == "alcove":  # back-wall recess, w/3 wide, 0.3l deep, centred
+        x1, x2, inner = w / 2 - w / 6, w / 2 + w / 6, l - 0.3 * l
+        return [[0, 0], [w, 0], [w, inner], [x2, inner], [x2, l], [x1, l], [x1, inner], [0, inner]]
+    if kind == "T":  # stem 0.4w wide, centred; bar 0.45l deep
+        stem_l, stem_r, bar_front = w / 2 - 0.2 * w, w / 2 + 0.2 * w, l - 0.45 * l
+        return [[stem_l, 0], [stem_r, 0], [stem_r, bar_front], [w, bar_front], [w, l], [0, l], [0, bar_front], [stem_l, bar_front]]
+    if kind == "angled":  # top-left corner cut, 0.27w x 0.37l
+        return [[0, 0], [w, 0], [w, l], [0.27 * w, l], [0, l - 0.37 * l]]
+    if kind == "Z":  # two opposite corners cut, w/3 x l/3 each
+        a, b = w / 3, l / 3
+        return [[a, 0], [w, 0], [w, l - b], [w - a, l - b], [w - a, l], [0, l], [0, b], [a, b]]
+    if kind == "U":  # back-wall notch w/3 wide, l/2 deep, centred
+        a, b = w / 3, l / 2
+        return [[0, 0], [w, 0], [w, l], [w / 2 + a / 2, l], [w / 2 + a / 2, l - b], [w / 2 - a / 2, l - b], [w / 2 - a / 2, l], [0, l]]
+    return [[0, 0], [w, 0], [w, l], [0, l]]
+
+
+WALL_LABELS = {
+    "rectangle": ["Front", "Right", "Back", "Left"],
+    "L": ["Front", "Right", "Back (inner)", "Right (inner)", "Back", "Left"],
+    "alcove": ["Front", "Right", "Back (inner right)", "Right (inner)", "Back", "Left (inner)", "Back (inner left)", "Left"],
+    "T": ["Front", "Right (inner)", "Front (inner right)", "Right", "Back", "Left", "Front (inner left)", "Left (inner)"],
+    "angled": ["Front", "Right", "Back", "Back-left", "Left"],
+    "Z": ["Front", "Right", "Back (inner)", "Right (inner)", "Back", "Left", "Front (inner)", "Left (inner)"],
+    "U": ["Front", "Right", "Back (right)", "Left (inner)", "Back (inner)", "Right (inner)", "Back (left)", "Left"],
+}
+
+
+def _door(x, y, width=0.9):
+    return {"center": [x, y], "width": width, "depth": 0.05, "height": 2.08}
+
+
+@pytest.mark.parametrize("kind", list(WALL_LABELS))
+def test_every_edge_is_a_wall_with_the_builders_label(kind):
+    walls = room_walls(shape(kind, 4.0, 5.0))
+    assert [wall.label for wall in walls] == WALL_LABELS[kind]
+    assert [wall.index for wall in walls] == list(range(len(walls)))
+    # A corner wall ("Back-left") faces no cardinal side; every other wall does.
+    assert [wall.label for wall in walls if wall.facing is None] == (["Back-left"] if kind == "angled" else [])
+
+
+def test_z_room_facts_report_eight_walls_and_the_polygon_area_with_a_door_on_an_inner_wall():
+    vertices = shape("Z", 4.0, 5.0)
+    inner_back_y = 5.0 - 5.0 / 3  # wall 2, Back (inner), runs from (4, y) to (2.67, y)
+    facts = build_room_facts(room_area=(4.0, 5.0), room_vertices=vertices, room_doors=[_door(3.3, inner_back_y)])
+
+    assert facts["shape"] == "polygon" and len(facts["walls"]) == 8 and facts["area"] == pytest.approx(15.56, abs=0.01)
+    opening = facts["openings"]["doors"][0]["opening"]
+    assert (opening["wall"], opening["wall_label"], opening["facing"]) == (2, "Back (inner)", "top")
+    assert opening["center"] == pytest.approx([3.3, inner_back_y - 0.025], abs=1e-3) and opening["inward_normal"] == [0.0, -1.0]
+    assert facts["walls"][2]["openings"] == [{"kind": "door", "index": 0, "at": 0.7, "span": [0.25, 1.15]}]
+    assert "- wall 2 (Back (inner)), 1.33 m, door at 0.70 m" in format_room_facts_for_prompt(facts)
+    # The two 3.33 m outer side walls rank first, tied as a rectangle's would be: by facing name, then index.
+    assert [wall["label"] for wall in facts["candidate_anchor_walls"][:3]] == ["Left", "Right", "Front"]
+
+
+def test_opposing_doors_in_different_pockets_of_a_z_room_get_a_route_through_the_throat():
+    vertices = shape("Z", 4.0, 5.0)
+    # Right wall of the lower-right pocket and left wall of the upper-left pocket: a straight band leaves the room.
+    [path] = build_protected_paths(vertices, [_door(4.0, 0.6), _door(0.0, 2.2)])
+
+    assert path["axis"] == "routed" and path["wall_pair"] == [1, 5] and path["wall_labels"] == ["Right", "Left"]
+    assert path["required_width"] == 0.91 and path["centerline"][0] == [4.0, 0.6] and path["centerline"][-1] == [0.0, 2.2]
+    passage = protected_path_polygon(path)
+    assert Polygon(vertices).buffer(1e-6).covers(passage)
+    assert passage.intersection(box(4 / 3, 5 / 3, 8 / 3, 10 / 3)).area > 0.91 * 1.0  # crosses the throat
+
+
+def test_a_rectangle_keeps_the_straight_path_between_opposing_doors_and_adjacent_doors_get_none():
+    vertices = shape("rectangle", 4.0, 5.0)
+    left, right, bottom = _door(0.0, 2.5), _door(4.0, 2.5), _door(2.0, 0.0)
+
+    [path] = build_protected_paths(vertices, [left, right])
+    assert {key: path[key] for key in ("axis", "center", "width", "depth", "required_width", "wall_pair")} == {
+        "axis": "x", "center": [2.0, 2.5], "width": 4.0, "depth": pytest.approx(0.91), "required_width": 0.91, "wall_pair": [3, 1]}
+    assert "polygon" not in path
+    assert build_protected_paths(vertices, [left, bottom]) == []

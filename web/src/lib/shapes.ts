@@ -3,14 +3,17 @@ import type { Vec2 } from "./types";
 // Room shapes as the legacy room builder makes them (web-pipeline lib/rooms/shapes.ts): metres in the
 // pipeline's plan frame, counter-clockwise, width x length is the bounding box. Vertex order is wall order.
 
-export type ShapeId = "Rectangle" | "L-Shaped" | "T-Shaped" | "Angled";
+export type ShapeId = "Rectangle" | "L-Shaped" | "Alcove" | "T-Shaped" | "Angled" | "Z-Shaped" | "U-Shaped";
 export type CutCorner = "top-right" | "top-left" | "bottom-right" | "bottom-left";
 
 export const SHAPES: { value: ShapeId; label: string; cuts: boolean }[] = [
   { value: "Rectangle", label: "Rectangle", cuts: false },
   { value: "L-Shaped", label: "L-shaped", cuts: true },
+  { value: "Alcove", label: "Alcove", cuts: false },
   { value: "T-Shaped", label: "T-shaped", cuts: false },
   { value: "Angled", label: "Angled", cuts: true },
+  { value: "Z-Shaped", label: "Z-shaped", cuts: false },
+  { value: "U-Shaped", label: "U-shaped", cuts: false },
 ];
 
 export const CORNERS: { value: CutCorner; label: string }[] = [
@@ -66,6 +69,20 @@ export function shapeVertices(shape: ShapeId, corner: CutCorner, w: number, l: n
       }
       break;
     }
+    case "Alcove": {
+      // A recess w/3 wide and 0.3l deep, centred in the back wall.
+      const [x1, x2, inner] = [w / 3, (2 * w) / 3, l * 0.7];
+      return [
+        [0, 0],
+        [w, 0],
+        [w, inner],
+        [x2, inner],
+        [x2, l],
+        [x1, l],
+        [x1, inner],
+        [0, inner],
+      ];
+    }
     case "T-Shaped": {
       const [stemL, stemR, barFront] = [w * 0.3, w * 0.7, l - l * 0.45];
       return [
@@ -116,6 +133,34 @@ export function shapeVertices(shape: ShapeId, corner: CutCorner, w: number, l: n
           ];
       }
       break;
+    }
+    case "Z-Shaped": {
+      // Two opposite corners cut, each w/3 x l/3 (web-pipeline lib/rooms/templates.ts).
+      const [a, b] = [w / 3, l / 3];
+      return [
+        [a, 0],
+        [w, 0],
+        [w, l - b],
+        [w - a, l - b],
+        [w - a, l],
+        [0, l],
+        [0, b],
+        [a, b],
+      ];
+    }
+    case "U-Shaped": {
+      // A notch w/3 wide and l/2 deep, centred in the back wall (web-pipeline lib/rooms/templates.ts).
+      const [x1, x2, inner] = [w / 3, (2 * w) / 3, l / 2];
+      return [
+        [0, 0],
+        [w, 0],
+        [w, l],
+        [x2, l],
+        [x2, inner],
+        [x1, inner],
+        [x1, l],
+        [0, l],
+      ];
     }
   }
   return [
@@ -183,13 +228,16 @@ export interface Edge {
   label: string;
 }
 
-/** Walls in vertex order, named by the way they face, as "Back wall" or "Inner right wall". */
+/**
+ * Walls in vertex order, named by the way they face, as "Back wall" or "Inner right wall". Two walls
+ * with one name, like a U-room's back legs, get the end of the room they sit at: "Back wall (left)".
+ */
 export function polygonEdges(vertices: Vec2[]): Edge[] {
   const xs = vertices.map(([x]) => x);
   const ys = vertices.map(([, y]) => y);
   const [minX, maxX, minY, maxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
   const on = (value: number, bound: number) => Math.abs(value - bound) < 1e-6;
-  return vertices.map((start, index) => {
+  const edges = vertices.map((start, index) => {
     const end = vertices[(index + 1) % vertices.length];
     const length = Math.hypot(end[0] - start[0], end[1] - start[1]);
     const normal: Vec2 = [-(end[1] - start[1]) / length, (end[0] - start[0]) / length];
@@ -207,6 +255,16 @@ export function polygonEdges(vertices: Vec2[]): Edge[] {
     const name = `${outer ? "" : "inner "}${side} wall`;
     return { index, start, end, length, normal, label: name[0].toUpperCase() + name.slice(1) };
   });
+  const mid = (e: Edge, axis: 0 | 1) => (e.start[axis] + e.end[axis]) / 2;
+  const names = edges.map((e) => e.label);
+  for (const edge of edges) {
+    const twins = edges.filter((e) => names[e.index] === names[edge.index]);
+    if (twins.length < 2) continue;
+    const along = Math.abs(edge.normal[1]) > 0.7 ? 0 : 1;
+    const first = twins.every((e) => e === edge || mid(e, along) > mid(edge, along));
+    edge.label += along === 0 ? (first ? " (left)" : " (right)") : first ? " (front)" : " (back)";
+  }
+  return edges;
 }
 
 /**

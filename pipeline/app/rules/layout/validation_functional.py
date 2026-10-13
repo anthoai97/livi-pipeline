@@ -15,7 +15,7 @@ from app.rules.pipeline_shared import (
     is_floor_lamp_asset,
     is_table_lamp_asset,
     matches_category_keywords,
-    nearest_wall,
+    nearest_axis_wall,
     room_walls,
     support_top_z,
 )
@@ -153,10 +153,10 @@ def compute_sofa_wall_gap_violations(
             "bottom": (item.pos[0], poly_min_y),
             "top": (item.pos[0], poly_max_y),
         }[back_wall]
-        wall = min(
-            (wall for wall in walls if wall.name == back_wall),
-            key=lambda wall: wall.distance(back_x, back_y),
-        )
+        facing_walls = [wall for wall in walls if wall.facing == back_wall]
+        if not facing_walls:
+            continue
+        wall = min(facing_walls, key=lambda wall: wall.distance(back_x, back_y))
         if back_wall == "top":
             gap = wall.line_at(back_x) - poly_max_y
         elif back_wall == "bottom":
@@ -166,7 +166,7 @@ def compute_sofa_wall_gap_violations(
         else:
             gap = wall.line_at(back_y) - poly_max_x
         max_allowed_gap = max_gap
-        if _back_wall_window_overlaps_item(item, back_wall, room_windows):
+        if _back_wall_window_overlaps_item(item, back_wall, room_windows, boundary):
             max_allowed_gap = max(max_allowed_gap, WINDOW_SEATING_CLEARANCE_M + 0.05)
         window_blocked = any(
             item.poly.intersects(clearance_zone)
@@ -224,7 +224,7 @@ def compute_media_focal_alignment_violations(
     sofa_uid, sofa_pos, sofa_rot_z, _ = max(anchors, key=lambda item: item[3])
     media_uid, media_pos, _ = max(media_assets, key=lambda item: item[2])
     expected_wall = _front_wall_name(sofa_rot_z)
-    actual_wall = nearest_wall(media_pos, boundary).name
+    actual_wall = nearest_axis_wall(media_pos, boundary).facing
     axis, _ = _facing_axis_and_sign(sofa_rot_z)
     centerline_offset = abs(
         float(media_pos[1] - sofa_pos[1]) if axis == "x" else float(media_pos[0] - sofa_pos[0])

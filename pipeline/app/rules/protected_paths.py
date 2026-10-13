@@ -2,96 +2,156 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import heapq
+from itertools import combinations
 from typing import Any
 
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Point, Polygon
+from shapely.geometry.polygon import orient
+
+from app.rules.door_geometry import door_opening_rect, room_bounds
 
 PROTECTED_PATH_WIDTH_M = 0.91
-
-
-def intent_requires_protected_path(intent_packet: Any) -> bool:
-    return isinstance(intent_packet, Mapping) and bool(
-        intent_packet.get("requires_straight_circulation_path")
-    )
+FALLBACK_PATH_WIDTH_M = 0.6  # the builder's shortest wall; tried when no 0.91 m route exists
 
 
 def build_protected_paths(
-    room_area: tuple[float, float],
+    room_vertices: list[list[float]],
     room_doors: list[dict[str, Any]] | None,
     *,
     path_width: float = PROTECTED_PATH_WIDTH_M,
 ) -> list[dict[str, Any]]:
-    """Build straight protected paths between opposing door walls."""
-    room_width, room_depth = float(room_area[0]), float(room_area[1])
-    by_wall: dict[str, list[dict[str, Any]]] = {}
-    for door in room_doors or []:
-        wall = str(door.get("wall") or "").strip().lower()
-        if wall in {"left", "right", "bottom", "top"}:
-            by_wall.setdefault(wall, []).append(door)
+    """Clear routes between every pair of doors whose walls face each other, inside the room polygon.
 
+    A straight axis-aligned band between the doors keeps the axis record (`axis` "x" or "y"); otherwise the
+    shortest route through the polygon eroded by half the width is buffered to the width and stored with
+    `axis` "routed", its `centerline` and `polygon`. A pair with no route at the width, nor at
+    FALLBACK_PATH_WIDTH_M, gets none.
+    """
+    polygon = orient(Polygon(room_vertices), 1.0)
+    openings = [door_opening_rect(door, boundary=room_vertices) for door in room_doors or []]
     paths: list[dict[str, Any]] = []
-    half = float(path_width) / 2.0
-    if by_wall.get("bottom") and by_wall.get("top"):
-        bottom = by_wall["bottom"][0]
-        top = by_wall["top"][0]
-        center_x = (
-            float((bottom.get("center") or [room_width / 2.0, 0.0])[0])
-            + float((top.get("center") or [room_width / 2.0, room_depth])[0])
-        ) / 2.0
-        min_x = max(0.0, center_x - half)
-        max_x = min(room_width, center_x + half)
+    for (i, first), (j, second) in combinations(enumerate(openings), 2):
+        (ax, ay), (bx, by) = first["inward_normal"], second["inward_normal"]
+        if ax * bx + ay * by >= -0.5:
+            continue
+        record = _straight_path(first, second, polygon, path_width) or next(
+            (route for width in (path_width, FALLBACK_PATH_WIDTH_M) if (route := _routed_path(first, second, polygon, width))),
+            None,
+        )
+        if record is None:
+            continue
         paths.append(
             {
-                "id": "protected_path_bottom_top",
+                "id": f"protected_path_door_{i}_{j}",
                 "kind": "protected_path",
                 "reason": "opposing_door_path",
-                "axis": "y",
-                "wall_pair": ["bottom", "top"],
-                "center": [(min_x + max_x) / 2.0, room_depth / 2.0],
-                "width": max_x - min_x,
-                "depth": room_depth,
-                "required_width": path_width,
+                "wall_pair": [first["wall"], second["wall"]],
+                "wall_labels": [first["wall_label"], second["wall_label"]],
+                **record,
             }
         )
-
-    if by_wall.get("left") and by_wall.get("right"):
-        left = by_wall["left"][0]
-        right = by_wall["right"][0]
-        center_y = (
-            float((left.get("center") or [0.0, room_depth / 2.0])[1])
-            + float((right.get("center") or [room_width, room_depth / 2.0])[1])
-        ) / 2.0
-        min_y = max(0.0, center_y - half)
-        max_y = min(room_depth, center_y + half)
-        paths.append(
-            {
-                "id": "protected_path_left_right",
-                "kind": "protected_path",
-                "reason": "opposing_door_path",
-                "axis": "x",
-                "wall_pair": ["left", "right"],
-                "center": [room_width / 2.0, (min_y + max_y) / 2.0],
-                "width": room_width,
-                "depth": max_y - min_y,
-                "required_width": path_width,
-            }
-        )
-
     return paths
 
 
-def protected_paths_for_intent(
-    room_area: tuple[float, float],
-    room_doors: list[dict[str, Any]] | None,
-    intent_packet: Any,
-) -> list[dict[str, Any]]:
-    if not intent_requires_protected_path(intent_packet):
-        return []
-    return build_protected_paths(room_area, room_doors)
+def _straight_path(
+    first: dict[str, Any],
+    second: dict[str, Any],
+    polygon: Polygon,
+    width: float,
+) -> dict[str, Any] | None:
+    """The axis-aligned band of ``width`` centred on the doors' mean along-coordinate, from one door's wall to the
+    other's, when both doors are on axis walls and the band lies inside the room."""
+    if not first["facing"] or not second["facing"]:
+        return None
+    min_x, min_y, max_x, max_y = room_bounds(boundary=list(polygon.exterior.coords))
+    (x0, y0), (x1, y1) = first["opening_center"], second["opening_center"]
+    half = width / 2
+    if first["facing"] in ("left", "right"):
+        center_y = (y0 + y1) / 2
+        lo, hi = max(min_y, center_y - half), min(max_y, center_y + half)
+        band = {"axis": "x", "center": [(x0 + x1) / 2, (lo + hi) / 2], "width": abs(x1 - x0), "depth": hi - lo}
+    else:
+        center_x = (x0 + x1) / 2
+        lo, hi = max(min_x, center_x - half), min(max_x, center_x + half)
+        band = {"axis": "y", "center": [(lo + hi) / 2, (y0 + y1) / 2], "width": hi - lo, "depth": abs(y1 - y0)}
+    if not polygon.buffer(1e-6).covers(protected_path_polygon(band)):
+        return None
+    return {**band, "required_width": width}
+
+
+def _routed_path(
+    first: dict[str, Any],
+    second: dict[str, Any],
+    polygon: Polygon,
+    width: float,
+) -> dict[str, Any] | None:
+    free = polygon.buffer(-width / 2, join_style=2)
+    anchors = [
+        Point(opening["opening_center"][0] + opening["inward_normal"][0] * width / 2,
+              opening["opening_center"][1] + opening["inward_normal"][1] * width / 2)
+        for opening in (first, second)
+    ]
+    route = _shortest_inside_route(free.buffer(1e-7), *anchors)
+    if route is None:
+        return None
+    centerline = [list(first["opening_center"]), *([x, y] for x, y in route), list(second["opening_center"])]
+    passage = LineString(centerline).buffer(width / 2, cap_style=2, join_style=1).intersection(polygon)
+    if passage.geom_type != "Polygon":
+        passage = max(passage.geoms, key=lambda part: part.area) if not passage.is_empty else None
+    if passage is None or passage.is_empty:
+        return None
+    x0, y0, x1, y1 = passage.bounds
+    return {
+        "axis": "routed",
+        "center": [(x0 + x1) / 2, (y0 + y1) / 2],
+        "width": x1 - x0,
+        "depth": y1 - y0,
+        "required_width": width,
+        "centerline": centerline,
+        "polygon": [[x, y] for x, y in list(passage.exterior.coords)[:-1]],
+    }
+
+
+def _shortest_inside_route(free_space: Any, start: Point, end: Point) -> list[tuple[float, float]] | None:
+    """Visibility-graph route inside one connected polygon; None means no route."""
+    components = list(free_space.geoms) if hasattr(free_space, "geoms") else [free_space]
+    component = next((part for part in components if part.covers(start) and part.covers(end)), None)
+    if component is None:
+        return None
+    points = [tuple(start.coords)[0], tuple(end.coords)[0], *list(component.exterior.coords)[:-1]]
+    for ring in component.interiors:
+        points.extend(list(ring.coords)[:-1])
+    # Dijkstra over visible boundary vertices gives an exact polygon route.
+    distances = {0: 0.0}
+    previous: dict[int, int] = {}
+    queue = [(0.0, 0)]
+    cover = component.buffer(1e-8)
+    while queue:
+        distance, index = heapq.heappop(queue)
+        if distance != distances[index]:
+            continue
+        if index == 1:
+            route = [points[index]]
+            while index in previous:
+                index = previous[index]
+                route.append(points[index])
+            return list(reversed(route))
+        for other, point in enumerate(points):
+            if other == index:
+                continue
+            line = LineString([points[index], point])
+            candidate = distance + line.length
+            if candidate < distances.get(other, float("inf")) and cover.covers(line):
+                distances[other] = candidate
+                previous[other] = index
+                heapq.heappush(queue, (candidate, other))
+    return None
 
 
 def protected_path_polygon(path: dict[str, Any]) -> Polygon:
+    if path.get("polygon"):
+        return Polygon(path["polygon"])
     center = path.get("center") or [0.0, 0.0]
     width = float(path.get("width") or 0.0)
     depth = float(path.get("depth") or 0.0)

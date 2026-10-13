@@ -280,7 +280,6 @@ def coerce_intent_packet(
         "price_constraints": [],
         "asset_attribute_constraints": [],
         "room_goal": "",
-        "requires_straight_circulation_path": False,
         "fit_flexibility": "balanced",
     }
 
@@ -325,9 +324,6 @@ def coerce_intent_packet(
     room_goal = _normalize_prompt(packet.get("room_goal"))
     if room_goal:
         derived["room_goal"] = room_goal
-    derived["requires_straight_circulation_path"] = bool(
-        packet.get("requires_straight_circulation_path")
-    )
     fit_flexibility = _normalize_prompt(packet.get("fit_flexibility")).lower()
     if fit_flexibility in {"strict_counts", "balanced", "space_first", "flexible"}:
         derived["fit_flexibility"] = fit_flexibility
@@ -356,7 +352,6 @@ def format_intent_packet_for_prompt(packet: Mapping[str, Any] | None) -> str:
     room_type = _normalize_prompt(packet.get("room_type")) or "living_room"
     normalized_prompt = _normalize_prompt(packet.get("normalized_prompt")) or "None"
     room_goal = _normalize_prompt(packet.get("room_goal")) or "none detected"
-    requires_path = bool(packet.get("requires_straight_circulation_path"))
     fit_flexibility = _normalize_prompt(packet.get("fit_flexibility")) or "balanced"
 
     return (
@@ -369,7 +364,6 @@ def format_intent_packet_for_prompt(packet: Mapping[str, Any] | None) -> str:
         f"- avoid_categories: {_join(packet.get('avoid_categories'), 'none detected')}\n"
         f"- style_hints: {_join(packet.get('style_hints'), 'none detected')}\n"
         f"- functional_hints: {_join(packet.get('functional_hints'), 'none detected')}\n"
-        f"- requires_straight_circulation_path: {requires_path}\n"
         f"- requested_counts: {count_constraints_from_intent_packet(packet) or 'none detected'}\n"
         f"- price_constraints: {packet.get('price_constraints') or 'none detected'}\n"
         f"- asset_attribute_constraints: {packet.get('asset_attribute_constraints') or 'none detected'}\n"

@@ -70,12 +70,12 @@ function roomCallouts(request: PipelineRequest, room: { floor_area_sqm?: number 
     ...request.room_doors.map((door): Callout => ({
       id: door.id,
       at: [door.center[0], door.center[1], door.height + 0.2],
-      label: `Door ${metres(Math.max(door.width, door.depth))}`,
+      label: `Door ${metres(door.width)}`,
     })),
     ...request.room_windows.map((window): Callout => ({
       id: window.id,
       at: [window.center[0], window.center[1], (window.sill_height ?? 0.9) + window.height + 0.2],
-      label: `Window ${metres(Math.max(window.width, window.depth))}`,
+      label: `Window ${metres(window.width)}`,
     })),
   ];
 }

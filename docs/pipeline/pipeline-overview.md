@@ -31,7 +31,7 @@ flowchart TD
 | Step | Who | What it does |
 | --- | --- | --- |
 | 1 Interpret | Gemini | Reads the prompt: requested items and counts, sizes, colors, materials, exclusions, style hints. A TV stand is never a TV substitute. |
-| 2 Room | Code | Walls, doors, windows, protected walkways, the furniture footprint range and count caps for the room size. |
+| 2 Room | Code | Every wall of the room outline with the builder's name, doors and windows on their walls, protected walkways between facing doors (routed through the outline when no straight band fits), the furniture footprint range and count caps for the room's floor area. |
 | 3 Retrieve | Embeddings + Postgres | One search per slot: requested items, required room items, optional roles, decor. Price at most budget + 10%. When a request covers a required role, its other kinds still get a slot (side tables beside a requested coffee table). |
 | 4a Rank | Jev | Orders each slot's candidates for each design's style direction, then deals them so the designs differ. |
 | 4b Select | Gemini, code, Jev | Picks the products, then the checks below. The solver checks that everything fits. Retries with the errors, up to 4 turns. |

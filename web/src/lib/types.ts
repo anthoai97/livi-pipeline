@@ -8,7 +8,7 @@ export type Vec2 = z.infer<typeof vec2>;
 
 const opening = z.object({
   id: z.string(), center: vec2, width: z.number(), depth: z.number(), height: z.number(),
-  sill_height: z.number().optional(), wall: z.enum(["top", "right", "bottom", "left"]).optional(),
+  sill_height: z.number().optional(),
 });
 export type Opening = z.infer<typeof opening>;
 

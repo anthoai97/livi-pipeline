@@ -114,7 +114,6 @@ class IntentPacket(BaseModel):
     asset_attribute_constraints: list[AttributeConstraint]
     style_hints: list[str]
     functional_hints: list[str]
-    requires_straight_circulation_path: bool
     room_goal: str
     fit_flexibility: Literal["strict_counts", "balanced", "space_first", "flexible"]
 
@@ -209,11 +208,6 @@ Rules:
   balanced otherwise.
 - functional_hints should be concise semantic goals such as small_space, storage,
   tv_focused, conversation, work_from_home, open_feel, or layered_lighting.
-- requires_straight_circulation_path should be true only when the user explicitly
-  asks for a straight/direct/through route to stay clear, describes the room as a
-  pass-through, or names daily access between entries/doors/openings that must
-  stay unobstructed. It should be false for generic open-feel or circulation
-  preferences.
 """
 
 

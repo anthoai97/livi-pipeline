@@ -8,8 +8,9 @@ from shapely.geometry.polygon import orient
 
 DEFAULT_DOOR_WIDTH = 0.9   # meters – used when door geometry is missing
 DEFAULT_DOOR_THICKNESS = 0.08  # meters – thin opening marker along the wall
-WALL_NAMES = ("left", "right", "bottom", "top")
-WALL_CARDINAL_TOLERANCE = 0.2  # radians – steeper edges are angled, not named walls
+DIAGONAL = math.sin(math.pi / 8)  # a wall more than 22.5 deg off an axis is a corner wall (wallNames.ts)
+_TIER_M = 0.01  # walls within this of the outermost one share its name
+_CARDINAL_NORMALS = {"left": (1.0, 0.0), "right": (-1.0, 0.0), "bottom": (0.0, 1.0), "top": (0.0, -1.0)}
 
 
 def clamp(value: float, lower: float, upper: float) -> float:
@@ -34,15 +35,43 @@ def room_bounds(
 
 
 class RoomWall(NamedTuple):
-    """A near-cardinal room edge, named by the side of the room it bounds."""
+    """One edge of the room outline, in ring order of the counter-clockwise polygon."""
 
-    name: str
+    index: int
     start: tuple[float, float]
     end: tuple[float, float]
+    length: float
+    normal: tuple[float, float]  # inward unit vector
+    label: str  # the builder's name: "Back", "Back (inner)", "Right (front)", "Back-right"
+    on_box: bool  # the edge lies on the bounding box
+
+    @property
+    def facing(self) -> str | None:
+        """The side of the room this wall bounds ("left" faces +X inward); None for a corner wall."""
+        nx, ny = self.normal
+        if abs(nx) > DIAGONAL and abs(ny) > DIAGONAL:
+            return None
+        if abs(nx) >= abs(ny):
+            return "left" if nx > 0 else "right"
+        return "bottom" if ny > 0 else "top"
 
     @property
     def vertical(self) -> bool:
-        return self.name in ("left", "right")
+        return self.facing in ("left", "right")
+
+    @property
+    def direction(self) -> tuple[float, float]:
+        """Unit vector from start to end."""
+        return (self.end[0] - self.start[0]) / self.length, (self.end[1] - self.start[1]) / self.length
+
+    def along(self, x: float, y: float) -> float:
+        """Distance of a point's projection from the wall's start, along the wall."""
+        ux, uy = self.direction
+        return (x - self.start[0]) * ux + (y - self.start[1]) * uy
+
+    def point_at(self, along: float) -> tuple[float, float]:
+        ux, uy = self.direction
+        return self.start[0] + ux * along, self.start[1] + uy * along
 
     def span(self) -> tuple[float, float]:
         """Extent along the wall: y for left/right walls, x for bottom/top."""
@@ -56,33 +85,75 @@ class RoomWall(NamedTuple):
         return c0 + (c1 - c0) * (along - a0) / (a1 - a0)
 
     def distance(self, x: float, y: float) -> float:
-        along, across = (y, x) if self.vertical else (x, y)
-        lo, hi = self.span()
-        overshoot = max(lo - along, 0.0, along - hi)
-        offset = abs(across - self.line_at(along))
-        return math.hypot(offset, overshoot) if overshoot else offset
+        px, py = self.point_at(clamp(self.along(x, y), 0.0, self.length))
+        return math.hypot(x - px, y - py)
+
+
+def _wall_labels(normals: list[tuple[float, float]], mids: list[tuple[float, float]]) -> list[str]:
+    """The builder's wall names (wallNames.ts): the facing word, "(inner)" for a wall set back from the
+    outermost one facing the same way, "(front)"/"(back)" or "(left)"/"(right)" for two walls on one line,
+    "Back-right" for a corner wall."""
+    walls = []
+    for (ix, iy), mid in zip(normals, mids):
+        nx, ny = -ix, -iy  # outward
+        if abs(nx) > DIAGONAL and abs(ny) > DIAGONAL:
+            walls.append({"base": f"{'Back' if ny > 0 else 'Front'}-{'right' if nx > 0 else 'left'}", "out": 0.0, "along": 0.0, "axis": False})
+        elif abs(nx) >= abs(ny):
+            walls.append({"base": "Right" if nx > 0 else "Left", "out": mid[0] if nx > 0 else -mid[0], "along": mid[1], "axis": True})
+        else:
+            walls.append({"base": "Back" if ny > 0 else "Front", "out": mid[1] if ny > 0 else -mid[1], "along": mid[0], "axis": True})
+    names = [wall["base"] for wall in walls]
+
+    def pair(base: str, a: int, b: int, prefix: str) -> None:
+        vertical = base in ("Right", "Left")
+        lo, hi = (a, b) if walls[a]["along"] <= walls[b]["along"] else (b, a)
+        names[lo] = f"{base} ({prefix}{'front' if vertical else 'left'})"
+        names[hi] = f"{base} ({prefix}{'back' if vertical else 'right'})"
+
+    groups: dict[str, list[int]] = {}
+    for index, wall in enumerate(walls):
+        groups.setdefault(wall["base"], []).append(index)
+    for base, idx in groups.items():
+        if len(idx) < 2:
+            continue
+        if not walls[idx[0]]["axis"]:
+            for k, i in enumerate(idx[1:], 2):
+                names[i] = f"{base} {k}"
+            continue
+        outer = max(walls[i]["out"] for i in idx)
+        outer_idx = [i for i in idx if walls[i]["out"] >= outer - _TIER_M]
+        inner = sorted((i for i in idx if walls[i]["out"] < outer - _TIER_M), key=lambda i: -walls[i]["out"])
+        if len(outer_idx) == 2:
+            pair(base, outer_idx[0], outer_idx[1], "")
+        else:
+            for k, i in enumerate(outer_idx[1:], 2):
+                names[i] = f"{base} {k}"
+        if len(inner) == 2 and abs(walls[inner[0]]["out"] - walls[inner[1]]["out"]) < _TIER_M:
+            pair(base, inner[0], inner[1], "inner ")
+        else:
+            for k, i in enumerate(inner, 1):
+                names[i] = f"{base} (inner)" if len(inner) == 1 else f"{base} (inner {k})"
+    return names
 
 
 def room_walls(boundary: list[list[float]]) -> list[RoomWall]:
-    """Near-cardinal edges of the room polygon, ordered left, right, bottom, top.
-
-    Angled edges are left out: wall-aligned and wall-mounted items stay cardinal,
-    so they never back onto one.
-    """
+    """Every edge of the room polygon, in ring order, with its inward normal and the builder's label."""
     ring = orient(Polygon(boundary), 1.0).exterior.coords
-    walls = []
+    min_x, min_y, max_x, max_y = room_bounds(boundary=boundary)
+    edges = []
     for (x0, y0), (x1, y1) in zip(ring, ring[1:]):
-        if (x0, y0) == (x1, y1):
+        length = math.hypot(x1 - x0, y1 - y0)
+        if length < 1e-9:
             continue
         # The ring runs counter-clockwise, so the room lies left of each edge.
-        inward_yaw = math.atan2(x1 - x0, y0 - y1)
-        quarter = round(inward_yaw / (math.pi / 2))
-        if abs(inward_yaw - quarter * math.pi / 2) > WALL_CARDINAL_TOLERANCE:
-            continue
-        # A wall facing +X bounds the left side of the room, +Y the bottom.
-        name = ("left", "bottom", "right", "top")[quarter % 4]
-        walls.append(RoomWall(name, (x0, y0), (x1, y1)))
-    return sorted(walls, key=lambda wall: WALL_NAMES.index(wall.name))
+        edges.append(((x0, y0), (x1, y1), length, ((y0 - y1) / length, (x1 - x0) / length)))
+    labels = _wall_labels([edge[3] for edge in edges], [((s[0] + e[0]) / 2, (s[1] + e[1]) / 2) for s, e, _, _ in edges])
+    walls = []
+    for index, ((start, end, length, normal), label) in enumerate(zip(edges, labels)):
+        on_box = any(abs(start[axis] - side) < 1e-9 and abs(end[axis] - side) < 1e-9
+                     for axis, side in ((0, min_x), (0, max_x), (1, min_y), (1, max_y)))
+        walls.append(RoomWall(index, start, end, length, normal, label, on_box))
+    return walls
 
 
 def nearest_wall(
@@ -93,16 +164,27 @@ def nearest_wall(
     return min(room_walls(boundary), key=lambda wall: wall.distance(x, y))
 
 
-def infer_wall_from_center(
-    center: list[float] | tuple[float, float],
+def nearest_axis_wall(
+    point: list[float] | tuple[float, float],
+    boundary: list[list[float]],
+) -> RoomWall:
+    """The nearest wall that faces a cardinal direction: placement stays on axis walls until phase 3 of #53."""
+    x, y = float(point[0]), float(point[1])
+    walls = room_walls(boundary)
+    return min([wall for wall in walls if wall.facing] or walls, key=lambda wall: wall.distance(x, y))
+
+
+def _opening_wall(
+    door: dict,
     *,
     boundary: list[list[float]] | None = None,
     room_area: tuple[float, float] | None = None,
-) -> str:
+) -> RoomWall:
+    """The edge nearest the opening's center; the builder puts the center on the edge."""
     if not boundary or len(boundary) < 3:
         min_x, min_y, max_x, max_y = room_bounds(room_area=room_area)
         boundary = [[min_x, min_y], [max_x, min_y], [max_x, max_y], [min_x, max_y]]
-    return nearest_wall(center, boundary).name
+    return nearest_wall(door.get("center") or [0.0, 0.0], boundary)
 
 
 def door_wall(
@@ -110,12 +192,8 @@ def door_wall(
     *,
     boundary: list[list[float]] | None = None,
     room_area: tuple[float, float] | None = None,
-) -> str:
-    wall = str(door.get("wall", "") or "").strip().lower()
-    if wall in WALL_NAMES:
-        return wall
-    center = door.get("center") or [0.0, 0.0]
-    return infer_wall_from_center(center, boundary=boundary, room_area=room_area)
+) -> int:
+    return _opening_wall(door, boundary=boundary, room_area=room_area).index
 
 
 def door_inward_normal(
@@ -124,32 +202,60 @@ def door_inward_normal(
     boundary: list[list[float]] | None = None,
     room_area: tuple[float, float] | None = None,
 ) -> tuple[float, float]:
-    wall = door_wall(door, boundary=boundary, room_area=room_area)
-    if wall == "left":
-        return 1.0, 0.0
-    if wall == "right":
-        return -1.0, 0.0
-    if wall == "bottom":
-        return 0.0, 1.0
-    return 0.0, -1.0
+    wall = _opening_wall(door, boundary=boundary, room_area=room_area)
+    return _CARDINAL_NORMALS[wall.facing] if wall.facing else wall.normal
 
 
 def door_dimensions(door: dict) -> tuple[float, float]:
-    """Return (opening_width, thickness) for a door opening."""
-    opening_width = max(
-        float(door.get("width", DEFAULT_DOOR_WIDTH) or DEFAULT_DOOR_WIDTH),
-        0.1,
-    )
-    thickness = float(
-        door.get("thickness", door.get("depth", DEFAULT_DOOR_THICKNESS))
-        or DEFAULT_DOOR_THICKNESS
-    )
-    # Older runs stored depth=width. Treat oversized depth as missing thickness
-    # unless the caller explicitly supplied a true wall thickness.
-    if thickness > min(0.35, opening_width * 0.5) and "thickness" not in door:
-        thickness = DEFAULT_DOOR_THICKNESS
-    thickness = max(0.02, min(thickness, max(opening_width, DEFAULT_DOOR_THICKNESS)))
-    return opening_width, thickness
+    """Return (opening_width, thickness) for a door or window; the web sends depth 0.05 as the thickness."""
+    opening_width = max(float(door.get("width") or DEFAULT_DOOR_WIDTH), 0.1)
+    thickness = float(door.get("thickness") or door.get("depth") or DEFAULT_DOOR_THICKNESS)
+    return opening_width, clamp(thickness, 0.02, 0.35)
+
+
+def _oriented_rect(
+    origin: tuple[float, float],
+    direction: tuple[float, float],
+    normal: tuple[float, float],
+    half_along: float,
+    depth: float,
+) -> list[list[float]]:
+    """Corners of the rectangle centered on ``origin`` along the wall, reaching ``depth`` inward from it."""
+    ux, uy = direction
+    nx, ny = normal
+    return [
+        [origin[0] - ux * half_along, origin[1] - uy * half_along],
+        [origin[0] + ux * half_along, origin[1] + uy * half_along],
+        [origin[0] + ux * half_along + nx * depth, origin[1] + uy * half_along + ny * depth],
+        [origin[0] - ux * half_along + nx * depth, origin[1] - uy * half_along + ny * depth],
+    ]
+
+
+def _on_wall_rect(
+    wall: RoomWall,
+    opening_center: tuple[float, float],
+    half_along: float,
+    depth: float,
+) -> dict[str, Any]:
+    """Rectangle on the wall reaching ``depth`` into the room: axis-aligned on an axis wall, else an oriented
+    ``polygon`` whose bounds give ``center``, ``width`` and ``depth``."""
+    if wall.facing:
+        nx, ny = _CARDINAL_NORMALS[wall.facing]
+        return {
+            "center": [opening_center[0] + nx * depth / 2, opening_center[1] + ny * depth / 2],
+            "width": depth if wall.vertical else 2 * half_along,
+            "depth": 2 * half_along if wall.vertical else depth,
+            "inward_normal": [nx, ny],
+        }
+    polygon = _oriented_rect(opening_center, wall.direction, wall.normal, half_along, depth)
+    min_x, min_y, max_x, max_y = Polygon(polygon).bounds
+    return {
+        "center": [(min_x + max_x) / 2, (min_y + max_y) / 2],
+        "width": max_x - min_x,
+        "depth": max_y - min_y,
+        "inward_normal": list(wall.normal),
+        "polygon": polygon,
+    }
 
 
 def door_opening_rect(
@@ -158,43 +264,19 @@ def door_opening_rect(
     boundary: list[list[float]] | None = None,
     room_area: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
-    """Return the canonical axis-aligned rectangle for the door opening marker."""
+    """The opening marker on its wall: the edge nearest ``center``, ``width`` along it, the thickness inward."""
     opening_width, thickness = door_dimensions(door)
-    wall = door_wall(door, boundary=boundary, room_area=room_area)
-    nx, ny = door_inward_normal(door, boundary=boundary, room_area=room_area)
+    wall = _opening_wall(door, boundary=boundary, room_area=room_area)
     raw_center = door.get("center") or [0.0, 0.0]
-    cx, cy = float(raw_center[0]), float(raw_center[1])
-    min_x, min_y, max_x, max_y = room_bounds(boundary=boundary, room_area=room_area)
-
-    # Imported concave rooms can have openings on inset boundary segments.
-    # Their measured center is already wall-anchored, not on the bounding box.
-    if boundary:
-        opening_center = [cx, cy]
-        rect_center = [cx + nx * thickness / 2, cy + ny * thickness / 2]
-        rect_width, rect_depth = ((thickness, opening_width) if wall in {"left", "right"}
-                                  else (opening_width, thickness))
-    elif wall in {"left", "right"}:
-        cy = clamp(cy, min_y + opening_width / 2, max_y - opening_width / 2)
-        opening_center = [min_x if wall == "left" else max_x, cy]
-        rect_center = [opening_center[0] + nx * thickness / 2, opening_center[1]]
-        rect_width = thickness
-        rect_depth = opening_width
-    else:
-        cx = clamp(cx, min_x + opening_width / 2, max_x - opening_width / 2)
-        opening_center = [cx, min_y if wall == "bottom" else max_y]
-        rect_center = [opening_center[0], opening_center[1] + ny * thickness / 2]
-        rect_width = opening_width
-        rect_depth = thickness
-
+    opening_center = wall.point_at(clamp(wall.along(float(raw_center[0]), float(raw_center[1])), 0.0, wall.length))
     return {
-        "wall": wall,
-        "opening_center": opening_center,
-        "center": rect_center,
-        "width": rect_width,
-        "depth": rect_depth,
+        "wall": wall.index,
+        "wall_label": wall.label,
+        "facing": wall.facing,
+        "opening_center": list(opening_center),
         "opening_width": opening_width,
         "thickness": thickness,
-        "inward_normal": [nx, ny],
+        **_on_wall_rect(wall, opening_center, opening_width / 2, thickness),
     }
 
 
@@ -206,22 +288,11 @@ def door_clearance_rect(
 ) -> dict[str, Any]:
     """Return the inward-only doorway clearance rectangle, as deep as the opening is wide (the leaf's swing)."""
     opening = door_opening_rect(door, boundary=boundary, room_area=room_area)
+    wall = _opening_wall(door, boundary=boundary, room_area=room_area)
     clearance = opening["opening_width"]
-    nx, ny = opening["inward_normal"]
-    opening_center = opening["opening_center"]
-    if opening["wall"] in {"left", "right"}:
-        return {
-            **opening,
-            "center": [opening_center[0] + nx * clearance / 2, opening_center[1]],
-            "width": clearance,
-            "depth": opening["opening_width"],
-            "clearance": clearance,
-        }
     return {
         **opening,
-        "center": [opening_center[0], opening_center[1] + ny * clearance / 2],
-        "width": opening["opening_width"],
-        "depth": clearance,
+        **_on_wall_rect(wall, tuple(opening["opening_center"]), clearance / 2, clearance),
         "clearance": clearance,
     }
 
@@ -265,7 +336,7 @@ def format_door_for_prompt(
     clear_min_x, clear_min_y, clear_max_x, clear_max_y = rect_bounds(clear_rect)
     open_x, open_y = opening["opening_center"]
     return (
-        f"- door_{index}: wall={opening['wall']}, "
+        f"- door_{index}: wall {opening['wall']} ({opening['wall_label']}), "
         f"opening_center=[{open_x:.2f}, {open_y:.2f}], "
         f"opening_width={opening['opening_width']:.2f}m, "
         f"clear_zone x=[{clear_min_x:.2f}, {clear_max_x:.2f}] "

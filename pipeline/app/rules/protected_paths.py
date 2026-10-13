@@ -8,6 +8,7 @@ from typing import Any
 
 from shapely.geometry import LineString, Point, Polygon
 from shapely.geometry.polygon import orient
+from shapely.ops import nearest_points
 
 from app.rules.door_geometry import door_opening_rect, room_bounds
 
@@ -87,9 +88,10 @@ def _routed_path(
     width: float,
 ) -> dict[str, Any] | None:
     free = polygon.buffer(-width / 2, join_style=2)
+    # A door near a corner has its inward point outside the eroded room; the route starts at the nearest free point.
     anchors = [
-        Point(opening["opening_center"][0] + opening["inward_normal"][0] * width / 2,
-              opening["opening_center"][1] + opening["inward_normal"][1] * width / 2)
+        nearest_points(free, Point(opening["opening_center"][0] + opening["inward_normal"][0] * width / 2,
+                                   opening["opening_center"][1] + opening["inward_normal"][1] * width / 2))[0]
         for opening in (first, second)
     ]
     route = _shortest_inside_route(free.buffer(1e-7), *anchors)

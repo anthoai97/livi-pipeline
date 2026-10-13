@@ -364,7 +364,9 @@ Shipped from the pipeline side; the web form changes landed with it.
   (a rectangle with opposing doors gets exactly the old `center`, `width`,
   `depth`); otherwise the legacy route through the polygon eroded by half the
   width, buffered with flat ends and clipped, stored as `axis: "routed"` with
-  `centerline` and `polygon`; retried at 0.6 m, else dropped. `wall_pair` holds
+  `centerline` and `polygon`; retried at 0.6 m, else dropped. A door nearer a
+  corner than half the width starts its route at the nearest free point (found
+  running the app: such doors got no path at all). `wall_pair` holds
   edge indexes, plus `wall_labels`. The `requires_straight_circulation_path`
   flag, its schema line, prompt line and helpers are gone. Routed paths give
   no `translations_to_clear_m` and no preflight zones; the room facts' blocked

@@ -493,6 +493,11 @@ def test_opposing_doors_in_different_pockets_of_a_z_room_get_a_route_through_the
     assert Polygon(vertices).buffer(1e-6).covers(passage)
     assert passage.intersection(box(4 / 3, 5 / 3, 8 / 3, 10 / 3)).area > 0.91 * 1.0  # crosses the throat
 
+    # Doors near corners (within half the path width) still get a route: it starts at the nearest free point.
+    [path] = build_protected_paths(vertices, [_door(4 / 3 + 0.2, 0.0), _door(0.2, 5.0)])
+    assert path["axis"] == "routed" and path["wall_labels"] == ["Front", "Back"]
+    assert Polygon(vertices).buffer(1e-6).covers(protected_path_polygon(path))
+
 
 def test_a_rectangle_keeps_the_straight_path_between_opposing_doors_and_adjacent_doors_get_none():
     vertices = shape("rectangle", 4.0, 5.0)

@@ -10,7 +10,10 @@ On October 9, preparation started keeping one row per product URL. That removed
 145 catalog rows that repeated another row's product page.
 
 The remote database has a copy at `pipeline.pipeline_assets_v2`, synced on
-October 9 after deduplication, with the same 5,095 rows. Embeddings stay local.
+October 13 with the same 5,095 rows (232 rows gained a price since the October 9
+sync and 114 changed placement type), and a copy of
+`pipeline.asset_embeddings_v2` with its 5,084 embeddings and the embedding-text
+function, loaded the same day.
 
 The records come only from the raw sources `catalog.assets` and
 `pipeline.decor_items`. Nothing is read from the legacy `pipeline.pipeline_assets`.

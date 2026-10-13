@@ -31,4 +31,6 @@ logs/
 # Local agent copies. Canonical skills live in skills/.
 .agents/
 .claude/
+.grok/
 work_report.md
+.pnpm-store

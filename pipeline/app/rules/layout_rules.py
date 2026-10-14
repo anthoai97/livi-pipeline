@@ -80,13 +80,10 @@ DESIGN_RULES = {
     ),
     "bedroom": (
         "The bed's headboard is against a wall, with access from its sides and foot.",
-        "The bed is seen from the door but not in line with it.",
     ),
     "studio": (
         "The bed's headboard is against a wall, with access from its sides and foot.",
-        "The bed takes the corner of the room farthest from the door.",
-        "The sofa's back or a shelf separates sitting from sleeping.",
-        "A dining table stands by the entry wall.",
+        "Sleeping, sitting and dining each take their own part of the room.",
     ),
     "dining_room": (
         "The table sits where every chair can pull out, with a clear path around it.",
@@ -218,15 +215,18 @@ ROOM_LAYOUT_RULES = {
         f"The headboard stands within {BED_HEADBOARD_MAX_GAP_M:.2f} m of a usable wall, facing into the room within 12 degrees.",
         (f"Keep {BED_ACCESS_MIN_M:.2f} m clear along the foot and along at least one side; prefer both sides clear, "
          "and keep both when the brief asks. A compact bedroom may have one clear side, never none."),
-        (f"Nightstands stand beside the head within {BEDSIDE_MAX_GAP_M:.2f} m; only bedside pieces may use the top "
-         f"{BEDSIDE_HEAD_ZONE_M:.2f} m of a side strip. A bedside lamp declares on_top_of its nightstand."),
+        (f"Nightstands stand beside the head within {BEDSIDE_MAX_GAP_M:.2f} m, never detached or at the foot; only "
+         f"bedside pieces may use the top {BEDSIDE_HEAD_ZONE_M:.2f} m of a side strip. A bedside lamp declares "
+         "on_top_of its nightstand."),
         f"Keep {STORAGE_FRONT_M:.2f} m clear in front of each dresser, wardrobe, cabinet or storage unit.",
         (f"A TV stands toward the bed's foot, facing the bed within {BEDROOM_TV_MAX_FACING_DEG:.0f} degrees, "
          "and its stand keeps the foot strip clear."),
         _DESK,
         ("Group bedside pieces and lighting with the bed, and storage, mirror or reading pieces into useful areas, "
-         "not scattered on distant walls."),
-        "Use the full model half-extents with a 0.02-0.05 m gap from walls and neighbouring pieces; never round them down.",
+         "not scattered on distant walls. Empty floor is not a defect; layout never adds pieces."),
+        ("Use the full model half-extents with a 0.02-0.05 m gap from walls and neighbouring pieces; never round them "
+         "down. For a nightstand parallel to the bed, the sideways distance between their centers exceeds bed width / 2 + "
+         "nightstand width / 2."),
     )),
     "dining_room": ("DINING ROOM RULES (take precedence over living-room guidance):", (
         ("One standalone dining table anchors the dining chairs; no sofa, coffee table, media wall or bed is required. "
@@ -242,8 +242,8 @@ ROOM_LAYOUT_RULES = {
         ("Wall art hangs parallel to a usable wall, clear of openings, related to the table or sideboard. "
          "No floor lamp stands where a chair pulls out."),
     )),
-    "studio": ("STUDIO RULES (sleeping, sitting and any dining group share one room):", (
-        ("Place the bed, sofa and any dining table first as separate anchors, reserving their access together, then "
+    "studio": ("STUDIO RULES (sleeping, sitting and dining share one room):", (
+        ("Place the bed, sofa and dining table first as separate anchors, reserving their access together, then "
          "their chairs, bedside pieces and accessories. The bed and sofa use different wall spans."),
         (f"The headboard stands within {BED_HEADBOARD_MAX_GAP_M:.2f} m of a usable wall, facing in within 12 degrees. "
          f"Keep {BED_ACCESS_MIN_M:.2f} m clear along the foot and at least one side. Nightstands stand beside the head "
@@ -347,9 +347,12 @@ def build_selection_guidance_block(
             ("Choose one complete bed by its full model width and depth, not an inferred mattress size; never a "
              "separate frame, mattress or bunk."),
             bed_access,
+            ("Bedside lighting and clothing storage are suggested, not required: in a spacious bedroom prefer a bedside "
+             "pair and consider a dressing or reading area; honor minimal, single-bedside and no-storage requests."),
             "Nightstands stand beside the head, and each lamp must fit its own support.",
             f"A dresser, wardrobe or cabinet needs {STORAGE_FRONT_M:.2f} m clear in front.",
-            "A TV needs a view from the bed's foot and a support that keeps bed access clear.",
+            ("A TV and a desk with its task chair are opt-in, selected only when requested. A TV needs a view from the "
+             "bed's foot and a support that keeps bed access clear."),
             f"A desk and task chair are one pair, with {BED_ACCESS_MIN_M:.2f} m behind the chair to pull it out.",
             "A sofa, coffee table or media group is not required.",
         ))
@@ -358,8 +361,8 @@ def build_selection_guidance_block(
             "Choose one standalone dining table and dining chairs of matching scale.",
             _DINING_PITCH,
             dining_access,
-            f"A sideboard or cabinet needs {STORAGE_FRONT_M:.2f} m clear in front.",
-            (f"A pendant or chandelier leaves at least {DINING_LIGHT_TABLE_MIN_GAP_M:.2f} m above the tabletop, measured "
+            f"A suggested sideboard or cabinet needs {STORAGE_FRONT_M:.2f} m clear in front.",
+            (f"A suggested pendant or chandelier leaves at least {DINING_LIGHT_TABLE_MIN_GAP_M:.2f} m above the tabletop, measured "
              "with its full model height below the ceiling; never assume an adjustable hanger."),
             "A requested rug covers the table and the seated chairs.",
             "Choose a smaller table and chairs before cutting an optional seat; never cut a stated seat count.",

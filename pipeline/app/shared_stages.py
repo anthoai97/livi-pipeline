@@ -176,8 +176,8 @@ Rules:
   A bare request for dining chairs without a stated quantity does not impose count=1;
   leave it optional=true so the default count applies. Do not fabricate a
   user-requested four-chair count when seating quantity is unspecified.
-  The sideboard, overhead light and wall art the policy adds are not requested_items
-  or requested_categories unless the user asks for them.
+  The suggested dining storage, overhead light and wall art are design choices, not
+  requested_items or requested_categories unless the user asks for them.
   Preserve explicit minimal-furniture/essentials-only requests in functional_hints
   as minimal_furniture; a minimalist style alone does not mean an unfurnished room.
   A dining table means a standalone table, not a coffee table, bar table or bundled set.

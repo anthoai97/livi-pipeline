@@ -322,10 +322,11 @@ def build_feasibility_digest(
     )
     if bedroom:
         room_completion_guidance["notes"] = [
-            "Use one complete adult bed as the sleeping anchor and design a complete bedroom around its everyday functions: bedside surfaces, lighting and clothing storage.",
+            "Use one complete adult bed as the sleeping anchor and design a complete bedroom around its everyday functions: useful bedside surfaces, lighting and clothing storage, suggested rather than required.",
+            "In a normal spacious bedroom, prefer a matching bedside pair when both sides are usable and purposeful clothing storage; a dressing or reading area may use the extra space.",
             BEDROOM_FURNISHING_GUIDANCE,
             "The density floor only catches extreme sparsity; a bed can satisfy most of it without making the bedroom complete.",
-            "In a spacious bedroom, a reading corner or dressing area may use the extra space; a compact bedroom keeps access first.",
+            "These are design choices, not counts: single-bedside, no-storage, sparse or essentials-only requests come first, and a compact bedroom keeps access first without forcing a pair or a second zone.",
             "A dresser stores folded clothes and a wardrobe or armoire hanging clothes; claim hanging storage only when the product's metadata confirms it.",
             "Preserve bed-side and foot access, opening clearance, and storage-front access.",
         ]

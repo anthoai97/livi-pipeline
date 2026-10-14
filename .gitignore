@@ -34,3 +34,4 @@ logs/
 .grok/
 work_report.md
 .pnpm-store
+local_data/

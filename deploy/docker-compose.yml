@@ -11,6 +11,8 @@ services:
     env_file: .env
     volumes:
       - runs:/app/pipeline/.data/runs
+    networks:
+      - livinit-pipeline-dev_default
 
   web:
     image: anquachdev/livi-web:latest
@@ -23,6 +25,12 @@ services:
       - "127.0.0.1:4173:4173"
     depends_on:
       - pipeline
+    networks:
+      - livinit-pipeline-dev_default
 
 volumes:
   runs:
+
+networks:
+  livinit-pipeline-dev_default:
+    external: true

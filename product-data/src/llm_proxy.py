@@ -1,8 +1,8 @@
 """Structured JSON calls through the local cli-proxy-api container.
 
 Reads AI_PROXY_BASE_URL, AI_PROXY_API_KEY, LLM_PROXY_MODEL (default
-gpt-6-luna), and LLM_PROXY_EFFORT (reasoning effort, such as medium; unset sends
-none). Calls use the ChatGPT Codex Pro subscription, so there is no
+claude-sonnet-5-5), and LLM_PROXY_EFFORT (reasoning effort, such as medium; unset sends
+none). Calls use the Claude subscription behind the proxy, so there is no
 per-token charge.
 """
 
@@ -16,7 +16,7 @@ import urllib.request
 from collections.abc import Callable
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8317/v1"
-DEFAULT_MODEL = "gpt-6-luna"
+DEFAULT_MODEL = "claude-sonnet-5-5"
 
 
 class ProxyClient:

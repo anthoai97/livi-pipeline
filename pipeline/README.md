@@ -119,7 +119,7 @@ listed but not reviewed.
 | Variable | Use |
 | --- | --- |
 | `AI_PROXY_BASE_URL`, `AI_PROXY_API_KEY` | The local cli-proxy-api that serves the reviewer model. Required. |
-| `REVIEW_MODEL` | Reviewer model. Defaults to `gpt-6.1-sol`; `--model` overrides it. |
+| `REVIEW_MODEL` | Reviewer model. Defaults to `claude-sonnet-5-5`; `--model` overrides it. |
 | `REVIEW_EFFORT` | Reviewer reasoning effort. Defaults to `medium`; `--effort` overrides it. |
 
 `--parallel` sets how many reviewer calls run at once (default 20). Each design review takes about 30 s, so this sets the review time.

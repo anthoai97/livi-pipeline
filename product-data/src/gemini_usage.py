@@ -148,9 +148,9 @@ class GeminiUsage:
             source_id=source_id,
             cost_usd=0.0,
             pricing={
-                "billing": "codex-pro-subscription",
+                "billing": "claude-subscription",
                 "matched_model": str(resolved),
-                "note": "No per-token API charge. Tokens count against the ChatGPT Codex Pro subscription.",
+                "note": "No per-token API charge. Tokens count against the Claude subscription behind the proxy.",
             },
         )
 

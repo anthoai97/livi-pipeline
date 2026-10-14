@@ -36,7 +36,7 @@ from llm_proxy import ProxyClient  # product-data/src, on the path through app
 
 RUNS_DIR = PIPELINE / ".data" / "runs"
 REVIEWS_DIR = PIPELINE / ".data" / "reviews"
-DEFAULT_MODEL = "gpt-6.1-sol"
+DEFAULT_MODEL = "claude-sonnet-5-5"
 DEFAULT_EFFORT = "medium"
 
 Record = dict[str, Any]

@@ -637,7 +637,7 @@ def call_json(
     step: str,
     record: dict,
 ) -> dict:
-    """One chat completion through the local proxy, using the Codex Pro subscription."""
+    """One chat completion through the local proxy, using the Claude subscription behind the proxy."""
     content: list | str = text
     image_url = llm_image(record)
     if image_url:
@@ -995,7 +995,7 @@ def main() -> None:
         f" output_tokens={totals['output_tokens']}"
         f" thoughts_tokens={totals['thoughts_tokens']}"
         f" cost_usd={totals['cost_usd']:.6f}"
-        f" billing=codex-pro-subscription"
+        f" billing=claude-subscription"
         f" log={usage.log_path}"
         f" summary={usage.summary_path}"
     )

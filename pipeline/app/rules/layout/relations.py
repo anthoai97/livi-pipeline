@@ -24,6 +24,7 @@ from app.rules.planner.taxonomy import (
 from app.rules.pipeline_shared import (
     WALL_MOUNT_Z,
     door_clearance_rect,
+    door_opening_rect,
     is_ceiling_mounted_asset,
     is_floor_lamp_asset,
     is_floor_only_asset,
@@ -32,8 +33,8 @@ from app.rules.pipeline_shared import (
     is_tabletop_support_asset,
     is_wall_mounted_asset,
     matches_category_keywords,
+    nearest_wall,
     normalize_asset_label,
-    room_walls,
     tabletop_support_priority,
 )
 
@@ -308,14 +309,11 @@ def _build_blocker_specs(
                     "right": ("left",),
                     "bottom": ("up",),
                     "top": ("down",),
-                }[rect["wall"]],
+                }.get(rect["facing"], ()),
             }
         )
 
     for index, window in enumerate(room_windows or []):
-        center = window.get("center") or [0.0, 0.0]
-        width = float(window.get("width", 1.0) or 1.0)
-        depth = float(window.get("depth", 0.1) or 0.1)
         sill_height = window.get("sill_height")
         sill_height = .9 if sill_height is None else float(sill_height)
         blockers.append(
@@ -324,7 +322,7 @@ def _build_blocker_specs(
                 "index": index,
                 "min_z": sill_height,
                 "height": sill_height + float(window.get("height", 1.2)),
-                "poly": rect_polygon(center, width, depth),
+                "poly": polygon_from_rect(door_opening_rect(window, boundary=boundary, room_area=room_area)),
                 "preferred_directions": (),
             }
         )
@@ -335,16 +333,14 @@ def _window_wall_line(
     window: dict[str, Any],
     boundary: list[list[float]],
 ) -> tuple[str, float] | None:
-    """The window's wall and that wall's coordinate across its normal at the window."""
-    name = str(window.get("wall") or "").lower()
-    walls = [wall for wall in room_walls(boundary) if wall.name == name]
-    if not walls:
-        return None
+    """The window's wall facing and that wall's coordinate across its normal at the window; None on a corner wall."""
     center = window.get("center") or [0.0, 0.0]
     x = float(center[0])
     y = float(center[1])
-    wall = min(walls, key=lambda wall: wall.distance(x, y))
-    return name, wall.line_at(y if wall.vertical else x)
+    wall = nearest_wall(center, boundary)
+    if wall.facing is None:
+        return None
+    return wall.facing, wall.line_at(y if wall.vertical else x)
 
 def _window_seating_clearance_poly(
     window: dict[str, Any],
@@ -372,12 +368,13 @@ def _back_wall_window_overlaps_item(
     item: FloorAsset,
     back_wall: str,
     room_windows: list[dict[str, Any]] | None,
+    boundary: list[list[float]],
 ) -> bool:
     item_min_x, item_min_y, item_max_x, item_max_y = item.poly.bounds
     for window in room_windows or []:
-        if str(window.get("wall") or "").lower() != back_wall:
-            continue
         center = window.get("center") or [0.0, 0.0]
+        if nearest_wall(center, boundary).facing != back_wall:
+            continue
         span = max(
             float(window.get("width", 1.0) or 1.0),
             float(window.get("depth", 0.1) or 0.1),

@@ -145,7 +145,7 @@ function buildWalls(geometry: RoomGeometry): Wall[] {
       .filter(({ opening }) => nearestEdge(opening.center) === index)
       .map(({ opening, kind }): Cut => {
         const point = toWorld([opening.center[0], opening.center[1], 0], center);
-        const width = Math.max(opening.width, opening.depth, 0.3);
+        const width = Math.max(opening.width, 0.3);
         const sill = kind === "door" ? 0 : (opening.sill_height ?? 0.9);
         const height = Math.min(opening.height ?? (kind === "door" ? 2.1 : 1.2), geometry.wall_height - sill - 0.05);
         const u = Math.max(width / 2, Math.min(length - width / 2, localX.dot(point.sub(origin))));
@@ -338,7 +338,7 @@ function Clearance({ geometry, walls }: { geometry: RoomGeometry; walls: Wall[] 
       {geometry.room_doors.map((door, index) => {
         const wall = nearestWall(walls, [door.center[0], door.center[1], 0]);
         if (!wall) return null;
-        const radius = Math.max(door.width, door.depth, 0.6);
+        const radius = Math.max(door.width, 0.6);
         const facing = Math.atan2(-wall.normal.x, -wall.normal.z); // turns the half-disc into the room
         return (
           <group key={door.id} position={toWorld([door.center[0], door.center[1], 0.008], center)} rotation={[0, facing, 0]}>

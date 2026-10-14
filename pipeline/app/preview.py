@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from app.rules.door_geometry import door_opening_rect
 from app.rules.geometry.primitives import asset_polygon, is_rug
+from app.rules.protected_paths import build_protected_paths, protected_path_polygon
 
 Record = dict[str, Any]
 
@@ -24,6 +25,7 @@ WALL = (55, 55, 55, 255)
 GRID = (226, 224, 218, 255)
 DOOR = (150, 90, 40, 255)
 WINDOW = (80, 165, 230, 255)
+PATH = ((150, 150, 150, 60), (150, 150, 150, 255))  # protected circulation path: fill, outline
 INK = (25, 25, 25, 255)
 # Kind -> (fill, outline). Drawn in this order, so supported items land on top.
 KINDS = {
@@ -72,6 +74,8 @@ def render_plan(record: Record, variant: Record) -> Image.Image:
     for y in range(math.ceil(min_y), math.floor(max_y) + 1):
         draw.line([px((min_x, y)), px((max_x, y))], fill=GRID)
     draw.polygon([px(v) for v in vertices], outline=WALL, width=4)
+    for path in build_protected_paths(request["room_vertices"], request.get("room_doors")):
+        draw.polygon([px(p) for p in protected_path_polygon(path).exterior.coords], fill=PATH[0], outline=PATH[1], width=1)
 
     for window in request.get("room_windows") or []:
         opening = door_opening_rect(window, boundary=request["room_vertices"], room_area=room_area)
@@ -134,7 +138,7 @@ def render_plan(record: Record, variant: Record) -> Image.Image:
 def _along_wall(opening: Record, px, points: bool = False):
     """The opening's two ends along its wall, as plan points or as pixel points."""
     nx, ny = opening["inward_normal"]
-    ux, uy = abs(ny), abs(nx)
+    ux, uy = ny, -nx  # along the wall, for any wall direction
     cx, cy = opening["opening_center"]
     half = opening["opening_width"] / 2
     ends = [(cx - ux * half, cy - uy * half), (cx + ux * half, cy + uy * half)]

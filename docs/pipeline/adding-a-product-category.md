@@ -264,13 +264,12 @@ Run from `pipeline/` with `conda activate livinit`.
 - **The seed role, not the role, picks the solver group.** A stool is
   `accent_seating`, so it joins the sofa group as a conversation seat in any
   room with a sofa and a coffee table.
-- **Room facts describe the bounding rectangle.** For an L- or T-shaped room,
-  `build_room_facts` reports four walls with the bounding box's lengths
-  (`"shape": "rectangle"`), and the selection model sees those.
-  The solver's wall candidates also come from the bounding box, and the real
-  outline filters them, so the walls of the notch are never candidates. A wall
-  piece can find fewer spots than the facts suggest. The checks use the real
-  outline.
+- **Placement still uses the bounding rectangle.** `build_room_facts` reports
+  every wall of the outline with its real length (`"shape": "polygon"` for an
+  L or a T), and the selection model sees those. The solver's wall candidates
+  still come from the four box walls, and the real outline filters them, so the
+  walls of the notch are never candidates until #53 phase 3. A wall piece can
+  find fewer spots than the facts suggest. The checks use the real outline.
 - **Room exclusions match the prepared label.** `asset_is_eligible_for_room`
   compares the raw prepared category, while the digest uses canonical names.
   List every prepared spelling in `excluded_room_categories`, as

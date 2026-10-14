@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, mock, test } from "node:test";
 import { useRun } from "../src/lib/run";
-import { buildRequest, DEFAULT_DRAFT } from "../src/lib/room";
+import { buildRequest, DEFAULT_DRAFT, DOOR_WIDTH, EXAMPLES, openingsProblem, WINDOW_WIDTH } from "../src/lib/room";
 import type { ClientTiming, ReadyVariant } from "../src/lib/types";
 
 const request = buildRequest(DEFAULT_DRAFT);
@@ -13,6 +13,16 @@ const variant: ReadyVariant = {
 const frame = (event: unknown) => new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 afterEach(() => { useRun.getState().reset(); mock.restoreAll(); });
+
+test("openings are sent as width x 0.05 boxes centred on their wall, with no wall name", () => {
+  // The left wall of the default rectangle: x = 0, running from the back to the front.
+  const side = buildRequest({ ...DEFAULT_DRAFT, doorWall: 3, doorAt: 0.5, windowWall: 3, windowAt: 0.25 });
+  assert.deepEqual(side.room_doors, [{ id: "door-1", center: [0, 2.9], width: DOOR_WIDTH, depth: 0.05, height: 2.08 }]);
+  assert.deepEqual(side.room_windows, [{ id: "window-1", center: [0, 4.35], width: WINDOW_WIDTH, depth: 0.05, height: 1.2, sill_height: 0.9 }]);
+  assert.deepEqual(request.room_windows[0].center, [1.54, 5.8]); // the back wall runs right to left
+  assert.equal(request.room_windows[0].width, WINDOW_WIDTH);
+  for (const example of EXAMPLES) assert.equal(openingsProblem(example.draft), null, example.label);
+});
 
 function liveStream() {
   let send: (event: unknown) => void = () => {};

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from shapely.ops import unary_union
-from test_rules import GOLDEN, _golden_inputs
+from test_rules import GOLDEN, _golden_inputs, shape
 
 from app.rules.geometry.primitives import asset_polygon
 from app.rules.layout.analysis import analyze_layout, findings_by_level
@@ -171,11 +171,12 @@ def test_bedside_table_lamps_stand_on_the_nightstands():
     assert {layout[uid]["on_top_of"] for uid in ("table_lamp_1", "table_lamp_2")} == {"nightstand_1", "nightstand_2"}
 
 
-def test_l_shaped_room_places_every_item_inside_the_outline():
+@pytest.mark.parametrize("vertices", [[[0, 0], [6, 0], [6, 3], [3.5, 3], [3.5, 5], [0, 5]], shape("angled", 6, 5)], ids=["L", "angled"])
+def test_a_shaped_room_places_every_item_inside_the_outline(vertices):
     # Wall candidates assume the bounding box; the room outline filters them (boundary findings would block).
+    # The angled room's corner wall is a real edge the checks must handle without crashing (#53 phase 1).
     spec = GOLDEN["rooms"]["living"]
     intent = coerce_intent_packet(spec["intent"], room_type="living_room")
-    vertices = [[0, 0], [6, 0], [6, 3], [3.5, 3], [3.5, 5], [0, 5]]
     room = build_room_context(room_type="living_room", room_area=(6, 5), room_vertices=vertices, wall_height=2.7,
                               room_doors=[{"center": [1.0, 0.0], "width": 0.9, "depth": 0.05, "height": 2.08}],
                               room_windows=[], intent=intent)

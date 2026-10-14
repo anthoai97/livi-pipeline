@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from typing import Any
 from shapely.geometry import Polygon
-from app.rules.pipeline_shared import door_clearance_rect
+from app.rules.pipeline_shared import door_clearance_rect, door_opening_rect
 
 _SEED_MARGIN = 0.05
 
@@ -173,6 +173,9 @@ def rect_polygon(center: list[float], width: float, depth: float) -> Polygon:
     )
 
 def polygon_from_rect(rect: dict[str, Any]) -> Polygon:
+    """The rect's oriented ``polygon`` (an opening on a corner wall), else its axis-aligned box."""
+    if rect.get("polygon"):
+        return Polygon(rect["polygon"])
     return rect_polygon(rect["center"], rect["width"], rect["depth"])
 
 def _blocker_polygons(
@@ -192,8 +195,5 @@ def _blocker_polygons(
     if allow_window_overlap:
         return blockers
     for window in room_windows or []:
-        center = window.get("center") or [0.0, 0.0]
-        width = float(window.get("width", 1.0) or 1.0)
-        depth = float(window.get("depth", 0.1) or 0.1)
-        blockers.append(rect_polygon(center, width, depth))
+        blockers.append(polygon_from_rect(door_opening_rect(window, boundary=boundary, room_area=room_area)))
     return blockers

@@ -41,7 +41,11 @@ Budget USD 5,000, room 5.0 m x 6.0 m, one door, one window.
 ## 0. Receive the request
 
 `POST /pipeline` (`app/main.py`) accepts the geometry request: prompt, budget,
-room type, room size, vertices, wall height, doors, and windows.
+room type, room size, vertices, wall height, doors, and windows. The vertices
+are any simple polygon, counter-clockwise; `room_area` is its bounding box. A
+door or window has `center` on an edge, `width` along the wall, `depth` (the
+wall thickness, 0.05 m), `height`, and for a window `sill_height`. Its wall is
+the edge nearest its center; a `wall` name in the request is ignored.
 
 The service then:
 
@@ -90,8 +94,15 @@ It makes no model call and takes about 10 ms.
 
 It computes:
 
-- Walls, doors, windows, and blocked zones near openings.
-- Protected walking paths that furniture must keep clear.
+- Walls: one per polygon edge, in ring order, with the room builder's name
+  ("Back", "Back (inner)", "Right (front)", "Back-right" for a corner wall),
+  its length, and its openings and clear spans measured along the edge. The
+  floor area is the polygon's.
+- Doors and windows on their edge, with blocked zones in front of them.
+- Protected walking paths between every pair of doors whose walls face each
+  other: a straight 0.91 m band when one fits inside the outline (a rectangle
+  with opposing doors), otherwise the shortest route through the polygon,
+  retried at 0.6 m, and dropped when none exists. Furniture keeps them clear.
 - A size class (compact, medium, or spacious) by floor area per room type:
   living room below 18 and 30 m², bedroom 11 and 16 m², dining room 10 and
   16 m², studio 25 and 40 m². A 15 m² bedroom is medium.

@@ -2,7 +2,7 @@ from collections.abc import Mapping
 from typing import Any
 from app.rules.room_policy import BEDROOM_FURNISHING_GUIDANCE, DINING_FURNISHING_GUIDANCE, STUDIO_FURNISHING_GUIDANCE, dining_chair_count, normalize_room_type, excluded_room_categories, studio_dining_required
 
-from ._util import clean_list as _clean_list, room_scale as _room_scale, round4 as _round
+from ._util import clean_list as _clean_list, room_scale as _room_scale, round4 as _round, wall_text
 from .fit_policy import (
     CATEGORY_CAPS,
     ROLE_CAPS,
@@ -170,7 +170,6 @@ def build_feasibility_digest(
 
     anchor_walls = room_facts.get("candidate_anchor_walls") or []
     anchor_wall = anchor_walls[0] if anchor_walls else {}
-    best_anchor_wall = str(anchor_wall.get("wall") or "")
     largest_clear_wall_span = float(anchor_wall.get("usable_length") or 0.0)
     anchor_blocked_ratio = float(anchor_wall.get("blocked_ratio") or 0.0)
     opening_pressure = _opening_pressure_level(door_count, window_count, anchor_blocked_ratio)
@@ -336,9 +335,9 @@ def build_feasibility_digest(
         room_completion_guidance.update(strategy="separate_function_groups", zone_count=3 if studio_dining else 2,
                                         notes=[STUDIO_FURNISHING_GUIDANCE])
 
-    if best_anchor_wall:
+    if anchor_wall:
         notes.append(
-            f"Best anchor wall is `{best_anchor_wall}` with {largest_clear_wall_span:.2f}m usable span."
+            f"Best anchor wall is {wall_text(anchor_wall)} with {largest_clear_wall_span:.2f}m usable span."
         )
     if available_furnishing_area_sqm < 12.0:
         risks.append("Available furnishing area is tight; prioritize fewer, more essential pieces.")
@@ -353,7 +352,9 @@ def build_feasibility_digest(
         "door_clearance_area_sqm": _round(door_clearance_area_sqm),
         "available_furnishing_area_sqm": _round(available_furnishing_area_sqm),
         "anchor_wall": {
-            "wall": best_anchor_wall or None,
+            "wall": anchor_wall.get("wall"),
+            "label": anchor_wall.get("label"),
+            "facing": anchor_wall.get("facing"),
             "usable_length": _round(largest_clear_wall_span),
             "blocked_ratio": _round(anchor_blocked_ratio),
             "capacity": _anchor_capacity(largest_clear_wall_span),
@@ -407,7 +408,7 @@ def format_feasibility_digest_for_prompt(digest: Mapping[str, Any] | None) -> st
         "FEASIBILITY DIGEST:\n"
         f"- room_scale: {digest.get('room_scale')}\n"
         f"- available_furnishing_area_sqm: {float(digest.get('available_furnishing_area_sqm') or 0.0):.2f}\n"
-        f"- anchor_wall: {anchor.get('wall') or 'none'} "
+        f"- anchor_wall: {wall_text(anchor)} "
         f"({float(anchor.get('usable_length') or 0.0):.2f}m, "
         f"{anchor.get('capacity') or 'unknown'})\n"
         f"- opening_pressure: {opening_pressure.get('level') or 'unknown'}\n"

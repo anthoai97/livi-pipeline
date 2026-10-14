@@ -337,6 +337,79 @@ cases within chance of the [2026-10-12 report](../pipeline/report-2026-10-12.md)
 reviewer's use-of-space score for the shaped rooms at or above the rectangle
 cases'.
 
+## Phase 1 changes (2026-10-13)
+
+Shipped from the pipeline side; the web form changes landed with it.
+
+- **Walls.** `RoomWall` is one record per edge of the counter-clockwise
+  outline: `index`, `start`, `end`, `length`, inward `normal`, the builder's
+  `label` (ported from `wallNames.ts`, tie cases included) and `on_box`.
+  `facing` is the cardinal word for an edge within 22.5° of an axis, None for
+  a corner wall. `room_walls` keeps every edge; `nearest_wall` is by distance
+  to any edge; `nearest_axis_wall` serves the checks and normalization that
+  still reason in four cardinal walls until phase 3 (no crash on a corner
+  wall). `WALL_NAMES`, `WALL_CARDINAL_TOLERANCE` and `infer_wall_from_center`
+  are gone.
+- **Openings.** The wall is the edge nearest `center`; `wall` and `depth` in
+  the request are accepted and ignored (depth is read as the wall thickness).
+  Opening and clearance rectangles are built on the edge from `center` and
+  `width`: axis-aligned on an axis wall, an oriented `polygon` with its bounds
+  as `center`/`width`/`depth` on a corner wall. Records carry `wall` (edge
+  index), `wall_label`, `facing` and `inward_normal`. Window blockers use the
+  same rectangle. `door_dimensions` takes `width` as the opening and `depth`
+  as the thickness, without the old "turned opening" heuristics.
+- **Paths.** `build_protected_paths(room_vertices, room_doors)` always runs,
+  for every pair of doors whose inward normals oppose (dot < -0.5), inner
+  walls included. A straight band inside the outline keeps the axis record
+  (a rectangle with opposing doors gets exactly the old `center`, `width`,
+  `depth`); otherwise the legacy route through the polygon eroded by half the
+  width, buffered with flat ends and clipped, stored as `axis: "routed"` with
+  `centerline` and `polygon`; retried at 0.6 m, else dropped. A door nearer a
+  corner than half the width starts its route at the nearest free point (found
+  running the app: such doors got no path at all). `wall_pair` holds
+  edge indexes, plus `wall_labels`. The `requires_straight_circulation_path`
+  flag, its schema line, prompt line and helpers are gone. Routed paths give
+  no `translations_to_clear_m` and no preflight zones; the room facts' blocked
+  zone carries the polygon; previews draw paths as grey bands.
+- **Room facts.** `walls` lists every edge with index, label, facing,
+  endpoints, length, openings (`at` along the edge) and clear spans; `shape`
+  is `rectangle` or `polygon` with `vertex_count`; `candidate_anchor_walls`
+  carry index, label and facing, ranked by usable length with the facing name
+  as the tie-break (so rectangles rank exactly as before; a pure index
+  tie-break mirrored the benchmark studio and moved its dining group 0.86 m
+  from the bed) and the index last. The digest's `anchor_wall` has `wall`,
+  `label`, `facing`; seed guidance takes each ranked edge's facing.
+- **Prompts.** `coordinate_system_block(room_vertices)` lists the walls by
+  index and label with endpoints. The selection prompt and the review prompt
+  state the shape and polygon area; the review prompt lists each path's band
+  or centerline and shows openings as "wall 3 (Back (inner))";
+  `scripts/review.py` does the same.
+- **Fixtures and tests.** `wall` keys dropped from `legacy_seed_cleanup.json`
+  and `benchmark_requests.json`, the flag from the fixture intents (their
+  paths now come from the doors). `tests/test_rules.py` gains `shape()` for
+  the five presets and the Z and U templates at the builder's defaults, the
+  label table for all seven, the Z-room facts (8 walls, 15.56 m², door on
+  "Back (inner)"), the routed Z-room path through the throat, the rectangle's
+  straight record and the adjacent-door case. The L-shaped solver test also
+  runs on the angled preset.
+
+Results: `python -m pytest tests/test_solver.py tests/test_rules.py
+tests/test_stages.py tests/test_delivery.py tests/test_review.py
+tests/test_runtime.py` passes (169 tests, 11 new; `test_llm.py` needs API
+keys and was not run). A smoke run built walls,
+openings, paths and facts for all seven shapes with a door on every wall,
+corner and inner walls included, without an error.
+
+Benchmark of the six shaped rooms, one run each, with reviewer scores:
+[report-2026-10-13-shapes](../pipeline/report-2026-10-13-shapes.md)
+(overall 3.11 against 3.25 for the rectangle cases; the gaps are the ones
+phase 2 is for).
+
+Deferred to later phases, as planned: fit and the selection prompt's
+viewing reference still use the bounding box; the solver's wall candidates
+and the cardinal wall checks still use the box walls; a routed path is never
+split into preflight zones.
+
 ## Unresolved questions
 
 None. Decisions 2, 3, 5 and 7 were settled from the builder's and the legacy

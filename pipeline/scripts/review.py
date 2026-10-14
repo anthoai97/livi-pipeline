@@ -29,7 +29,8 @@ PIPELINE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PIPELINE))
 
 from app.preview import png_bytes, render_plan
-from app.rules.door_geometry import door_wall
+from app.rules.door_geometry import door_opening_rect, room_walls
+from app.rules.geometry.primitives import room_polygon
 from app.rules.selection.constants import BUDGET_FLEX_PCT
 from llm_proxy import ProxyClient  # product-data/src, on the path through app
 
@@ -109,7 +110,8 @@ COMPARE_SCHEMA = _object({"distinctness": SCORE})
 IMAGE_KEY = ("The image is a top-down plan: +x right, +y up, light 1 m grid, scale bar in metres. Light tan translucent = "
              "rugs; blue = floor furniture; orange outline = wall-mounted items; gray outline = ceiling items; green = "
              "items resting on another item (lamps, decor). The dark line from each item's center ends at its front. "
-             "Doors are gaps in the wall with a brown swing arc; windows are blue segments on the wall.")
+             "Doors are gaps in the wall with a brown swing arc; windows are blue segments on the wall; light grey "
+             "bands are protected circulation paths between doors.")
 
 
 def _facing(yaw: float) -> str:
@@ -126,14 +128,19 @@ def _list(values: list) -> str:
 def room_text(record: Record) -> str:
     request = record["request"]
     width, depth = request["room_area"]
-    lines = [(f"Room type: {request['room_type'].replace('_', ' ')}, {width:.2f} x {depth:.2f} m "
-              f"({width * depth:.1f} m2), wall height {float(request['wall_height']):.2f} m.")]
     boundary, room_area = request["room_vertices"], tuple(request["room_area"])
+    walls = room_walls(boundary)
+    shape = (f"{width:.2f} x {depth:.2f} m rectangle" if len(walls) == 4 and all(wall.on_box for wall in walls)
+             else f"polygon with {len(walls)} walls in a {width:.2f} x {depth:.2f} m box")
+    lines = [(f"Room type: {request['room_type'].replace('_', ' ')}, {shape} "
+              f"({room_polygon(room_area, boundary).area:.1f} m2), wall height {float(request['wall_height']):.2f} m."),
+             "Walls: " + ", ".join(f"{wall.index} {wall.label} ({wall.length:.2f} m)" for wall in walls) + "."]
     for kind, openings in (("Door", request.get("room_doors") or []), ("Window", request.get("room_windows") or [])):
         for opening in openings:
-            center = opening.get("center") or [0, 0]
-            wall = door_wall(opening, boundary=boundary, room_area=room_area)
-            lines.append(f"{kind} on the {wall} wall at ({center[0]:.2f}, {center[1]:.2f}), {opening.get('width', 0.9)} m wide.")
+            rect = door_opening_rect(opening, boundary=boundary, room_area=room_area)
+            x, y = rect["opening_center"]
+            lines.append(f"{kind} on wall {rect['wall']} ({rect['wall_label']}) at ({x:.2f}, {y:.2f}), "
+                         f"{rect['opening_width']:.2f} m wide.")
     return "\n".join(lines)
 
 

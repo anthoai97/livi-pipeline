@@ -11,7 +11,7 @@ from app.rules.pipeline_shared import (
     ceiling_mount_z,
     is_wall_aligned_asset,
     matches_category_keywords,
-    nearest_wall,
+    nearest_axis_wall,
     requires_window_clearance,
 )
 from app.rules.protected_paths import protected_path_polygon
@@ -176,7 +176,7 @@ def compute_wall_mount_violations(
             or pos[2] < 0
             or pos[2] + height > wall_height + 1e-6
             or not _is_near_cardinal(rotation_z)
-            or _back_wall_name(rotation_z) != nearest_wall(pos, boundary).name
+            or _back_wall_name(rotation_z) != nearest_axis_wall(pos, boundary).facing
         ):
             violations.append(uid)
     return violations
@@ -231,7 +231,7 @@ def compute_wall_aligned_violations(
             continue
         if _matches_item(item, SOFA_ROLE_KEYWORDS) or is_freestanding_studio_media_support(item.asset):
             continue
-        if _back_wall_name(item.rot_z) != nearest_wall(item.pos, boundary).name:
+        if _back_wall_name(item.rot_z) != nearest_axis_wall(item.pos, boundary).facing:
             violations.append(item.uid)
             continue
         wall_gap = room_poly.exterior.distance(item.poly)
@@ -279,12 +279,13 @@ def compute_protected_path_violations(
                         "max_x": float(item_max_x),
                         "max_y": float(item_max_y),
                     },
-                    "translations_to_clear_m": {
+                    # A routed path is not a band: no single move along an axis is guaranteed to clear it.
+                    **({"translations_to_clear_m": {
                         "left": float(path_min_x - item_max_x),
                         "right": float(path_max_x - item_min_x),
                         "down": float(path_min_y - item_max_y),
                         "up": float(path_max_y - item_min_y),
-                    },
+                    }} if path.get("axis") in ("x", "y") else {}),
                 }
             )
     return violations

@@ -40,7 +40,7 @@ from pydantic import BaseModel, Field
 
 from app import contracts
 from app.preview import png_bytes, render_plan
-from app.rules.door_geometry import format_door_for_prompt
+from app.rules.door_geometry import door_opening_rect, format_door_for_prompt, rect_bounds
 from app.rules.layout.analysis import analyze_layout, final_layout_check, findings_by_level
 from app.rules.layout.bedroom import BED_TWO_SIDED_MIN_WIDTH_M
 from app.rules.layout.comfort import comfort_placement_facts, media_viewing_measurements
@@ -64,7 +64,7 @@ from app.rules.layout_rules import (
 from app.rules.placement_mode import placement_mode_for_asset
 from app.rules.planner.feasibility_digest import format_feasibility_digest_for_prompt
 from app.rules.planner.intent_packet import format_intent_packet_for_prompt, intent_prompt_text
-from app.rules.planner.room_facts import format_room_facts_for_prompt
+from app.rules.planner.room_facts import format_room_facts_for_prompt, format_room_shape
 from app.rules.planner.taxonomy import normalize_category
 from app.rules.room_policy import STUDIO_DINING_MIN_AREA_SQM
 from app.rules.selection.catalog import _asset_matches_brand_preferences, _price_constraint_category_matches, catalog_asset
@@ -593,7 +593,7 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
     # so the model provider's prompt cache covers the longest prefix.
     prompt = f"""Select furniture assets matching the user's style and design vision.
 
-ROOM: {room_width:.2f}m x {room_depth:.2f}m | Furniture area: {furniture_area:.2f} sqm
+ROOM: {format_room_shape(room["facts"])}, {float(room["facts"]["area"]):.2f} sqm | Furniture area: {furniture_area:.2f} sqm
 BUDGET: ${budget:.2f}
 INTENT: {intent_prompt_text(intent, request.user_intent)}
 {format_intent_packet_for_prompt(intent)}
@@ -1269,11 +1269,25 @@ def _opening_lines(room: Record) -> list[str]:
         format_door_for_prompt(index, door, boundary=room["room_vertices"], room_area=room_area)
         for index, door in enumerate(room["room_doors"])
     ]
-    lines += [
-        f"- window-{index}: center={window.get('center')}, width={float(window.get('width') or 0):.2f}m, "
-        f"depth={float(window.get('depth') or 0):.2f}m"
-        for index, window in enumerate(room["room_windows"])
-    ]
+    for index, window in enumerate(room["room_windows"]):
+        opening = door_opening_rect(window, boundary=room["room_vertices"], room_area=room_area)
+        lines.append(f"- window-{index}: wall {opening['wall']} ({opening['wall_label']}), "
+                     f"center=[{opening['opening_center'][0]:.2f}, {opening['opening_center'][1]:.2f}], "
+                     f"width={opening['opening_width']:.2f}m")
+    return lines
+
+
+def _path_lines(room: Record) -> list[str]:
+    """Each protected path for the review prompt: a straight band's extent, or a routed path's centerline."""
+    lines = []
+    for path in room["protected_paths"]:
+        walls = " and ".join(f"wall {index} ({label})" for index, label in zip(path["wall_pair"], path["wall_labels"]))
+        if path["axis"] == "routed":
+            shape = "routed along " + " -> ".join(f"({x:.2f}, {y:.2f})" for x, y in path["centerline"])
+        else:
+            min_x, min_y, max_x, max_y = rect_bounds(path)
+            shape = f"straight band x=[{min_x:.2f}, {max_x:.2f}] y=[{min_y:.2f}, {max_y:.2f}]"
+        lines.append(f"- {path['id']}: between {walls}, {float(path['required_width']):.2f} m wide, {shape}")
     return lines
 
 
@@ -1447,7 +1461,6 @@ def _arrangement_prompt(state: VariantState, image: bytes) -> list[str | bytes]:
     and `_option_facts`, then its plan image."""
     shared = state["shared"]
     request, room, intent = shared["request"], shared["room"], shared["intent"]
-    room_width, room_depth = request.room_area
     requested = [f"{item['label']} x{item['count']}" for item in intent.get("requested_items") or []]
     pieces = [
         f"- {_key(a)} ({normalize_category(a.get('category'))}), W×D×H={float(a.get('width') or 0):.2f}×"
@@ -1458,7 +1471,7 @@ def _arrangement_prompt(state: VariantState, image: bytes) -> list[str | bytes]:
                         for key, pose in sorted(state["layout"].items())})
     text = f"""You are an interior designer giving a room design its final review. The layout solver arranged this room as shown. Review it.
 
-The image is the layout drawn top-down: +x right, +y up, 1 m grid. Walls are dark, doors brown with their swing, windows blue. Each piece is its footprint labeled with its instance key; the line ending in a dot points to its front. Blue: floor furniture; green: items on a support; orange: wall-mounted; tan: rugs; grey outline: ceiling items.
+The image is the layout drawn top-down: +x right, +y up, 1 m grid. Walls are dark, doors brown with their swing, windows blue, protected circulation paths light grey bands. Each piece is its footprint labeled with its instance key; the line ending in a dot points to its front. Blue: floor furniture; green: items on a support; orange: wall-mounted; tan: rugs; grey outline: ceiling items.
 
 Review the layout as a room, against the request, these design rules, and the layout rules below:
 {design_rules_block(room["room_type"])}
@@ -1470,19 +1483,19 @@ REQUEST: {request.user_intent}
 REQUESTED ITEMS: {", ".join(requested) or "none"}
 STYLE HINTS: {", ".join(intent.get("style_hints") or []) or "none"}
 
-{coordinate_system_block(room_width, room_depth)}
+{coordinate_system_block(room["room_vertices"])}
 
 {build_rules_block(include_definitions=True, room_type=room["room_type"])}
 
-ROOM: {room["room_type"].replace("_", " ")}, {room_width:.2f} m x {room_depth:.2f} m, wall height {room["wall_height"]:.2f} m
+ROOM: {room["room_type"].replace("_", " ")}, {format_room_shape(room["facts"])}, {float(room["facts"]["area"]):.2f} sqm, wall height {room["wall_height"]:.2f} m
 ROOM BOUNDARY VERTICES:
 {json.dumps(room["room_vertices"])}
 
 DOORS AND WINDOWS:
 {chr(10).join(_opening_lines(room)) or "None"}
 
-PROTECTED CIRCULATION PATHS:
-{json.dumps(room["protected_paths"]) if room["protected_paths"] else "None"}
+PROTECTED CIRCULATION PATHS (keep furniture out of them):
+{chr(10).join(_path_lines(room)) or "None"}
 
 PIECES:
 {chr(10).join(pieces)}

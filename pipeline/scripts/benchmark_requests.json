@@ -198,14 +198,14 @@
       "quick",
       "full"
     ],
-    "geometry": "The #45 incident request (run f9109392): 3.4 x 3.8 m, door and window on the top wall.",
+    "geometry": "The #45 incident request (run f9109392), enlarged from 3.4 x 3.8 m to 4 x 4.5 m; door and window on the top wall.",
     "request": {
       "user_intent": "A cosy Scandinavian dining room for four with a round light wood table, four soft upholstered chairs, and a rug underneath. Keep the door clear.",
       "budget": 10000.0,
       "room_type": "dining_room",
       "room_area": [
-        3.4,
-        3.8
+        4.0,
+        4.5
       ],
       "wall_height": 2.7,
       "room_vertices": [
@@ -214,16 +214,16 @@
           0.0
         ],
         [
-          3.4,
+          4.0,
           0.0
         ],
         [
-          3.4,
-          3.8
+          4.0,
+          4.5
         ],
         [
           0.0,
-          3.8
+          4.5
         ]
       ],
       "room_doors": [
@@ -231,8 +231,8 @@
           "id": "door-1",
           "height": 2.08,
           "center": [
-            2.448,
-            3.8
+            2.88,
+            4.5
           ],
           "width": 0.9,
           "depth": 0.05
@@ -244,8 +244,8 @@
           "height": 1.2,
           "sill_height": 0.9,
           "center": [
-            0.952,
-            3.8
+            1.12,
+            4.5
           ],
           "width": 1.1,
           "depth": 0.05

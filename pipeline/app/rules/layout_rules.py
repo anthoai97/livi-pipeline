@@ -15,12 +15,11 @@ Tier model
 Use ``build_rules_block`` to assemble the slice each node needs.
 """
 
-from app.rules.pipeline_shared import WALL_MOUNT_Z, room_bounds, room_walls
+from app.rules.pipeline_shared import DOOR_CLEARANCE, WALL_MOUNT_Z, room_bounds, room_walls
 from app.rules.planner.fit_policy import SECTIONAL_MIN_ROOM  # noqa: F401 (re-exported)
 from app.rules.layout.bedroom import (
     BED_ACCESS_MIN_M,
     BED_HEADBOARD_MAX_GAP_M,
-    BED_TWO_SIDED_MIN_WIDTH_M,
     BEDROOM_TV_MAX_FACING_DEG,
     BEDSIDE_HEAD_ZONE_M,
     BEDSIDE_MAX_GAP_M,
@@ -31,11 +30,7 @@ from app.rules.layout.constants import (
     DINING_CHAIR_FACING_MAX_DELTA_DEG,
     DINING_CHAIR_GAP_M,
     DINING_CHAIR_TABLE_MAX_GAP_M,
-    DINING_LIGHT_TABLE_MAX_GAP_M,
     DINING_LIGHT_TABLE_MIN_GAP_M,
-    DINING_PULLOUT_M,
-    DINING_RUG_EXTENSION_M,
-    DINING_TWO_SIDED_MIN_DEPTH_M,
     FLOOR_LAMP_REACH_RANGE_M,
     TASK_CHAIR_DESK_MAX_GAP_M,
     TASK_CHAIR_FACING_MAX_DELTA_DEG,
@@ -46,14 +41,13 @@ from app.rules.layout.comfort import (
     SOFA_MEDIA_ACCESS_MIN_M,
     TV_VIEW_WIDTH_RANGE,
 )
-from app.rules.selection.constants import DINING_LIGHT_TABLE_INSET_M
 
-# Circulation widths (meters). Match the reference spec: 36 in / 24 in.
+# Circulation widths (meters). Match the reference spec: 36 in / 22 in.
 PATH_MAJOR_M = 0.91
-PATH_SECONDARY_M = 0.60
+PATH_SECONDARY_M = 0.56
 SEATING_CENTER_FIELD_M = 0.46  # 18 in radius around the conversation centroid
-SOFA_COFFEE_TABLE_DISTANCE_RANGE_M = (0.38, 0.50)  # 15 to 20 in: reachable from the seat with legroom
-SOFA_BACK_WALL_DISTANCE_RANGE_M = (0.0, 0.15)  # flush is fine
+SOFA_COFFEE_TABLE_DISTANCE_RANGE_M = (0.46, 0.61)
+SOFA_BACK_WALL_DISTANCE_RANGE_M = (0.08, 0.15)
 WALL_FLUSH_MAX_GAP_M = 0.2
 
 
@@ -80,19 +74,16 @@ DESIGN_RULES = {
         "A floor lamp stands right at the end of the seat or bed it lights, within arm's reach, not across the room.",
     ),
     "living_room": (
-        (f"Leave the roomy end of {SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[0]:.2f}-{SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[1]:.2f} m "
+        (f"Leave {SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[0]:.2f}-{SOFA_COFFEE_TABLE_DISTANCE_RANGE_M[1]:.2f} m "
          "between the sofa and the coffee table, and about 0.45 m between an accent chair and the coffee table."),
         "Accent chairs face the coffee table and the TV or sofa, not a wall.",
     ),
     "bedroom": (
         "The bed's headboard is against a wall, with access from its sides and foot.",
-        "The bed is seen from the door but not in line with it.",
     ),
     "studio": (
         "The bed's headboard is against a wall, with access from its sides and foot.",
-        "The bed takes the corner of the room farthest from the door.",
-        "The sofa's back or a shelf separates sitting from sleeping.",
-        "A dining table stands by the entry wall.",
+        "Sleeping, sitting and dining each take their own part of the room.",
     ),
     "dining_room": (
         "The table sits where every chair can pull out, with a clear path around it.",
@@ -136,7 +127,7 @@ GEOMETRY_DEFINITIONS = f"""DEFINITIONS:
 - Room boundary: closed finished-floor polygon. All assets stay inside it.
 - Fixed obstacles: columns, fireplaces, built-ins, radiators, vents, stair openings.
 - Openings: doors and windows cut into walls; doors always keep a clear zone, while windows stay clear only for assets that require window clearance.
-- Doorway clear zone: rectangle in front of each doorway, full opening width wide and as deep as the opening is wide (the door's swing), kept furniture-free.
+- Doorway clear zone: rectangle in front of each doorway, full opening width by {DOOR_CLEARANCE:.2f}m deep, kept furniture-free.
 - Major path: circulation band between groups, ≥{PATH_MAJOR_M:.2f}m clear.
 - Secondary path: access band to a single piece, ≥{PATH_SECONDARY_M:.2f}m clear.
 - Hard no-place zone: union of all fixed obstacles, doorway clear zones, protected paths, and any window footprint that the current asset must keep clear.
@@ -155,9 +146,9 @@ GEOMETRY_DEFINITIONS = f"""DEFINITIONS:
 P0_RULES = f"""P0 — ARCHITECTURE & LOCAL HARD CONSTRAINTS (must never be violated):
 - Every asset stays inside the room boundary.
 - No asset overlaps a fixed obstacle or door.
-- No asset sits inside a doorway clear zone (in front of any door, as deep as the door is wide).
+- No asset sits inside a doorway clear zone ({DOOR_CLEARANCE:.2f}m in front of any door).
 - Window rule: floor assets with z≤0.1 may sit under / in front of a window, including sofas; assets with z>0.1 and TV / tv_stand / media_unit pieces must keep windows clear.
-- Z-axis: floor items z=0; wall-mounted items snap to a wall at z={WALL_MOUNT_Z:.2f}m (a wall-mounted TV centers its screen at seated eye level, or reclined eye level when it serves a bed, above any furniture under it) and must keep their full height within the room's wall height; ceiling-mounted items hang so the asset top sits at the room's wall height; items resting on another asset (bowl on table, vase on shelf, lamp on side_table, pillow on sofa, etc.) declare `on_top_of` with the parent uid and leave z=0 — the runtime computes z from the parent's top surface (seat height for sofas/chairs/beds)."""
+- Z-axis: floor items z=0; wall-mounted items snap to a wall at z={WALL_MOUNT_Z:.2f}m (a wall-mounted TV centers its screen at seated eye level, above any furniture under it) and must keep their full height within the room's wall height; ceiling-mounted items hang so the asset top sits at the room's wall height; items resting on another asset (bowl on table, vase on shelf, lamp on side_table, pillow on sofa, etc.) declare `on_top_of` with the parent uid and leave z=0 — the runtime computes z from the parent's top surface (seat height for sofas/chairs/beds)."""
 
 
 P1_RULES = f"""P1 — ROOM ZONING, CIRCULATION & DESIGNABILITY (the room must be designable):
@@ -209,8 +200,7 @@ _DINING_SEAT = (
     f"{DINING_CHAIR_GAP_M:.2f} m from it (at most {DINING_CHAIR_TABLE_MAX_GAP_M:.2f} m), and its FRONT ray crosses the tabletop."
 )
 _DINING_PITCH = (
-    "Each seat takes max(0.60 m, chair width + 0.05 m) of its table edge; a table under "
-    f"{DINING_TWO_SIDED_MIN_DEPTH_M:.2f} m deep seats one long side only, three seats need a long edge, "
+    "Each seat takes max(0.60 m, chair width + 0.05 m) of its table edge; three seats need a long edge, "
     "and round or oval tables space seats evenly around them."
 )
 _DESK = (
@@ -223,46 +213,47 @@ ROOM_LAYOUT_RULES = {
          "living, dining and work rules apply only to selected groups."),
         "The bed's FRONT points to its foot and its BACK is the headboard; depth runs head to foot, width across the bed.",
         f"The headboard stands within {BED_HEADBOARD_MAX_GAP_M:.2f} m of a usable wall, facing into the room within 12 degrees.",
-        (f"Keep {BED_ACCESS_MIN_M:.2f} m clear along the foot ({PATH_MAJOR_M:.2f} m when it is the route to the door), "
-         f"and along both sides of a bed {BED_TWO_SIDED_MIN_WIDTH_M:.1f} m wide or more; a narrower bed, or any bed "
-         "in a compact bedroom, needs one clear side."),
-        (f"Nightstands stand beside the head within {BEDSIDE_MAX_GAP_M:.2f} m; only bedside pieces may use the top "
-         f"{BEDSIDE_HEAD_ZONE_M:.2f} m of a side strip. A bedside lamp declares on_top_of its nightstand."),
+        (f"Keep {BED_ACCESS_MIN_M:.2f} m clear along the foot and along at least one side; prefer both sides clear, "
+         "and keep both when the brief asks. A compact bedroom may have one clear side, never none."),
+        (f"Nightstands stand beside the head within {BEDSIDE_MAX_GAP_M:.2f} m, never detached or at the foot; only "
+         f"bedside pieces may use the top {BEDSIDE_HEAD_ZONE_M:.2f} m of a side strip. A bedside lamp declares "
+         "on_top_of its nightstand."),
         f"Keep {STORAGE_FRONT_M:.2f} m clear in front of each dresser, wardrobe, cabinet or storage unit.",
         (f"A TV stands toward the bed's foot, facing the bed within {BEDROOM_TV_MAX_FACING_DEG:.0f} degrees, "
          "and its stand keeps the foot strip clear."),
         _DESK,
         ("Group bedside pieces and lighting with the bed, and storage, mirror or reading pieces into useful areas, "
-         "not scattered on distant walls."),
-        "Use the full model half-extents with a 0.02-0.05 m gap from walls and neighbouring pieces; never round them down.",
+         "not scattered on distant walls. Empty floor is not a defect; layout never adds pieces."),
+        ("Use the full model half-extents with a 0.02-0.05 m gap from walls and neighbouring pieces; never round them "
+         "down. For a nightstand parallel to the bed, the sideways distance between their centers exceeds bed width / 2 + "
+         "nightstand width / 2."),
     )),
     "dining_room": ("DINING ROOM RULES (take precedence over living-room guidance):", (
         ("One standalone dining table anchors the dining chairs; no sofa, coffee table, media wall or bed is required. "
          "Place the table and chairs first, then storage and decor."),
         _DINING_SEAT,
         _DINING_PITCH + " For four chairs prefer two on each long side.",
-        (f"Keep {DINING_PULLOUT_M:.2f} m clear behind each chair to pull it out ({DINING_ACCESS_MIN_M:.2f} m where a door "
-         "route or protected path passes behind), inside the room and free of other furniture."),
+        (f"Keep {DINING_ACCESS_MIN_M:.2f} m clear behind each chair to pull it out, inside the room and free of other "
+         "furniture."),
         f"A sideboard or cabinet backs onto a usable wall with {STORAGE_FRONT_M:.2f} m clear in front.",
-        (f"A pendant or chandelier centers over the table, {DINING_LIGHT_TABLE_MIN_GAP_M:.2f}-"
-         f"{DINING_LIGHT_TABLE_MAX_GAP_M:.2f} m from the tabletop to its lowest point; never rescale the model."),
-        f"A rug, when selected, extends {DINING_RUG_EXTENSION_M:.2f} m past each table edge, so pulled-out chairs stay on it.",
+        (f"A pendant or chandelier centers over the table, at least {DINING_LIGHT_TABLE_MIN_GAP_M:.2f} m from the "
+         "tabletop to its lowest point; never rescale the model."),
+        "A rug, when selected, lies centered under the table and every seated chair, ideally reaching into the pull-out space.",
         ("Wall art hangs parallel to a usable wall, clear of openings, related to the table or sideboard. "
          "No floor lamp stands where a chair pulls out."),
     )),
-    "studio": ("STUDIO RULES (sleeping, sitting and any dining group share one room):", (
-        ("Place the bed, sofa and any dining table first as separate anchors, reserving their access together, then "
+    "studio": ("STUDIO RULES (sleeping, sitting and dining share one room):", (
+        ("Place the bed, sofa and dining table first as separate anchors, reserving their access together, then "
          "their chairs, bedside pieces and accessories. The bed and sofa use different wall spans."),
         (f"The headboard stands within {BED_HEADBOARD_MAX_GAP_M:.2f} m of a usable wall, facing in within 12 degrees. "
-         f"Keep {BED_ACCESS_MIN_M:.2f} m clear along the foot and one side, both sides for a bed "
-         f"{BED_TWO_SIDED_MIN_WIDTH_M:.1f} m wide or more outside a compact studio. Nightstands stand beside the head "
+         f"Keep {BED_ACCESS_MIN_M:.2f} m clear along the foot and at least one side. Nightstands stand beside the head "
          f"within {BEDSIDE_MAX_GAP_M:.2f} m."),
         _DINING_SEAT,
         _DINING_PITCH,
-        (f"Keep {DINING_PULLOUT_M:.2f} m clear behind each dining chair, free of the bed, sofa and other furniture. "
+        (f"Keep {DINING_ACCESS_MIN_M:.2f} m clear behind each dining chair, free of the bed, sofa and other furniture. "
          "For two diners, compare opposing and adjacent seats on both table axes; no chair backs onto a wall."),
         ("Each rug, light and surface serves one group: a sitting rug its sofa and table, a dining rug its table and "
-         f"chairs, a pendant its own table at {DINING_LIGHT_TABLE_MIN_GAP_M:.2f}-{DINING_LIGHT_TABLE_MAX_GAP_M:.2f} m above it."),
+         f"chairs, a pendant its own table at least {DINING_LIGHT_TABLE_MIN_GAP_M:.2f} m above it."),
         ("A TV serves the sofa by default, or the bed or both when requested; the TV and each viewer face each other "
          "within 45 degrees. For shared viewing the bed and sofa face the same TV from separate wall spans."),
         "Prefer a wall-backed media group; a TV stand may stand free between groups as a divider, its back not facing another zone.",
@@ -334,11 +325,11 @@ def build_selection_guidance_block(
     budget, access bands, sofa–table pairings, etc.).
     """
     bed_access = (
-        f"Reserve a usable headboard wall, {BED_ACCESS_MIN_M:.2f} m at the bed's foot, and {BED_ACCESS_MIN_M:.2f} m on "
-        f"both sides of a bed {BED_TWO_SIDED_MIN_WIDTH_M:.1f} m wide or more (one side for a narrower bed or in a compact room)."
+        f"Reserve a usable headboard wall, {BED_ACCESS_MIN_M:.2f} m at the bed's foot and {BED_ACCESS_MIN_M:.2f} m on at "
+        "least one side; prefer both sides."
     )
     dining_access = (
-        f"Allow chair depth + {DINING_CHAIR_GAP_M:.2f} m table gap + {DINING_PULLOUT_M:.2f} m pull-out on each occupied "
+        f"Allow chair depth + {DINING_CHAIR_GAP_M:.2f} m table gap + {DINING_ACCESS_MIN_M:.2f} m pull-out on each occupied "
         "table edge, with doors and protected paths clear."
     )
     if room_type == "studio":
@@ -356,9 +347,12 @@ def build_selection_guidance_block(
             ("Choose one complete bed by its full model width and depth, not an inferred mattress size; never a "
              "separate frame, mattress or bunk."),
             bed_access,
+            ("Bedside lighting and clothing storage are suggested, not required: in a spacious bedroom prefer a bedside "
+             "pair and consider a dressing or reading area; honor minimal, single-bedside and no-storage requests."),
             "Nightstands stand beside the head, and each lamp must fit its own support.",
             f"A dresser, wardrobe or cabinet needs {STORAGE_FRONT_M:.2f} m clear in front.",
-            "A TV needs a view from the bed's foot and a support that keeps bed access clear.",
+            ("A TV and a desk with its task chair are opt-in, selected only when requested. A TV needs a view from the "
+             "bed's foot and a support that keeps bed access clear."),
             f"A desk and task chair are one pair, with {BED_ACCESS_MIN_M:.2f} m behind the chair to pull it out.",
             "A sofa, coffee table or media group is not required.",
         ))
@@ -367,12 +361,11 @@ def build_selection_guidance_block(
             "Choose one standalone dining table and dining chairs of matching scale.",
             _DINING_PITCH,
             dining_access,
-            f"A sideboard or cabinet needs {STORAGE_FRONT_M:.2f} m clear in front.",
-            (f"A pendant or chandelier hangs {DINING_LIGHT_TABLE_MIN_GAP_M:.2f}-{DINING_LIGHT_TABLE_MAX_GAP_M:.2f} m above "
-             "the tabletop, measured with its full model height below the ceiling, and stays "
-             f"{DINING_LIGHT_TABLE_INSET_M:.2f} m inside each table edge; never assume an adjustable hanger."),
-            f"A rug extends {DINING_RUG_EXTENSION_M:.2f} m past each table edge.",
-            "Choose a smaller table and chairs before cutting a seat; never cut a stated seat count.",
+            f"A suggested sideboard or cabinet needs {STORAGE_FRONT_M:.2f} m clear in front.",
+            (f"A suggested pendant or chandelier leaves at least {DINING_LIGHT_TABLE_MIN_GAP_M:.2f} m above the tabletop, measured "
+             "with its full model height below the ceiling; never assume an adjustable hanger."),
+            "A requested rug covers the table and the seated chairs.",
+            "Choose a smaller table and chairs before cutting an optional seat; never cut a stated seat count.",
         ))
     min_w, min_d = SECTIONAL_MIN_ROOM
     sectional_ok = (room_width >= min_w and room_depth >= min_d) or (

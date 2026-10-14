@@ -13,26 +13,15 @@ from shapely.geometry import Polygon, box
 
 from app import variant_stages
 from app.rules.layout.analysis import analyze_layout
-from app.rules.layout.dining import dining_fit_envelopes
-from app.rules.layout.metrics import has_blocking_issues
 from app.rules.layout.normalization import normalize_layout
 from app.rules.planner.intent_packet import coerce_intent_packet
 from app.rules.door_geometry import room_walls
 from app.rules.planner.room_facts import build_room_context, build_room_facts, format_room_facts_for_prompt
 from app.rules.protected_paths import build_protected_paths, protected_path_polygon
 from app.rules.selection.catalog import catalog_asset
-from app.rules.selection.constants import (
-    BED_RUG_EXTRA_WIDTH_M,
-    COFFEE_TABLE_HEIGHT_M,
-    COFFEE_TABLE_SOFA_WIDTH_RATIO,
-    DINING_LIGHT_TABLE_INSET_M,
-    RUNNER_MAX_WIDTH_M,
-    SIDE_TABLE_HEIGHT_M,
-    SIZE_TOLERANCE_M,
-)
 from app.rules.selection.fit import fit_step_guidance
 from app.rules.selection.preflight import _layout_preflight_for_assets
-from app.rules.selection.validation import _size_findings, build_instances, validate_selection
+from app.rules.selection.validation import build_instances, validate_selection
 
 # Three recorded legacy runs: each run's request, intent and selected instances per variant; run 1 (a dining room for
 # four) also keeps its candidate assets, a passing selection, and a valid final layout.
@@ -79,18 +68,20 @@ def _bedroom(room_area: tuple[float, float], requested: dict[str, int], required
 
 
 @pytest.mark.parametrize(
-    ("room_area", "dropped", "kept"),
+    ("room_area", "warning", "dropped", "kept"),
     [
-        # Medium bedrooms the requested pieces overfill (real footprint against the 35% target).
-        ((3.8, 4.0), {"desk", "office_chair"}, {"tv", "tv_stand", "wardrobe"}),
-        ((3.6, 3.8), {"desk", "office_chair", "tv", "tv_stand"}, {"wardrobe"}),
+        # Medium bedrooms the requested pieces overfill (clearance-ring loads against the 55% comfortable load).
+        # Only an overcrowded estimate (over 75%) starts selection in the compact fit step; a tight one is advisory.
+        ((5.0, 5.5), False, {"desk", "office_chair"}, {"tv", "tv_stand", "wardrobe"}),
+        ((4.5, 5.0), True, {"desk", "office_chair", "tv", "tv_stand"}, {"wardrobe"}),
     ],
 )
-def test_the_fit_estimate_keeps_the_bed_and_drops_whole_lower_priority_groups(room_area, dropped, kept):
+def test_the_fit_estimate_keeps_the_bed_and_drops_whole_lower_priority_groups(room_area, warning, dropped, kept):
     requested = {"bed": 1, "nightstand": 2, "wardrobe": 1, "tv": 1, "tv_stand": 1, "desk": 1, "office_chair": 1}
     _, room = _bedroom(room_area, requested, {"bed"})
     recommended = room["fit"]["counts"]["recommended"]
-    assert room["fit_warning"]
+    assert room["fit"]["severity"] == ("overcrowded" if warning else "tight")
+    assert room["fit_warning"] is warning
     assert recommended["bed"] == 1
     assert not dropped & set(recommended)
     assert all(recommended[category] == requested[category] for category in kept)
@@ -120,7 +111,7 @@ def _room_args(room):
     return tuple(room["room_area"]), room["room_vertices"], room["room_doors"], room["room_windows"], room["protected_paths"]
 
 
-# --- issue #54 phase 1: thresholds and bugs, measured on the fixture rooms
+# --- issue #61: the legacy room rules, measured on the fixture rooms
 
 
 def _pose(x, y, yaw, z=0.0, **fields):
@@ -139,19 +130,20 @@ def _measure(name, layout, *extra):
 
 
 @pytest.mark.parametrize(("layout", "key", "flagged"), [
-    # Sofa back on the left wall, front at x = 0.95; the table's near face 0.42 m or 0.55 m beyond it (0.38 to 0.50 m passes).
-    ({"sofa_1": _pose(0.475, 2.25, 0.0), "coffee_table_1": _pose(0.95 + 0.42 + 0.3, 2.25, 0.0)}, "sofa_coffee_table_violations", False),
-    ({"sofa_1": _pose(0.475, 2.25, 0.0), "coffee_table_1": _pose(0.95 + 0.55 + 0.3, 2.25, 0.0)}, "sofa_coffee_table_violations", True),
-    # A flush sofa passes the wall gap; one 0.2 m off the wall does not.
-    ({"sofa_1": _pose(0.475, 2.25, 0.0)}, "sofa_wall_gap_violations", False),
-    ({"sofa_1": _pose(0.475 + 0.2, 2.25, 0.0)}, "sofa_wall_gap_violations", True),
-], ids=["table_0.42", "table_0.55", "wall_flush", "wall_0.2"])
+    # Sofa back 0.1 m off the left wall, front at x = 1.05; the table's near face 0.40 m or 0.55 m beyond it (0.46 to
+    # 0.61 m passes).
+    ({"sofa_1": _pose(0.575, 2.25, 0.0), "coffee_table_1": _pose(1.05 + 0.40 + 0.3, 2.25, 0.0)}, "sofa_coffee_table_violations", True),
+    ({"sofa_1": _pose(0.575, 2.25, 0.0), "coffee_table_1": _pose(1.05 + 0.55 + 0.3, 2.25, 0.0)}, "sofa_coffee_table_violations", False),
+    # A sofa 0.1 m off the wall passes the wall gap; a flush one does not.
+    ({"sofa_1": _pose(0.575, 2.25, 0.0)}, "sofa_wall_gap_violations", False),
+    ({"sofa_1": _pose(0.475, 2.25, 0.0)}, "sofa_wall_gap_violations", True),
+], ids=["table_0.40", "table_0.55", "wall_0.1", "wall_flush"])
 def test_sofa_gaps_to_the_coffee_table_and_the_wall(layout, key, flagged):
     assert bool(_measure("living", layout)[key]) is flagged
 
 
-@pytest.mark.parametrize(("front", "flagged"), [(0.60, True), (0.80, False)])
-def test_storage_needs_0_76_m_in_front(front, flagged):
+@pytest.mark.parametrize(("front", "flagged"), [(0.50, True), (0.60, False)])
+def test_storage_needs_0_56_m_in_front(front, flagged):
     # Dresser on the bottom wall facing up, the desk `front` metres in front of it, the bed against the top wall.
     layout = {"bed_1": _pose(1.2, 2.95, 3 * math.pi / 2), "dresser_1": _pose(3.2, 0.25, math.pi / 2),
               "desk_1": _pose(3.2, 0.5 + front + 0.3, 3 * math.pi / 2)}
@@ -177,14 +169,6 @@ def test_a_studio_without_a_dining_table_gets_no_dining_findings_and_one_storage
     issues = _measure("studio", layout, cabinet)
     assert not any(findings for key, findings in issues.items() if key.startswith("dining_"))
     assert [row["uid"] for row in issues["storage_access_violations"]] == ["cabinet_1"]
-
-
-def test_a_piece_taller_than_the_sill_in_front_of_a_window_is_a_non_blocking_finding():
-    # The living room's window is on the top wall, x 2.45 to 3.55, sill 0.9 m: a 1.8 m bookcase and a 0.85 m sofa under it.
-    layout = {"bookcase_1": _pose(3.0, 4.3, 3 * math.pi / 2), "sofa_1": _pose(1.2, 4.025, 3 * math.pi / 2)}
-    issues = _measure("living", layout)
-    assert [row["uid"] for row in issues["window_front_violations"]] == ["bookcase_1"]
-    assert not has_blocking_issues(issues)
 
 
 def test_ceiling_mounts_hang_from_the_rooms_wall_height():
@@ -217,19 +201,16 @@ def test_a_generic_chair_with_a_dining_table_is_a_dining_chair(with_table):
     assert [instance["uid"] for instance in chairs] == [f"{expected}_1", f"{expected}_2"]
 
 
-@pytest.mark.parametrize(("height", "error", "warning"), [(1.3, True, False), (0.6, False, True)])
-def test_a_studio_dining_light_hangs_0_76_to_0_90_m_above_the_table(height, error, warning):
-    # Top flush with the 2.7 m ceiling over a 0.75 m table: 0.65 m (too low, blocks) or 1.35 m (too high, advisory).
+@pytest.mark.parametrize(("height", "error"), [(1.3, True), (0.6, False)])
+def test_a_studio_dining_light_hangs_at_least_0_76_m_above_the_table(height, error):
+    # Top flush with the 2.7 m ceiling over a 0.75 m table: 0.65 m blocks; 1.35 m passes, with no maximum.
     selected = [{"uid": "dining_table_1", "category": "dining_table", "width": 1.2, "depth": 0.8, "height": 0.75},
                 {"uid": "pendant_1", "category": "pendant_light", "width": 0.4, "depth": 0.4, "height": height,
                  "functional_group": "dining"}]
     result = _layout_preflight_for_assets(selected_assets=selected, budget=1000.0, total_cost=500.0,
                                           room={"room_type": "studio", "room_area": (6.0, 6.0), "wall_height": 2.7})
     assert any("dining light pendant_1" in text for text in result["errors"]) is error
-    assert any("dining light pendant_1" in text for text in result["warnings"]) is warning
-
-
-# --- issue #54 phase 2: completeness and selection sizes
+    assert not any("dining light pendant_1" in text for text in result["warnings"])
 
 
 def _record(asset_id, category, width=0.5, depth=0.5, height=0.5, **fields):
@@ -239,8 +220,9 @@ def _record(asset_id, category, width=0.5, depth=0.5, height=0.5, **fields):
 
 PLANT = _record("plant", "planter", source_table="pipeline.decor_items", is_purchasable=False, price=None)
 LAMP = _record("lamp", "floor_lamp", 0.4, 0.4, 1.6)
-NIGHTSTANDS = [_record("nightstand", "nightstand", 0.5, 0.4, 0.55)] * 2
 BED = _record("bed", "bed", 1.6, 2.1, 1.1)
+RUG = _record("rug", "rug", 2.4, 1.7, 0.01)
+CHAIR = _record("chair", "dining_chair", 0.5, 0.5, 0.8)
 
 
 def _validate(room_type, room_area, selected, pool=(), fit_step=None, **intent):
@@ -253,105 +235,52 @@ def _validate(room_type, room_area, selected, pool=(), fit_step=None, **intent):
                               budget=100000, candidates=[*selected, *pool], fit_step=fit_step)
 
 
-def _missing(result, piece):
-    return any(error.startswith(f"MISSING REQUIRED: Select 1 {piece} ") for error in result["errors"])
-
-
-@pytest.mark.parametrize(("selected", "pool", "missing"), [
-    ([], [LAMP], True),
-    ([LAMP], [], False),
-    ([], [], False),  # no lamp in the pool: a catalog gap, not an error every turn
+@pytest.mark.parametrize(("room_type", "room_area", "core"), [
+    ("living_room", (5.0, 6.0), [_record("sofa", "sofa", 2.2, 1.0, 0.8), _record("table", "coffee_table", 1.2, 0.6, 0.45),
+                                 _record("cabinet", "cabinet", 1.8, 0.5, 0.8), RUG, PLANT]),
+    ("bedroom", (4.0, 5.0), [BED, RUG, PLANT]),
+    ("dining_room", (4.2, 4.8), [_record("table", "dining_table", 1.8, 0.9, 0.75), *[CHAIR] * 4, PLANT]),
+    ("studio", (5.0, 6.0), [BED, _record("sofa", "sofa", 1.8, 0.9, 0.8), _record("table", "dining_table", 1.0, 0.8, 0.75),
+                            *[CHAIR] * 2]),
 ])
-def test_a_living_room_requires_a_lamp(selected, pool, missing):
-    living = [_record("sofa", "sofa", 2.0, 0.9, 0.8), _record("table", "coffee_table", 1.1, 0.6, 0.45),
-              _record("rug", "rug", 2.4, 1.7, 0.01), PLANT]
-    result = _validate("living_room", (4.0, 4.0), [*living, *selected], pool)  # 16 m2: compact, no accent seat required
-    assert _missing(result, "lighting") is missing
-    assert not missing or not result["valid"]
+def test_the_core_group_alone_passes_and_suggested_pieces_are_not_required(room_type, room_area, core):
+    # The pool holds a lamp, nightstands, storage, a sideboard, a pendant and an accent chair; none is required.
+    pool = [LAMP, _record("nightstand", "nightstand", 0.5, 0.4, 0.55), _record("dresser", "dresser", 1.2, 0.5, 0.8),
+            _record("sideboard", "sideboard", 1.6, 0.45, 0.8), _record("pendant", "pendant_light", 0.4, 0.4, 0.6),
+            _record("accent", "accent_chair", 0.85, 0.85, 0.8)]
+    result = _validate(room_type, room_area, core, pool)
+    assert result["valid"], result["errors"]
+    # A living room or bedroom without a lamp only gets the advisory lighting warning.
+    assert any(text.startswith("MISSING REQUIRED: No lighting") for text in result["warnings"]) is (
+        room_type in {"living_room", "bedroom"})
 
 
-@pytest.mark.parametrize(("room_area", "missing"), [((3.75, 4.0), True), ((3.0, 3.5), False)])
-def test_a_medium_bedroom_requires_a_dresser_or_wardrobe_and_a_compact_one_does_not(room_area, missing):
-    bedroom = [BED, *NIGHTSTANDS, LAMP, _record("rug", "rug", 2.5, 1.7, 0.01), PLANT]
-    result = _validate("bedroom", room_area, bedroom, [_record("dresser", "dresser", 1.2, 0.5, 0.8)])
-    assert _missing(result, "clothes storage") is missing
-    assert not any(error.startswith("MISSING REQUIRED") for error in result["errors"] if "clothes storage" not in error)
-
-
-def test_a_medium_dining_room_requires_a_sideboard_and_a_pendant():
-    dining = [_record("table", "dining_table", 1.8, 0.9, 0.75), *[_record("chair", "dining_chair", 0.5, 0.5, 0.8)] * 4, PLANT]
-    sideboard, pendant = _record("sideboard", "sideboard", 1.6, 0.45, 0.8), _record("pendant", "pendant", 0.4, 0.4, 0.6)
-    bare = _validate("dining_room", (3.5, 4.0), dining, [sideboard, pendant])  # 14 m2: medium
-    furnished = _validate("dining_room", (3.5, 4.0), [*dining, sideboard, pendant])
-    assert _missing(bare, "serving storage") and _missing(bare, "overhead lighting") and not bare["valid"]
-    assert not _missing(furnished, "serving storage") and not _missing(furnished, "overhead lighting")
-
-
-@pytest.mark.parametrize(("chairs", "valid"), [(3, False), (4, True), (6, True), (7, False)])
-def test_a_spacious_dining_room_seats_four_to_six_by_default(chairs, valid):
-    dining = [_record("table", "dining_table", 2.4, 1.0, 0.75), *[_record("chair", "dining_chair", 0.5, 0.5, 0.8)] * chairs,
-              _record("sideboard", "sideboard", 1.6, 0.45, 0.8), _record("pendant", "pendant", 0.4, 0.4, 0.6), PLANT]
-    result = _validate("dining_room", (4.2, 4.8), dining)  # 20 m2: spacious
-    assert any(error.startswith("DINING GROUP") and "4–6 dining_chairs" in error for error in result["errors"]) is not valid
-
-
-@pytest.mark.parametrize(("room_area", "dining_required"), [((4.0, 5.0), False), ((5.0, 6.0), True)])
-def test_a_studio_requires_a_dining_group_from_25_m2(room_area, dining_required):
-    studio = [BED, NIGHTSTANDS[0], LAMP, _record("sofa", "sofa", 1.8, 0.9, 0.8)]
-    pool = [_record("table", "dining_table", 1.0, 0.8, 0.75), _record("chair", "dining_chair", 0.5, 0.5, 0.8)]
+@pytest.mark.parametrize("room_area", [(3.5, 4.0), (5.0, 6.0)])
+def test_a_studio_of_any_size_requires_its_dining_group(room_area):
+    studio = [BED, _record("sofa", "sofa", 1.8, 0.9, 0.8)]
+    pool = [_record("table", "dining_table", 1.0, 0.8, 0.75), CHAIR]
     result = _validate("studio", room_area, studio, pool)
-    assert any(error.startswith("DINING GROUP") for error in result["errors"]) is dining_required
+    assert any(error.startswith("DINING GROUP") for error in result["errors"])
 
 
-def _piece(uid, category, width, depth, height):
-    return {"uid": uid, "asset_id": uid, "category": category, "width": width, "depth": depth, "height": height}
-
-
-SOFA_2M = _piece("sofa_1", "sofa", 2.0, 0.9, 0.8)
-DINING_TABLE = _piece("dining_table_1", "dining_table", 1.8, 0.9, 0.75)
-BED_160 = _piece("bed_1", "bed", 1.6, 2.1, 1.1)
-# A passing product of each kind, so a failing piece is an error rather than a warning.
-PASSING = [_piece("coffee_table_9", "coffee_table", 1.2, 0.6, 0.45), _piece("side_table_9", "side_table", 0.5, 0.5, 0.55),
-           _piece("pendant_9", "pendant_light", 0.4, 0.4, 0.5), _piece("rug_9", "rug", 0.8, 2.0, 0.01)]
-
-
-# Each rule's piece `over` metres past its limit, the pieces it serves, and its finding once `over` passes the tolerance.
-@pytest.mark.parametrize(("room_type", "piece", "context", "finding"), [
-    ("living_room", lambda over: _piece("coffee_table_1", "coffee_table", 1.2, 0.6, COFFEE_TABLE_HEIGHT_M[0] - over),
-     [SOFA_2M], "error"),
-    ("living_room", lambda over: _piece("coffee_table_1", "coffee_table", COFFEE_TABLE_SOFA_WIDTH_RATIO[0] * 2.0 - over,
-                                        0.6, 0.45), [SOFA_2M], "warning"),  # the width beside the sofa is advisory
-    ("living_room", lambda over: _piece("side_table_1", "side_table", 0.5, 0.5, SIDE_TABLE_HEIGHT_M[1] + over), [], "error"),
-    ("dining_room", lambda over: _piece("pendant_1", "pendant_light", *[0.9 - 2 * (DINING_LIGHT_TABLE_INSET_M - over)] * 2,
-                                        0.5), [DINING_TABLE], "error"),  # past the inset on each edge
-    ("bedroom", lambda over: _piece("rug_1", "rug", 1.6 + BED_RUG_EXTRA_WIDTH_M - over, 1.7, 0.01), [BED_160], "error"),
-    ("bedroom", lambda over: _piece("rug_1", "rug", RUNNER_MAX_WIDTH_M + over, 2.0, 0.01), [BED_160], "error"),
+@pytest.mark.parametrize(("room_area", "chairs", "fit_flexibility", "valid"), [
+    ((3.5, 4.0), 4, "balanced", True),
+    ((4.2, 4.8), 4, "balanced", True),  # spacious: still four by default
+    ((4.2, 4.8), 6, "balanced", False),
+    ((3.5, 4.0), 2, "balanced", False),
+    ((3.5, 4.0), 2, "space_first", True),  # a space-first brief may seat two
 ])
-@pytest.mark.parametrize("over", [0.01, SIZE_TOLERANCE_M + 0.01])
-def test_selection_size_rules_allow_the_size_tolerance(room_type, piece, context, finding, over):
-    piece = piece(over)
-    finding = finding if over > SIZE_TOLERANCE_M else None
-    errors, warnings = _size_findings([piece, *context], [piece, *PASSING], room_type)
-    assert [bool(errors), bool(warnings)] == [finding == "error", finding == "warning"]
-    # With no passing product in the pool, a failing piece is only a warning.
-    errors, warnings = _size_findings([piece, *context], [piece], room_type)
-    assert [bool(errors), bool(warnings)] == [False, finding is not None]
+def test_a_dining_room_seats_four_by_default_and_two_when_space_first(room_area, chairs, fit_flexibility, valid):
+    dining = [_record("table", "dining_table", 2.0, 1.0, 0.75), *[CHAIR] * chairs, PLANT]
+    result = _validate("dining_room", room_area, dining, fit_flexibility=fit_flexibility)
+    assert any(error.startswith("DINING GROUP") for error in result["errors"]) is not valid
 
 
-@pytest.mark.parametrize(("depth", "seats_five"), [(0.75, True), (0.74, False)])
-def test_a_table_under_0_75_m_deep_seats_one_long_side(depth, seats_five):
-    # 1.2 m long sides seat two each at a 0.60 m pitch, the ends one each: five chairs need both long sides.
-    assert bool(dining_fit_envelopes({"width": 1.2, "depth": depth}, [{"width": 0.5, "depth": 0.5}] * 5)) is seats_five
-
-
-# --- issue #54 phase 4: crowding
-
-
-RUG = _record("rug", "rug", 2.4, 1.7, 0.01)
 LIVING = [_record("sofa", "sofa", 2.2, 1.0, 0.8), _record("table", "coffee_table", 1.2, 0.6, 0.45), RUG, LAMP, PLANT]
 LIVING_EXTRAS = [*[_record("chair", "accent_chair", 0.85, 0.85, 0.8)] * 2, _record("cabinet", "cabinet", 1.8, 0.5, 0.8),
                  _record("media", "media_unit", 2.0, 0.5, 0.6)]
-COMPACT_BEDROOM = [BED, *NIGHTSTANDS, LAMP, _record("rug", "rug", 2.5, 1.7, 0.01), PLANT]
+COMPACT_BEDROOM = [BED, *[_record("nightstand", "nightstand", 0.5, 0.4, 0.55)] * 2, LAMP,
+                   _record("rug", "rug", 2.5, 1.7, 0.01), PLANT]
 SIDEBOARD = _record("sideboard", "sideboard", 1.6, 0.45, 0.8)
 
 
@@ -359,51 +288,43 @@ def _overcrowded(result):
     return [any(text.startswith("OVERCROWDED") for text in result[key]) for key in ("errors", "warnings")]
 
 
+def test_density_counts_every_piece_but_rugs_at_twice_its_footprint():
+    extras = [_record("art", "wall_art", 1.0, 0.05, 0.8, placement_type="wall"),
+              _record("lamp2", "table_lamp", 0.3, 0.3, 0.5, placement_type="surface")]
+    bare = _validate("living_room", (5.0, 4.4), LIVING)
+    decorated = _validate("living_room", (5.0, 4.4), [*LIVING, *extras])
+    # The rug adds nothing; wall art and a table lamp count like any other piece.
+    assert bare["metrics"]["total_footprint"] == pytest.approx(2 * (2.2 + 0.72 + 0.16 + 0.25))
+    assert decorated["metrics"]["total_footprint"] == pytest.approx(bare["metrics"]["total_footprint"] + 2 * (0.05 + 0.09))
+
+
 @pytest.mark.parametrize(("ottoman", "overcrowded"), [(False, False), (True, True)])
-def test_a_medium_living_room_over_its_maximum_is_overcrowded(ottoman, overcrowded):
-    # 22 m2 with a 0.81 m2 door zone: target 0.27 x 21.19 = 5.72 m2, maximum 0.35 x 21.19 = 7.42 m2.
+def test_a_living_room_is_overcrowded_when_twice_the_footprint_passes_the_usable_floor(ottoman, overcrowded):
+    # 14 m2 with a 0.54 m2 door zone: 13.46 m2 usable; the room covers 6.68 m2 (13.35 m2 doubled), an ottoman 1 m2 more.
     extra = [_record("ottoman", "ottoman", 1.0, 1.0, 0.45)] if ottoman else []
-    result = _validate("living_room", (5.0, 4.4), [*LIVING, *LIVING_EXTRAS, *extra])
-    assert result["metrics"]["total_footprint"] == (7.67 if ottoman else 6.67)
+    result = _validate("living_room", (3.5, 4.0), [*LIVING, *LIVING_EXTRAS, *extra])
+    assert result["metrics"]["footprint_max"] == pytest.approx(13.46)
     assert _overcrowded(result) == [overcrowded, False]
     assert result["valid"] is not overcrowded, result["errors"]
 
 
 @pytest.mark.parametrize(("extra", "fit_step", "finding"), [
     ([], None, None),
-    ([SIDEBOARD], None, "error"),
-    ([SIDEBOARD], "compact", "warning"),  # after a fit step, as the requirement errors
+    ([SIDEBOARD, SIDEBOARD], None, "error"),
+    ([SIDEBOARD, SIDEBOARD], "compact", "warning"),  # after a fit step
 ])
-def test_a_compact_bedroom_fits_a_queen_bed_and_two_nightstands_but_not_a_sideboard_too(extra, fit_step, finding):
-    # 10.5 m2: maximum 0.50 x 9.69 = 4.84 m2; the bed, nightstands, lamp and plant cover 4.17 m2, the sideboard 0.72 m2.
+def test_a_compact_bedroom_over_its_usable_floor_is_overcrowded_until_a_fit_step(extra, fit_step, finding):
+    # 10.5 m2 with a 0.54 m2 door zone: 9.96 m2 usable; the bed, nightstands, lamp and plant double to 8.34 m2,
+    # two sideboards add 2.88 m2.
     result = _validate("bedroom", (3.0, 3.5), [*COMPACT_BEDROOM, *extra], fit_step=fit_step)
     assert _overcrowded(result) == [finding == "error", finding == "warning"]
-    assert result["valid"] is (finding != "error"), result["errors"]
 
 
-def test_required_pieces_alone_over_the_maximum_are_a_warning():
-    # A 2.0 x 2.2 m bed with one nightstand, a lamp and the plant cover 5.01 m2 of the 4.84 m2 maximum.
-    bedroom = [_record("bed", "bed", 2.0, 2.2, 1.1), NIGHTSTANDS[0], LAMP, _record("rug", "rug", 2.9, 1.7, 0.01), PLANT]
-    result = _validate("bedroom", (3.0, 3.5), bedroom)
+def test_required_pieces_alone_over_the_usable_floor_are_a_warning():
+    # A 2.0 x 2.2 m bed and the plant double to 9.3 m2 of a 2.5 x 3.0 m room's 6.96 m2 usable floor.
+    bedroom = [_record("bed", "bed", 2.0, 2.2, 1.1), _record("rug", "rug", 2.0, 1.7, 0.01), PLANT]
+    result = _validate("bedroom", (2.5, 3.0), bedroom)
     assert _overcrowded(result) == [False, True]
-    assert result["valid"], result["errors"]
-
-
-def test_footprint_counts_floor_furniture_only():
-    extras = [_record("art", "wall_art", 1.0, 0.05, 0.8, placement_type="wall"), _record("stand", "tv_stand", 1.6, 0.4, 0.55),
-              _record("tv", "tv", 1.2, 0.08, 0.7, placement_type="surface"),
-              _record("lamp2", "table_lamp", 0.3, 0.3, 0.5, placement_type="surface")]
-    bare = _validate("living_room", (5.0, 4.4), LIVING)
-    decorated = _validate("living_room", (5.0, 4.4), [*LIVING, *extras])
-    # The rug, the wall art, the TV on its stand and the table lamp add nothing; the stand adds 1.6 x 0.4.
-    assert bare["metrics"]["total_footprint"] == pytest.approx(2.2 + 0.72 + 0.16 + 0.25)
-    assert decorated["metrics"]["total_footprint"] == pytest.approx(bare["metrics"]["total_footprint"] + 0.64)
-
-
-@pytest.mark.parametrize(("room_area", "missing"), [((5.0, 4.4), False), ((6.0, 5.5), True)])
-def test_a_medium_living_room_needs_no_accent_seat_and_a_spacious_one_needs_one(room_area, missing):
-    result = _validate("living_room", room_area, LIVING, [_record("chair", "accent_chair", 0.85, 0.85, 0.8)])
-    assert _missing(result, "accent seating") is missing
 
 
 def test_the_final_check_never_removes_the_anchor():

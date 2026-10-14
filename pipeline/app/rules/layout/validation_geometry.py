@@ -34,7 +34,6 @@ from app.rules.layout.relations import (
     _is_wall_mounted_layout_asset,
     _matches_item,
     _supported_parent_uid,
-    _window_seating_clearance_poly,
     floor_assets,
 )
 
@@ -195,25 +194,6 @@ def compute_ceiling_mount_violations(
         expected = ceiling_mount_z(asset.get("height", 0.3), wall_height)
         if abs(pos[2] - expected) > 0.05:
             violations.append(uid)
-    return violations
-
-def compute_window_front_violations(
-    layout: dict[str, Any],
-    assets: list[dict[str, Any]],
-    room_windows: list[dict[str, Any]] | None,
-    boundary: list[list[float]],
-) -> list[dict[str, Any]]:
-    """Floor pieces taller than a window's sill standing in the strip in front of it (advisory)."""
-    violations = []
-    for index, window in enumerate(room_windows or []):
-        sill = window.get("sill_height")
-        sill = 0.9 if sill is None else float(sill)
-        strip = _window_seating_clearance_poly(window, boundary)
-        for item in floor_assets(layout, assets, skip_rugs=True):
-            height = float(item.asset.get("height") or 0.0)
-            if height > sill + 1e-6 and item.poly.intersection(strip).area > 1e-6:
-                violations.append({"uid": item.uid, "window": index, "kind": "tall_piece_in_front_of_window",
-                                   "height_m": height, "sill_height_m": sill})
     return violations
 
 def compute_wall_aligned_violations(

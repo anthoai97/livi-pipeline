@@ -70,12 +70,16 @@ For each design, one call with:
 
 - The user brief, the budget, the allowance (budget + 10%) and the total cost.
 - Room type, size, wall height, each door and window with its wall and position.
+- The room's core pieces, the groups selection requires. Lamps, nightstands,
+  clothes storage, side tables, sideboards, overhead lights and accent seats
+  are optional suggestions.
 - The variant direction, or "none (the default proposal)".
 - A product table: title, category, price, size, colors, materials, styles,
   position, facing direction, what it rests on.
 - The pipeline's non-blocking validator findings.
 - A top-down plan image with a legend for the colors, the facing line, doors
-  and windows.
+  and windows. Items whose title says round or oval are drawn as ellipses,
+  the rest as rectangles.
 
 The prompt tells the judge to use only this data and image. The answer has
 a fixed structure, with an integer 1 to 5 per criterion, a one-sentence
@@ -97,7 +101,7 @@ part of the input the score comes from.
 | Prompt match | Ignores or contradicts the brief | Covers the main request, misses some named details | Every explicit request met, mood matches | Brief vs product table |
 | Style coherence | Clashing mix | Mostly coherent, one or two pieces off | One clear, consistent look | Colors, materials, styles vs variant direction |
 | Budget use | Over the allowance, or so little spent the room is underfurnished | Within the allowance but poorly allocated (cheap anchor, costly accessories) | Within the allowance, spending on the anchor pieces | Budget, allowance, total cost, prices |
-| Completeness | Core pieces missing (seating, bed, table or enough chairs) | Core present, obvious supporting pieces missing (lighting, storage, nightstands) or items out of place | Everything the room needs, nothing out of place | Room type and brief vs product table |
+| Completeness | A core piece missing, or too few dining chairs | Core present, but an item the brief names is missing or items out of place | Core pieces and every named item, nothing out of place; a missing optional suggestion the brief does not name does not count | Core pieces and brief vs product table |
 | Scale fit | Pieces clearly too big or too small | Workable, one or two pieces off-scale | All pieces well proportioned | Product sizes vs room size and each other |
 
 **Layout** (where it was placed)

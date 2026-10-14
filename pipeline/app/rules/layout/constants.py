@@ -12,8 +12,6 @@ WALL_MOUNT_WALL_THRESHOLD = 0.4
 
 WALL_TV_CENTER_Z = 1.1  # seated eye level: a wall-mounted TV's screen center
 
-BEDROOM_TV_CENTER_Z = 1.3  # a reclined viewer's eye level: the screen center of a wall TV that serves a bed
-
 WALL_TV_SUPPORT_GAP_M = 0.05  # a wall-mounted TV's bottom clears the furniture under it by this much
 
 COFFEE_TABLE_ROLE_KEYWORDS = ("coffee_table",)
@@ -85,17 +83,9 @@ DINING_CHAIR_FACING_MAX_DELTA_DEG = 50.0
 
 DINING_CHAIR_TABLE_AIM_TOLERANCE_M = 0.05
 
-DINING_PULLOUT_M = 0.46  # behind a chair: 0.9 m from the table edge to sit down
-
-DINING_ACCESS_MIN_M = 0.56  # behind a chair a path passes: 1.1 m from the table edge to pass behind
+DINING_ACCESS_MIN_M = 0.56  # behind each chair to pull it out
 
 DINING_LIGHT_TABLE_MIN_GAP_M = 0.76
-
-DINING_LIGHT_TABLE_MAX_GAP_M = 0.90
-
-DINING_RUG_EXTENSION_M = 0.60  # rug past each table edge, so pulled-out chairs stay on it
-
-DINING_TWO_SIDED_MIN_DEPTH_M = 0.75  # across the table: two place settings face to face
 
 DINING_CRITICAL_ISSUE_KEYS = (
     "dining_completeness_violations",
@@ -156,7 +146,6 @@ ISSUE_KEYS_BY_TIER = {
         "floor_lamp_reach_violations",
         "table_lamp_support_violations",
         "service_corridor_violations",
-        "window_front_violations",
     ),
 }
 

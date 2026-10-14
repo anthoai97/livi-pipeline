@@ -107,8 +107,8 @@ To score the output, review run records with an LLM reviewer from `pipeline/`:
 python scripts/review.py --latest 30        # or --runs <run_id> ...
 ```
 
-For each ready variant, the reviewer gets the prompt, budget, room, product
-table, and a top-down plan. It returns 1-5 scores for selection (prompt match,
+For each ready variant, the reviewer gets the prompt, budget, room, the room's
+core pieces, product table, and a top-down plan. It returns 1-5 scores for selection (prompt match,
 style, budget use, completeness, scale) and layout (circulation, grouping,
 space use, focal point), an overall score, and top issues. One more call per
 run scores how distinct its variants are. The review writes `report.md`,
@@ -120,6 +120,6 @@ listed but not reviewed.
 | --- | --- |
 | `AI_PROXY_BASE_URL`, `AI_PROXY_API_KEY` | The local cli-proxy-api that serves the reviewer model. Required. |
 | `REVIEW_MODEL` | Reviewer model. Defaults to `claude-sonnet-5-5`; `--model` overrides it. |
-| `REVIEW_EFFORT` | Reviewer reasoning effort. Defaults to `medium`; `--effort` overrides it. |
+| `REVIEW_EFFORT` | Reviewer reasoning effort. Defaults to `high`; `--effort` overrides it. |
 
 `--parallel` sets how many reviewer calls run at once (default 20). Each design review takes about 30 s, so this sets the review time.

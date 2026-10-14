@@ -42,9 +42,8 @@ from app import contracts
 from app.preview import png_bytes, render_plan
 from app.rules.door_geometry import door_opening_rect, format_door_for_prompt, rect_bounds
 from app.rules.layout.analysis import analyze_layout, final_layout_check, findings_by_level
-from app.rules.layout.bedroom import BED_TWO_SIDED_MIN_WIDTH_M
 from app.rules.layout.comfort import comfort_placement_facts, media_viewing_measurements
-from app.rules.layout.constants import DINING_TWO_SIDED_MIN_DEPTH_M
+from app.rules.layout.constants import DINING_ACCESS_MIN_M
 from app.rules.layout.metrics import layout_issue_score
 from app.rules.layout.normalization import move_asset_with_supports, normalize_layout
 from app.rules.layout.relations import (
@@ -66,31 +65,18 @@ from app.rules.planner.feasibility_digest import format_feasibility_digest_for_p
 from app.rules.planner.intent_packet import format_intent_packet_for_prompt, intent_prompt_text
 from app.rules.planner.room_facts import format_room_facts_for_prompt, format_room_shape
 from app.rules.planner.taxonomy import normalize_category
-from app.rules.room_policy import STUDIO_DINING_MIN_AREA_SQM
 from app.rules.selection.catalog import _asset_matches_brand_preferences, _price_constraint_category_matches, catalog_asset
 from app.rules.selection.constants import (
-    BED_RUG_EXTRA_WIDTH_M,
     BUDGET_EXCLUDED_CATEGORIES,
     BUDGET_FLEX_PCT,
     BUDGET_FLOOR_PCT,
     BUDGET_TARGET_PCT,
-    COFFEE_TABLE_HEIGHT_M,
-    COFFEE_TABLE_SOFA_WIDTH_RATIO,
-    DINING_LIGHT_TABLE_INSET_M,
     FIT_ANCHOR_SEATING,
-    RUNNER_MAX_WIDTH_M,
-    SIDE_TABLE_HEIGHT_M,
     TV_HOST_CATEGORIES,
 )
 from app.rules.selection.fit import fit_step_guidance
 from app.rules.selection.preflight import _tv_support_in_selection
-from app.rules.selection.validation import (
-    is_decor_plant,
-    requires_spacious_perimeter_storage,
-    room_requirements,
-    size_passes,
-    validate_selection,
-)
+from app.rules.selection.validation import is_decor_plant, requires_spacious_perimeter_storage, validate_selection
 from app.run import StageContext, describe
 from app.shared_stages import DECOR_CATEGORIES, KEEP, LIMIT_KEYS, RANKED_KEEP
 
@@ -412,7 +398,6 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
     density_budget = digest.get("density_budget") or {}
     footprint_floor = float(density_budget.get("sparse_below_load_sqm") or 0.0)
     comfortable_load = float(density_budget.get("comfortable_load_sqm") or 0.0)
-    max_load = float(density_budget.get("overcrowded_load_sqm") or 0.0)
     plant_guidance = ""
     bedroom = room_type == "bedroom"
     dining = room_type == "dining_room"
@@ -424,35 +409,18 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
     opposed_wall_reference = max(0.0, min(room_width, room_depth) - 0.6)
     wall_viewing_candidates = [row["uid"] for row in media_selection_facts
                                if row["estimated_view_distance_range_m"][1] >= opposed_wall_reference]
-    needs = {need["role"]: need for need in room_requirements(room_type=room_type, intent=intent, digest=digest)["required"]}
-
-    def required_pieces(*pieces: tuple[str, str]) -> str:
-        """The texts of the pieces whose roles this room requires (room_requirements), joined."""
-        return " and ".join(text for role, text in pieces if role in needs)
-
-    bedside_pieces = required_pieces(("bedside", "a nightstand"), ("lighting", "a lamp"),
-                                     ("clothes_storage", "a dresser or wardrobe"))
-    dining_pieces = required_pieces(("serving_storage", "a sideboard or cabinet"),
-                                    ("overhead_lighting", "a pendant or chandelier over the table"))
-    living_pieces = required_pieces(("lighting", "a lamp (floor_lamp/table_lamp/lamp)"),
-                                    ("accent_seating", "an accent chair"))
     anchor_name = "complete bed, compact sofa and dining table" if studio else "complete adult bed" if bedroom else "dining table" if dining else "sofa"
     required_role_guidance = (
-        ("Apply the studio furnishing policy in the feasibility digest: preserve one complete standalone bed, "
-         "separate compact sitting group and one dining table with two chairs unless an explicit dining count changes it. "
-         "These three core groups are mandatory even after a fit decision. "
-         if "dining_table" in needs else
-         "Apply the studio furnishing policy in the feasibility digest: preserve one complete standalone bed and a "
-         f"separate compact sitting group; both are mandatory even after a fit decision. Below {STUDIO_DINING_MIN_AREA_SQM:.0f} m2 "
-         "a studio has no dining group unless the brief asks for one. ")
-        + (f"The bed also needs {bedside_pieces}. " if bedside_pieces else "")
-        + "Accessories do not substitute for a missing group. "
+        "Apply the studio furnishing policy in the feasibility digest: preserve one complete standalone bed, "
+        "separate compact sitting group and one dining table with two chairs unless an explicit dining count changes it. "
+        "These three core groups are mandatory even after a fit decision. Accessories do not substitute for a missing group. "
+        "Nightstands, bedside lamps and storage are suggested when space permits, not required. "
         "For each selected rug, side table or ceiling light, set functional_group to sleeping, sitting or dining according to "
         "the brief. This association remains fixed during layout; do not use one rug to serve multiple groups. "
         "A side table for bedside lighting belongs to sleeping, not sitting or dining. "
         "Choose a sitting area rug whose usable width spans the sofa and whose depth permits front-leg engagement "
         "plus at least 0.60m of useful rug in front; do not select a small mat as a substitute for an area rug. "
-        "Keep its envelope out of the bed and dining group. In compact studios plan dining chairs AND 0.46m pull-out "
+        f"Keep its envelope out of the bed and dining group. In compact studios plan dining chairs AND {DINING_ACCESS_MIN_M:.2f}m pull-out "
         "before choosing sofa depth and media support. For shared TV viewing consider both bed and sofa distances "
         "relative to screen width; do not assume a TV on the opposite wall will be comfortable. "
         "For bed-only or shared viewing, plan a wall-backed TV first and choose a display whose preferred range "
@@ -467,26 +435,21 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
         "Choose a standalone bed, not a bedroom set with integrated, built-in or bundled nightstands. "
         "Embedded bedside furniture cannot count as separate selected nightstands or justify adding a duplicate pair; "
         "the whole model footprint does not establish reach from the actual sleeping surface. "
-        "Honor explicit sparse, single-bedside and storage-exclusion requests; compact rooms need fewer pieces and clear access. "
+        "Bedside surfaces, lighting and clothing storage are suggested, not required: plan them as part of the "
+        "bedroom's everyday functions. For a normal spacious bedroom, prefer a coordinated bedside pair where both "
+        "sides are usable, purposeful clothing storage and a coherent use of the remaining zones. Honor explicit sparse, "
+        "single-bedside and storage-exclusion requests; compact rooms need fewer pieces and clear access. "
         "Wardrobes are opt-in; do not add one to a generic bedroom. When requested, a dresser is not a substitute. "
         "A dresser provides folded-clothes storage, not hanging storage. Claim hanging storage only "
         "when product metadata confirms that capability; never relabel a generic cabinet as a wardrobe. "
-        "Do not infer mattress size from exterior furniture dimensions. Include fitting lighting. "
-        + (f"A fresh bedroom needs {bedside_pieces}; a selection missing them fails validation. " if bedside_pieces else "")
-        + f"In a spacious room, a bed {BED_TWO_SIDED_MIN_WIDTH_M:.2f}m or wider needs a nightstand on each side. "
-        f"A bedroom rug is a runner at most {RUNNER_MAX_WIDTH_M:.2f}m wide or spans the bed width plus "
-        f"{BED_RUG_EXTRA_WIDTH_M:.2f}m."
+        "Do not infer mattress size from exterior furniture dimensions. Include fitting lighting."
         if bedroom else
-        "Apply the dining furnishing policy in the feasibility digest: keep the usable table/chair group and access ahead of optional additions. "
-        + (f"This room also needs {dining_pieces}; a selection missing them fails validation. " if dining_pieces else "")
-        + f"A table under {DINING_TWO_SIDED_MIN_DEPTH_M:.2f}m deep seats one long side only. A light over the table "
-        f"stays {DINING_LIGHT_TABLE_INSET_M:.2f}m inside each table edge."
+        "Apply the dining furnishing policy in the feasibility digest: keep the usable table/chair group and access ahead "
+        "of the suggested sideboard, overhead light and wall art, which are not required."
         if dining else
-        "Anchor seating (sofa/sectional/loveseat) and a surface (coffee_table/side_table; a desk counts only when work is "
-        "requested) are mandatory" + (f", and this room needs {living_pieces}" if living_pieces else "")
-        + f"; a selection missing any of them fails validation. A coffee table is {COFFEE_TABLE_HEIGHT_M[0]:.2f}-"
-        f"{COFFEE_TABLE_HEIGHT_M[1]:.2f}m high and about {COFFEE_TABLE_SOFA_WIDTH_RATIO[0]}-{COFFEE_TABLE_SOFA_WIDTH_RATIO[1]} "
-        f"x the sofa width; a side table is {SIDE_TABLE_HEIGHT_M[0]:.2f}-{SIDE_TABLE_HEIGHT_M[1]:.2f}m high."
+        "Anchor seating (sofa/sectional/loveseat) and a surface (coffee_table/side_table/desk) are mandatory; a selection "
+        "missing either fails validation. Lighting (floor_lamp/table_lamp/lamp) is suggested, not required: include one "
+        "before adding a second seat or any decor."
     )
     variant_directive = state["direction"]
     excluded_categories = set(intent.get("excluded_categories") or [])
@@ -537,11 +500,11 @@ def _selection_prompt(state: VariantState, intent: Record, fit_step: str | None,
         )
     if dining:
         optional_piece_guidance = (
-            "Beyond the required pieces, add the dining policy's optional pieces only after seating and access fit; "
+            "Apply the dining policy's suggestions after seating and access fit; "
             "they do not impose counts or a floor-fill target. Respect minimal briefs and exclusions."
         )
         selection_size_guidance = (
-            "Choose a complete dining group at the requested or default capacity, then the room's required and useful optional pieces"
+            "Choose a complete dining group at the requested or default capacity, then consider useful suggested additions"
         )
     rug_guidance = (
         "Rugs are optional in a dining room; include one only when requested and large enough for the table and chair movement."
@@ -618,7 +581,7 @@ CONSTRAINTS:
 {plant_guidance}- Budget target: aim for {BUDGET_TARGET_PCT - 0.05:.0%}-{BUDGET_TARGET_PCT + 0.05:.0%} of ${budget:.2f}. The total must be at least ${budget * BUDGET_FLOOR_PCT:.2f} ({BUDGET_FLOOR_PCT:.0%}) and at most ${budget * (1 + BUDGET_FLEX_PCT):.2f} (${budget:.2f} + 10% flex). Spend first on better versions of the {anchor_name} and the main pieces (better made, better materials, the right size), then on useful pieces the room is missing; never on filler. A design may stay under {BUDGET_FLOOR_PCT:.0%} only when the room is complete and no fitting product would improve it; say why in gaps.
 - Non-shoppable decor: once the room is functionally complete, add non-shoppable decor that suits the room (plants, sculptures, floor and wall mirrors) whether or not budget remains; it adds nothing to the total. Decide how many pieces from the room size and the brief: a spacious room takes more than a compact one, within the room caps and without blocking circulation. Non-shoppable decor UIDs: {', '.join(free_decor_uids) or 'none available'}. Skip it for minimal briefs and follow any decor limit in the request. Non-shoppable decor is a finishing layer, not filler: this rule takes priority over the guidance below to omit optional pieces or avoid filler.
 - Retail decor: once the room is functionally complete, if the total is under ${budget:.2f}, add up to 2 retail decor pieces that suit the room (a sculpture, a plant, a floor mirror), keeping the total at or under ${budget:.2f}. Retail decor UIDs: {', '.join(decor_uids) or 'none available'}. A required decor plant does not count toward these. Skip decor for minimal briefs.
-- Furnish the room without crowding it: floor furniture footprint (width x depth per floor piece; rugs, wall- and ceiling-mounted pieces, tabletop items and a TV on its stand do not count) must be at least {footprint_floor:.2f} sqm. Stay at or under the comfortable target of {comfortable_load:.2f} sqm; a selection over the maximum of {max_load:.2f} sqm fails validation. Once the requested functions and density floor are satisfied, do not add pieces merely to approach the target.
+- Furnish the room: total footprint (width x depth x 2 per asset, rugs excluded) must be at least {footprint_floor:.2f} sqm and at most {furniture_area:.2f} sqm. The comfortable load of {comfortable_load:.2f} sqm is an upper reference, not a target. Once the requested functions and density floor are satisfied, do not add pieces merely to approach it.
 {perimeter_storage_guidance}- Physical layout preflight must pass: rugs must fit the room; every tabletop asset must fit an eligible selected support surface; desk/dining clusters must fit with their chairs; and tiny rooms must not receive extra seating or floor lamps.
 - {count_guidance_constraint}
 - Assets with is_decor_item=true are non-shoppable: their zero budget contribution is bookkeeping, not a retail price. is_placeholder=true identifies temporary furniture for layout evaluation; a verified wardrobe placeholder can satisfy clothing storage, but cannot be purchased or count as spending more budget. Never describe these items as free products.
@@ -882,8 +845,8 @@ async def select(state: VariantState, ctx: StageContext) -> VariantState:
     when more than `ctx.run.product_reuse_rate` of its distinct products are
     marked `shared`. A selection that passes is solved once with the code
     solver, and fails when the solver leaves items out (`_solver_fit`). Then
-    up to two rounds swap products in code (`_swap_repair`: style and size
-    failures, then the budget range) and check the result the same way; a
+    up to two rounds swap products in code (`_swap_repair`: style failures,
+    then the budget range) and check the result the same way; a
     round is kept when it passes or leaves fewer errors, and the next round
     starts from it. A style failure the repair keeps is checked again without
     another Jev call. Only a selection that still fails goes back to the model.
@@ -1053,10 +1016,9 @@ async def _swap_repair(state: VariantState, ctx: StageContext, selected: list[Re
     """Swap products of `selected` for others from the same slot: first the products that fail on their own, then
     the spend into the budget range.
 
-    A product fails on its own when Jev rejects its style (`audit["style_mismatches"]`) or a `SIZE:` error names it
-    (the pool then holds a product of its kind that passes). A replacement comes from the product's slot in this
-    variant's ranked order and passes the candidate test: the same category, not selected, purchasable when the
-    product is, keeps the reuse limit, and raises no SIZE error beside the other selected pieces (`size_passes`).
+    A product fails on its own when Jev rejects its style (`audit["style_mismatches"]`). A replacement comes from the
+    product's slot in this variant's ranked order and passes the candidate test: the same category, not selected,
+    purchasable when the product is, and keeps the reuse limit.
     Then the budget walk: over the allowance, the most expensive purchasable non-anchor products are swapped for
     cheaper candidates (after the current one in ranked order, then before it) until the total is at most the
     allowance, and the walk is dropped when it cannot reach it; a passing selection under BUDGET_FLOOR_PCT of the
@@ -1064,12 +1026,12 @@ async def _swap_repair(state: VariantState, ctx: StageContext, selected: list[Re
     that keep the total at most the budget, until it reaches BUDGET_TARGET_PCT. Every unit of a product changes, so
     counts and matched sets stay.
 
-    A style-failing product gets every candidate of its slot, any other product the repair may swap up to 3, and one
+    A style-failing product gets every candidate of its slot, a product the budget walk may swap up to 3, and one
     Jev check request asks the anchor style question of all of them; a product takes its first candidate with yes at
     or above STYLE_VIOLATION_BELOW. A style-failing product none of whose candidates reaches it (or with none) stays:
     it is added to `kept`, so its mismatch is a warning for the rest of this design's selection, and noted. With check
     off, no anchor, or a failed request, candidates pass on the code checks alone, and the swaps text says so. Returns
-    the new selection and the swaps as text ("<old> -> <new> (style|size|budget)", ...), or None when nothing is
+    the new selection and the swaps as text ("<old> -> <new> (style|budget)", ...), or None when nothing is
     swapped. The caller checks the result again.
     """
     shared = state["shared"]
@@ -1078,11 +1040,7 @@ async def _swap_repair(state: VariantState, ctx: StageContext, selected: list[Re
     room_type = shared["room"]["room_type"]
     anchors = set().union(*_ANCHOR_CATEGORIES.get(room_type, (FIT_ANCHOR_SEATING,)))
     products = _products(state["pool"], selected)
-    pool = [catalog_asset(record) for record in _candidates(state["pool"])]
     units = Counter(uid for asset in selected if (uid := asset["uid"].strip()) in products)
-    groups: dict[str, Any] = {}
-    for asset in selected:
-        groups.setdefault(asset["uid"].strip(), asset.get("functional_group"))
     limit = math.floor(round(reuse_rate * len(products), 9))
 
     def price(product: Record) -> float:
@@ -1096,14 +1054,12 @@ async def _swap_repair(state: VariantState, ctx: StageContext, selected: list[Re
         """The candidate test for `record` in place of the selected `uid`, with `swaps` (old uid -> product) made."""
         now = {other: swaps.get(other, product) for other, product in products.items()}
         product = now[uid]
-        candidate = {**catalog_asset(record), "uid": str(record["asset_id"]), "functional_group": groups[uid]}
-        context = [candidate if other == uid else {**item, "functional_group": groups[other]} for other, item in now.items()]
+        candidate = {**catalog_asset(record), "uid": str(record["asset_id"])}
         return (candidate["uid"] not in {*products, *(item["uid"] for item in now.values())}
                 and normalize_category(candidate.get("category")) == normalize_category(product.get("category"))
                 and (price(candidate) > 0) == (price(product) > 0)
                 and (reuse_rate >= 1 or not candidate.get("shared") or bool(product.get("shared"))
-                     or sum(bool(item.get("shared")) for item in now.values()) < limit)
-                and size_passes(candidate, context, pool, room_type))
+                     or sum(bool(item.get("shared")) for item in now.values()) < limit))
 
     def ranked(uid: str, after: bool) -> list[Record]:
         """The slot's products in ranked order; with `after`, from the one after `uid` round to the one before it."""
@@ -1111,9 +1067,7 @@ async def _swap_repair(state: VariantState, ctx: StageContext, selected: list[Re
         at = next(n for n, row in enumerate(rows) if str(row["asset_id"]) == uid)
         return rows[at + 1:] + rows[:at] if after else rows
 
-    sized = [error.split()[1] for error in validation["errors"] if error.startswith("SIZE: ")]
-    failing = {uid: reason for reason, uids in (("size", sized), ("style", audit["style_mismatches"]))
-               for uid in uids if uid in products}
+    failing = {uid: "style" for uid in audit["style_mismatches"] if uid in products}
     start = total({})
     cheaper = start > allowance
     pricier = validation["valid"] and start < budget * BUDGET_FLOOR_PCT
@@ -1126,9 +1080,7 @@ async def _swap_repair(state: VariantState, ctx: StageContext, selected: list[Re
     walk = [uid for uid in sorted(products, key=lambda uid: -price(products[uid]))
             if (cheaper or pricier) and uid not in failing and price(products[uid]) > 0
             and not (cheaper and normalize_category(products[uid].get("category")) in anchors)]
-    options = {uid: list(itertools.islice((record for record in ranked(uid, False) if usable(uid, record, {})),
-                                          None if reason == "style" else 3))
-               for uid, reason in failing.items()}
+    options = {uid: [record for record in ranked(uid, False) if usable(uid, record, {})] for uid in failing}
     options |= {uid: list(itertools.islice((record for record in ranked(uid, cheaper)
                                             if usable(uid, record, {}) and within(uid, record, {})), 3))
                 for uid in walk}
@@ -1138,8 +1090,8 @@ async def _swap_repair(state: VariantState, ctx: StageContext, selected: list[Re
         answers = await ctx.ask("check", {**_brief(shared, state["direction"]), "anchor": _product_text(products[anchor])},
                                 {f"style_{n}": _STYLE_QUESTION.format(_product_text(record)) for n, record in enumerate(asked.values())})
     rejected = {uid for n, uid in enumerate(asked) if answers[f"style_{n}"] < STYLE_VIOLATION_BELOW} if answers is not None else set()
-    for uid, reason in failing.items():
-        if reason == "style" and all(str(record["asset_id"]) in rejected for record in options[uid]):
+    for uid in failing:
+        if all(str(record["asset_id"]) in rejected for record in options[uid]):
             kept.add(uid)
             ctx.run.note(f"style kept: {uid} (no candidate in the slot matches the anchor)", ctx.variant_index)
     if not asked:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import math
+import re
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
@@ -36,6 +37,17 @@ KINDS = {
     "support": ((95, 175, 115, 235), (30, 95, 50, 255)),
 }
 KIND_LABELS = {"rug": "rug", "floor": "floor", "wall": "wall-mounted", "ceiling": "ceiling", "support": "on a support"}
+ROUND_TITLE_WORDS = {"round", "oval", "circular"}  # the catalog has no shape field, so the title names it
+
+
+def _footprint(product: Record, position: list[float], yaw: float, width: float, depth: float) -> list[tuple[float, float]]:
+    """The item's outline in plan metres: an ellipse when its title says round or oval, else its rotated rectangle."""
+    if not ROUND_TITLE_WORDS & set(re.findall(r"[a-z]+", str(product.get("title") or "").lower())):
+        return list(asset_polygon(position, yaw, width, depth).exterior.coords)
+    cos, sin = math.cos(yaw), math.sin(yaw)  # the front (depth) axis; the width axis is (-sin, cos)
+    return [(position[0] - sin * width / 2 * math.cos(t) + cos * depth / 2 * math.sin(t),
+             position[1] + cos * width / 2 * math.cos(t) + sin * depth / 2 * math.sin(t))
+            for t in (math.radians(a) for a in range(0, 360, 10))]
 
 
 def _kind(product: Record, pose: Record) -> str:
@@ -101,14 +113,14 @@ def render_plan(record: Record, variant: Record) -> Image.Image:
             continue
         yaw = float(pose["rotation"][2])
         position = [float(value) for value in pose["position"]]
-        polygon = asset_polygon(position, yaw, float(product["width_m"] or 0.5), float(product["depth_m"] or 0.5))
-        shapes.append((_kind(product, pose), key, position, yaw, float(product["depth_m"] or 0.5), polygon))
+        points = _footprint(product, position, yaw, float(product["width_m"] or 0.5), float(product["depth_m"] or 0.5))
+        shapes.append((_kind(product, pose), key, position, yaw, float(product["depth_m"] or 0.5), points))
     order = list(KINDS)
     shapes.sort(key=lambda shape: order.index(shape[0]))
     label_font = _font(12)
-    for kind, _, position, yaw, depth, polygon in shapes:
+    for kind, _, position, yaw, depth, points in shapes:
         fill, outline = KINDS[kind]
-        draw.polygon([px(p) for p in polygon.exterior.coords], fill=fill, outline=outline, width=3 if kind == "wall" else 2)
+        draw.polygon([px(p) for p in points], fill=fill, outline=outline, width=3 if kind == "wall" else 2)
         if kind != "rug":
             front = (position[0] + math.cos(yaw) * depth / 2, position[1] + math.sin(yaw) * depth / 2)
             draw.line([px(position), px(front)], fill=INK, width=2)

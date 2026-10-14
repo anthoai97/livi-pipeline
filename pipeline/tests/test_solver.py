@@ -96,11 +96,11 @@ def test_solver_keeps_a_protected_path_and_its_doorways_clear():
 
 
 def test_media_pulls_off_its_wall_to_bring_the_tv_into_its_viewing_range():
-    # A 1.52 m TV prefers 2.28 to 4.26 m (1.5 to 2.8 x its width); across the 5 m side of the 5 x 6 m living room a
-    # flush stand sees it from about 4.37 m.
+    # A 1.2 m TV prefers 1.44 to 4.2 m (1.2 to 3.5 x its width); across the 5 m side of the 5 x 6 m living room a
+    # flush stand sees it from about 4.33 m.
     request = LIVING_ROOM
     spec = GOLDEN["rooms"]["living"]
-    assets = [{**asset, "width": 1.52, "placement_mode": "tabletop", "paired_support_uid": "tv_stand_1"}
+    assets = [{**asset, "width": 1.2, "placement_mode": "tabletop", "paired_support_uid": "tv_stand_1"}
               if asset["category"] == "tv" else asset for asset in spec["instances"]]
     intent = coerce_intent_packet(spec["intent"], room_type="living_room")
     room = build_room_context(room_type="living_room", room_area=request["room_area"], room_vertices=request["room_vertices"],
@@ -117,7 +117,7 @@ def test_media_pulls_off_its_wall_to_bring_the_tv_into_its_viewing_range():
 
 
 def test_studio_tv_stands_free_on_the_sofa_axis_when_the_far_wall_is_out_of_range():
-    # Across the 6.4 m studio a wall-backed 1.2 m TV is seen from 5.3 m, past its 1.8 to 3.36 m range.
+    # Across the 6.4 m studio a wall-backed 1.2 m TV is seen from 5.3 m, past its 1.44 to 4.2 m range.
     intent, room, assets = _golden_inputs({"room": "studio"})
     assets = [{**asset, "placement_mode": "tabletop", "paired_support_uid": "tv_stand_1"}
               if asset["category"] == "tv" else asset for asset in assets]
@@ -226,7 +226,6 @@ def test_studio_layouts_on_offer_differ_in_their_zone_plans():
 
 def test_a_bed_that_fits_one_wall_leaves_layouts_that_differ_in_a_storage_wall():
     # 2.6 x 4.0 m with the door on a short wall: the bed backs onto the far wall in every layout, so only the storage can move.
-    # (At 3.6 m deep the 0.76 m storage fronts leave the storage a single arrangement.)
     intent = coerce_intent_packet({"normalized_prompt": "a calm bedroom", "requested_categories": ["bed", "dresser", "wardrobe"]},
                                   room_type="bedroom")
     room = build_room_context(room_type="bedroom", room_area=[2.6, 4.0], room_vertices=[[0, 0], [2.6, 0], [2.6, 4.0], [0, 4.0]],
@@ -245,8 +244,7 @@ def test_a_bed_that_fits_one_wall_leaves_layouts_that_differ_in_a_storage_wall()
 
 
 def test_a_queen_bed_fits_the_compact_benchmark_bedroom():
-    # 3 x 3 m with the door beside the bed: a 2.1 m bed leaves 0.9 m at its foot, short of the 0.91 m main path.
-    # A compact room keeps the 0.60 m foot access, so the bed is placed instead of dropped.
+    # 3 x 3 m with the door beside the bed: a 2.1 m bed leaves 0.9 m at its foot, enough for its 0.56 m foot access.
     request = BENCHMARK["bedroom_small"]
     intent = coerce_intent_packet({"normalized_prompt": request["user_intent"], "requested_categories": ["bed"]},
                                   room_type="bedroom")

@@ -644,10 +644,6 @@ def compute_floor_lamp_reach_violations(
     boundary: list[list[float]],
 ) -> list[dict[str, Any]]:
     seating = _gather_floor_seating(layout, assets)
-    # A floor lamp serves lounge seats; dining chairs count only in a room without one, as the solver places it.
-    lounge = [(uid, poly) for uid, poly in seating
-              if normalize_category(get_asset_by_uid(uid, assets).get("category")) != "dining_chair"]
-    seating = lounge or seating
     room_exterior = Polygon(boundary).exterior
 
     violations = []

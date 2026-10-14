@@ -98,12 +98,12 @@ from app.rules.geometry.primitives import (
     room_polygon,
 )
 from app.rules.layout.analysis import analyze_layout
-from app.rules.layout.bedroom import BED_ACCESS_MIN_M, STORAGE_FRONT_M, bed_foot_access_m, is_bedside_asset
+from app.rules.layout.bedroom import BED_ACCESS_MIN_M, STORAGE_FRONT_M, is_bedside_asset
 from app.rules.layout.comfort import SOFA_MEDIA_ACCESS_MIN_M, TV_VIEW_WIDTH_RANGE
 from app.rules.layout.constants import (
     COFFEE_TABLE_ROLE_KEYWORDS,
     CRITICAL_LIVING_GROUP_KINDS,
-    DINING_PULLOUT_M,
+    DINING_ACCESS_MIN_M,
     FLOOR_LAMP_REACH_RANGE_M,
     FLOOR_LAMP_WALL_MAX_GAP_M,
     LIVING_DINING_CLEARANCE_M,
@@ -142,7 +142,6 @@ from app.rules.layout_rules import (
 )
 from app.rules.pipeline_shared import is_table_lamp_asset, matches_category_keywords
 from app.rules.placement_mode import placement_mode_for_asset
-from app.rules.planner._util import room_scale
 from app.rules.planner.seed_guidance import build_seed_guidance, build_seed_layout_plan
 from app.rules.planner.taxonomy import SEATING_ROLE_KEYWORDS, normalize_category
 from app.rules.protected_paths import protected_path_polygons
@@ -174,8 +173,7 @@ _STORAGE_FRONTS = {  # storage whose front band the room's checker measures (bed
 class _Template:
     name: str
     poses: dict[str, Pose]  # in the group frame: wall groups face +y with the wall behind y = 0
-    # (uid, front | back | left | right | foot, width) bands other furniture leaves clear; a bed's foot band
-    # takes its width from bed_foot_access_m at the bed's pose
+    # (uid, front | back | left | right, width) bands other furniture leaves clear
     bands: tuple[tuple[str, str, float], ...] = ()
     penalty: float = 0.0
 
@@ -440,8 +438,7 @@ def _sleeping_templates(ctx: _Room, bed: str, bedsides: list[str]) -> tuple[_Tem
     """Headboard on the wall line; bedside pieces at the seed's beside_bed_head targets.
 
     The bed needs its foot band and at least one side band clear; a one-sided
-    template costs a little more, so both sides stay clear when the room allows
-    (the checker needs both for a wide bed outside a compact room).
+    template costs a little more, so both sides stay clear when the room allows.
     """
     width, depth = ctx.dims(bed)
     sides = [(1, -1)] if len(bedsides) != 1 else [(1,), (-1,)]
@@ -453,7 +450,7 @@ def _sleeping_templates(ctx: _Room, bed: str, bedsides: list[str]) -> tuple[_Tem
             poses[uid] = (-sign * (width / 2 + ctx.dims(uid)[0] / 2 + 0.05), ctx.dims(uid)[1] / 2, math.pi / 2)
         for name, penalty, bands in (("both", 0.0, ("left", "right")), ("left", 0.5, ("left",)), ("right", 0.5, ("right",))):
             templates.append(_Template(f"bed {signs} {name}", poses,
-                                       ((bed, "foot", BED_ACCESS_MIN_M), *((bed, side, BED_ACCESS_MIN_M) for side in bands)), penalty))
+                                       ((bed, "front", BED_ACCESS_MIN_M), *((bed, side, BED_ACCESS_MIN_M) for side in bands)), penalty))
     return tuple(templates)
 
 
@@ -543,7 +540,7 @@ def _dining_templates(ctx: _Room, table: str, chairs: list[str], lights: list[st
                 normal = offsets[uid]["front_or_back" if edge in {"front", "back"} else "left_or_right"]
                 poses[uid] = {"front": (along, normal, 3 * math.pi / 2), "back": (along, -normal, math.pi / 2),
                               "left": (-normal, along, 0.0), "right": (normal, along, math.pi)}[edge]
-        templates.append(_Template(f"dining {option['chairs_per_edge']}", poses, tuple((uid, "back", DINING_PULLOUT_M) for uid in chairs),
+        templates.append(_Template(f"dining {option['chairs_per_edge']}", poses, tuple((uid, "back", DINING_ACCESS_MIN_M) for uid in chairs),
                                    DINING_UNBALANCED_COST if rank else 0.0))
     return tuple(templates)
 
@@ -675,9 +672,6 @@ def _bands(ctx: _Room, template: _Template, poses: dict[str, Pose]) -> list[Poly
     for uid, side, access in template.bands:
         x, y, yaw = poses[uid]
         width, depth = ctx.dims(uid)
-        if side == "foot":
-            compact = room_scale(ctx.polygon.area, "studio" if ctx.room["room_type"] == "studio" else "bedroom") == "compact"
-            side, access = "front", bed_foot_access_m([x, y], yaw, depth, ctx.doors, compact)
         forward, lateral = {"front": ((depth + access) / 2, 0.0), "back": (-(depth + access) / 2, 0.0),
                             "left": (0.0, (width + access) / 2), "right": (0.0, -(width + access) / 2)}[side]
         center = [x + forward * math.cos(yaw) - lateral * math.sin(yaw), y + forward * math.sin(yaw) + lateral * math.cos(yaw), 0.0]

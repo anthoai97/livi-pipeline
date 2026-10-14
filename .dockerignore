@@ -1,0 +1,10 @@
+**/node_modules
+**/.data
+**/dist
+**/__pycache__
+.git
+.env
+.env.*
+local_data
+artifacts
+logs

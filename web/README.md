@@ -17,11 +17,11 @@ Open the URL Vite prints (normally `http://localhost:5173`). The dev server prox
 `/api/*` to `http://localhost:8000/*` and `/s3/*` to the asset bucket for GLB files.
 Restart Vite after changing proxy settings.
 
-For a private team deploy, set `BASIC_AUTH_PASSWORD` (and `BASIC_AUTH_USERNAME`,
-default `livinit`) in the repo-root `.env` or the environment, then restart Vite.
-The dev and preview servers then ask for that username and password on every
-request, the `/api` and `/s3` proxies included. Without a password there is no
-auth. Keep the pipeline service on `127.0.0.1` (the uvicorn default), so it is
+For a private team deploy, set `AUTH_PASSWORD` (and `AUTH_USERNAME`, default
+`livinit`) in the repo-root `.env` or the environment, then restart Vite. The dev
+and preview servers then show a login page until the right username and password
+are entered, the `/api` and `/s3` proxies included. A login sets a cookie that lasts
+30 days. Without a password there is no login. Keep the pipeline service on `127.0.0.1` (the uvicorn default), so it is
 reached only through this proxy, and serve the team with `pnpm dev --host`, or
 `pnpm build` and then `pnpm preview --host`.
 
@@ -47,7 +47,7 @@ The routes follow the legacy web app (`web-pipeline`):
 "Continue with this design" saves the ready variant in localStorage, aborts the
 stream if generation is still running, and opens Studio. Studio loads the design
 from the URL IDs. An unknown or malformed link shows the empty state. The optional
-basic auth above is the only access control; there are no accounts or remote design saving.
+login above is the only access control; there are no accounts or remote design saving.
 
 The brief offers Rectangle, L-shaped, T-shaped, and Angled room outlines. The
 pipeline receives the selected polygon, openings, room type, and budget. The 3D

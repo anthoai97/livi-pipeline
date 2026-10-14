@@ -37,7 +37,7 @@ from llm_proxy import ProxyClient  # product-data/src, on the path through app
 RUNS_DIR = PIPELINE / ".data" / "runs"
 REVIEWS_DIR = PIPELINE / ".data" / "reviews"
 DEFAULT_MODEL = "claude-sonnet-5-5"
-DEFAULT_EFFORT = "medium"
+DEFAULT_EFFORT = "high"
 
 Record = dict[str, Any]
 
@@ -56,10 +56,12 @@ SELECTION = {
                   "1 = over the allowance, or so little spent that the room is clearly underfurnished; "
                   "3 = within the allowance but poorly allocated (cheap anchor piece, costly accessories); "
                   "5 = within the allowance with spending focused on the anchor pieces.",
-    "completeness": "Are the right items there for the room type and prompt? 1 = core pieces missing (seating in a living "
-                    "room, a bed in a bedroom, a table or enough chairs in a dining room); 3 = core pieces present but "
-                    "obvious supporting pieces missing (lighting, storage, side tables, nightstands) or items out of place; "
-                    "5 = everything the room needs, nothing out of place.",
+    "completeness": "Are the pieces the room needs there? The pipeline requires only the room's CORE PIECES (listed above); "
+                    "lamps, nightstands, clothes storage, side tables, sideboards, overhead lights and accent seats are "
+                    "optional suggestions it adds when budget and space allow. 1 = a core piece missing, or fewer dining "
+                    "chairs than required; 3 = core pieces present, but an item the prompt names is missing or items are out "
+                    "of place; 5 = the core pieces and every item the prompt names, nothing out of place. A missing optional "
+                    "suggestion that the prompt does not name does not lower this score.",
     "scale_fit": "Are product sizes right for the room and for each other? 1 = pieces clearly too big or too small; "
                  "3 = workable with one or two pieces off-scale; 5 = all pieces well proportioned.",
 }
@@ -89,6 +91,12 @@ ABBREVIATIONS = {"prompt_match": "prompt", "style_coherence": "style", "budget_u
                  "scale_fit": "scale", "circulation": "circ", "functional_grouping": "group", "space_use": "space",
                  "focal_point": "focal", "layout_quality": "quality", "overall": "overall"}
 CRITERIA = [*SELECTION, *LAYOUT, "overall"]
+CORE_PIECES = {  # the groups validate_selection requires (app.rules.selection.validation.room_requirements)
+    "living_room": "main seating (a sofa, loveseat or sectional), a coffee table, side table or desk, a rug, and a plant",
+    "bedroom": "a bed, a rug, and a plant",
+    "dining_room": "a dining table, the chairs the prompt asks for (4 when it names no number), and a plant",
+    "studio": "a bed, a sofa or loveseat, and a dining table with the chairs the prompt asks for (2 when it names no number)",
+}
 
 
 def _object(properties: dict) -> dict:
@@ -110,6 +118,8 @@ COMPARE_SCHEMA = _object({"distinctness": SCORE})
 IMAGE_KEY = ("The image is a top-down plan: +x right, +y up, light 1 m grid, scale bar in metres. Light tan translucent = "
              "rugs; blue = floor furniture; orange outline = wall-mounted items; gray outline = ceiling items; green = "
              "items resting on another item (lamps, decor). The dark line from each item's center ends at its front. "
+             "Items whose title says round or oval are drawn as ellipses; every other item is drawn as its bounding "
+             "rectangle, so take an item's shape from its title. "
              "Doors are gaps in the wall with a brown swing arc; windows are blue segments on the wall; light grey "
              "bands are protected circulation paths between doors.")
 
@@ -175,9 +185,10 @@ def review_prompt(record: Record, variant: Record) -> str:
 USER PROMPT: {request['user_intent']}
 BUDGET: ${budget:,.0f}; the pipeline allows a total up to {1 + BUDGET_FLEX_PCT:.0%} of it (${allowance:,.0f}). Total cost: ${cost:,.0f}{share}. The total counts purchasable prices and leaves TVs out.
 {room_text(record)}
+CORE PIECES the pipeline requires in this room: {CORE_PIECES.get(request['room_type'], '-')}.
 {variant.get('direction') or 'VARIANT DIRECTION: none (the default proposal).'}
 
-PRODUCTS AND PLACEMENT (one row per placed item; position is the footprint center):
+PRODUCTS AND PLACEMENT (one row per placed item; position is the footprint center; faces is the direction of the item's front, so judge orientation from it):
 {product_table(variant)}
 
 MINOR LAYOUT FINDINGS from the pipeline's validator (non-blocking): {findings}

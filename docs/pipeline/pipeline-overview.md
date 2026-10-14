@@ -46,15 +46,14 @@ flowchart TD
   budget. Minimal briefs stay minimal.
 - **TV (code):** adds a TV when the brief asks for one or a stand is chosen,
   swaps a TV too wide for its stand, otherwise hangs it on the wall at eye level.
-- **Checks:** budget, counts, required items, footprint floor, tabletop
+- **Checks:** budget, counts, required core groups, footprint floor and limit, tabletop
   supports, reuse limit between designs (code); style match to the anchor and
   brief attributes (Jev); then the solver places the selection once, and any
   item it leaves out fails the turn (`LAYOUT FIT`).
 - **Swap repair (code and one Jev request, no model call):** a product Jev
-  rejects for style, or one too large or small for the piece it serves, is
-  swapped for the next fitting product in its slot; then over 110%, swap for
-  cheaper; under 80%, swap for pricier toward 90% and never over 100%. Each
-  replacement passes the size, reuse and Jev style checks first. Same
+  rejects for style is swapped for the next fitting product in its slot; then
+  over 110%, swap for cheaper; under 80%, swap for pricier toward 90% and never
+  over 100%. Each replacement passes the reuse and Jev style checks first. Same
   category, same slot, pieces swapped, never added. The model is asked again
   only for what swaps cannot fix, with the previous product IDs and errors.
 - **Last turn:** products that still fail are removed; items the solver cannot

@@ -45,10 +45,10 @@ A new room inherits these without extra work:
   mirror) while the total is under the stated budget. The design-only plant is
   required unless the room opts out, as the studio does. Wall art has its own
   decor slot and is an optional piece.
-- **Catalog gaps for completeness pieces.** A required entry marked `gap_ok`
-  in `room_requirements` (a lamp, a nightstand, a sideboard) whose slot finds
-  no product is reported as a gap, and `validate_selection` does not require
-  it, so a missing catalog category never fails every selection turn.
+- **Searchable suggestions.** Lamps, nightstands, storage and accent seats
+  (and overhead lights in dining rooms and studios) get optional search slots
+  from the count-guidance roles (`room_requirements` `optional_roles`), so the
+  model can choose them without the room requiring them.
 - **Searchable companions.** When a requested item covers a required role, the
   role's other categories still get searched (`plan_slots`), for example side
   tables beside a requested coffee table.
@@ -72,7 +72,7 @@ gets living-room behavior, without it.
 | 2 | Room policy | `pipeline/app/rules/room_policy.py:9-10`, `:26` | Name in `RoomType` and `SUPPORTED_ROOM_TYPES`; a policy string like `DINING_FURNISHING_GUIDANCE` | Required |
 | 3 | Room policy | `room_policy.py:93` `excluded_room_categories` | Categories the room may never hold | Required |
 | 4 | Interpret | `pipeline/app/shared_stages.py:116` `_intent_prompt` | A policy bullet, like the dining one | Required |
-| 5 | Feasibility digest | `pipeline/app/rules/planner/feasibility_digest.py:151-336`; `planner/_util.py` `ROOM_SCALE_CUTOFFS_SQM` | Anchor role, required groups, optional categories, caps, notes; the compact and medium size cutoffs | Required |
+| 5 | Feasibility digest | `pipeline/app/rules/planner/feasibility_digest.py:151-336` | Anchor role, required groups, optional categories, caps, notes | Required |
 | 6 | Fit estimate | `pipeline/app/rules/planner/fit_check.py:140` `_recommend_counts` | Categories the estimate must never cut | Optional |
 | 7 | Seed guidance | `pipeline/app/rules/planner/seed_guidance.py:169` `build_seed_guidance` | `room_mode` and `primary_anchor_uid` | Required |
 | 8 | Catalog slots | `pipeline/app/rules/selection/validation.py:134` `room_requirements` | Required items | Required |
@@ -127,10 +127,9 @@ gets living-room behavior, without it.
    the `excluded_room_categories` block; the anchor role (for example
    `"desk"` with `{"desk"}`); companion groups, as dining adds
    `dining_seating`; whether a living-room `surface` group applies;
-   `optional_categories`; caps; completion notes. Give the room its size
-   classes in `ROOM_SCALE_CUTOFFS_SQM` (`planner/_util.py`), for example
-   `"home_office": (8.0, 12.0)`: compact below the first, medium below the
-   second. `room_scale` has no default, so a room without an entry fails.
+   `optional_categories`; caps; completion notes. Size classes
+   (`room_scale`, `planner/_util.py`) are the same for every room: compact
+   below 18 m², medium below 30 m², spacious above.
 
 5. **Set the seed room mode** in `build_seed_guidance`, for
    example `"work"` with the desk as `primary_anchor_uid`. `desk` and
@@ -141,19 +140,18 @@ gets living-room behavior, without it.
    with no entry is never searched unless the user asks for it.
 
    ```python
-   if room_type == "dining_room" or (room_type == "studio" and studio_dining_required(...)):
+   if room_type in {"dining_room", "studio"}:
        need("dining_table", {"dining_table"})
-       need("dining_seating", {"dining_chair"}, dining_chair_count({**intent, "room_type": room_type}, scale))
+       need("dining_seating", {"dining_chair"}, dining_chair_count({**intent, "room_type": room_type}))
    if room_type == "home_office":
        need("desk", {"desk"})
        need("work_seating", {"office_chair"})
-       need("lighting", COUNT_GUIDANCE_ROLE_CATEGORIES["lighting"], gap_ok=True)
    ```
 
-   Then decide the rug and the design-only plant. Mark a piece that completes
-   the room but is not its core group `gap_ok=True`, as the dining room does
-   with its sideboard and pendant: `validate_selection` then checks it with
-   no code of its own, and a catalog gap does not fail the selection.
+   Then decide the rug and the design-only plant. Require only the core group.
+   Pieces that complete the room, such as a lamp or a bookcase, stay
+   suggestions in the policy text and get optional slots from their
+   count-guidance roles, as the dining room's sideboard and pendant do.
 
 7. **Write the selection prompt branches.** In `_selection_prompt`, add the flag
    beside `dining`, then extend `anchor_name`,
@@ -192,8 +190,9 @@ gets living-room behavior, without it.
     returns `{"violations": {key: [] for key in HOME_OFFICE_ISSUE_KEYS}}`. Call
     it from `analyze_layout`, then register the keys (row 16). A desk and task
     chair are already checked in every room by
-    `compute_task_chair_orientation_violations` (`validation_functional.py`),
-    and the chair's 0.60 m pull-out by `bedroom_layout_measurements`.
+    `compute_task_chair_orientation_violations` (`validation_functional.py`).
+    The chair's 0.56 m pull-out (`bedroom_layout_measurements`) runs only in
+    bedrooms and studios, so a home office needs its own pull-out check.
 
 13. **Teach the solver only what it misses.** `_groups` already builds a `work`
     group from `desk` and `office_chair` (`solver.py`). Add
@@ -237,9 +236,7 @@ if table_count != 1 or not minimum_count <= chair_count <= target_count:
 
 Advice goes into `warnings`, as `MISSING RECOMMENDED` does. Keep
 `room_requirements` and `validate_selection` in step: each required entry needs
-a matching error, or slots and validation disagree. A `gap_ok` entry already
-has one: `MISSING REQUIRED: Select <count> <role> ...`, an error unless a fit
-step was applied or the candidates hold no product for it.
+a matching error, or slots and validation disagree.
 
 **Layout check.** A measurement returns findings under issue keys; the tier
 lists decide the effect. `findings_by_level` (`analysis.py`) puts keys from
@@ -313,8 +310,8 @@ Run from `pipeline/` with `conda activate livinit`.
     `MISSING REQUIRED: No anchor seating` until you add it.
   - The digest picks `anchor_seating` as the anchor (`feasibility_digest.py`)
     and adds a surface group.
-  - The selection prompt says a sofa, a surface and a lamp are mandatory
-    (`variant_stages.py`).
+  - The selection prompt says a sofa and a surface are mandatory and a lamp is
+    suggested (`variant_stages.py`).
   - `_ANCHOR_CATEGORIES.get(..., (FIT_ANCHOR_SEATING,))` protects a sofa, not
     your anchor.
   - `build_seed_guidance` falls back to a living-room `_room_mode`.

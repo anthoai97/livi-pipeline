@@ -19,8 +19,8 @@ POST /pipeline
                     direction, then deals them so variants get different products
      then in parallel, each:
        b. select    model picks products, code adds or swaps the TV, Jev and
-                    code check them, code swaps products that fail on style,
-                    size or budget (up to 4 turns)
+                    code check them, code swaps products that fail on style
+                    or budget (up to 4 turns)
        c. place     code solver places every item; each variant takes a
                     different one of its tied best layouts
        d. finish    model reviews and adjusts the layout; the final check
@@ -103,33 +103,31 @@ It computes:
   other: a straight 0.91 m band when one fits inside the outline (a rectangle
   with opposing doors), otherwise the shortest route through the polygon,
   retried at 0.6 m, and dropped when none exists. Furniture keeps them clear.
-- A size class (compact, medium, or spacious) by floor area per room type:
-  living room below 18 and 30 m², bedroom 11 and 16 m², dining room 10 and
-  16 m², studio 25 and 40 m². A 15 m² bedroom is medium.
-- A density budget: how much of the usable floor (doors excluded) floor
-  furniture may cover, by room type and size class. Footprint is width x depth
-  of each floor piece; rugs, wall- and ceiling-mounted pieces, tabletop items
-  and a TV on its stand do not count. Each room gets a comfortable target and a
-  maximum (`comfortable_load_sqm`, `overcrowded_load_sqm`); a living room or
-  bedroom also gets a sparse floor (`sparse_below_load_sqm`):
+- A size class by floor area, the same for every room type: compact below
+  18 m², medium below 30 m², spacious above. A 15 m² bedroom is compact.
+- A density budget by size class, as a share of the usable floor (doors
+  excluded): a comfortable load, an overcrowded load, and a sparse floor
+  (`comfortable_load_sqm`, `overcrowded_load_sqm`, `sparse_below_load_sqm`).
+  Dining rooms and studios have no sparse floor.
 
-  | Room | Compact | Medium | Spacious |
+  | Size class | Comfortable | Overcrowded | Sparse |
   |---|---|---|---|
-  | Living room | 22% / 30% | 27% / 35% | 30% / 38% |
-  | Bedroom | 42% / 50% | 35% / 43% | 30% / 38% |
-  | Dining room | 32% / 40% | 30% / 38% | 28% / 36% |
-  | Studio | 35% / 43% | 32% / 40% | 30% / 38% |
+  | Compact | 52% | 72% | 30% |
+  | Medium | 55% | 75% | 32% |
+  | Spacious | 60% | 82% | 25% |
 
-  For example, a 22 m² living room with a 0.81 m² door zone has 21.19 m²
-  usable: a 5.72 m² target and a 7.42 m² maximum. The sparse floor is 15%
-  (compact), 16% (medium) or 12.5% (spacious).
+  For example, a 22 m² living room with a 0.54 m² door zone has 21.46 m²
+  usable: a comfortable load of 11.80 m², an overcrowded load of 16.10 m², and
+  a sparse floor of 6.87 m².
 - Maximum counts per category for this room size.
-- A fit estimate: the requested items' real footprint, from default sizes per
-  role, against the same target and maximum. Above the target the room "may
-  feel tight", above the maximum "may feel overcrowded". When a requested
-  count does not fit, it sets `fit_warning`, and selection starts with smaller
-  products. Clearances are left to the layout checks, so a bed or sofa counts
-  at its own size.
+- A fit estimate: each requested item loads (width + 2c) x (depth + 2c) x
+  weight, from default sizes and the clearance ring c of its role (bed 0.6 m,
+  sofa 0.55 m, accent chair 0.45 m, surface and storage 0.35 m), against the
+  comfortable and overcrowded loads. Above the comfortable load the room "may
+  feel tight", above the overcrowded load "may feel overcrowded". Only an
+  overcrowded estimate in which a requested count does not fit sets
+  `fit_warning`, and selection starts with smaller products. A tight estimate
+  is a note only, as in the legacy pipeline.
 
 ## 3. Find candidate products
 
@@ -143,22 +141,23 @@ One slot is one kind of item the room may need:
 | Slot kind | Source | Example | Kept after Jev rank | Kept without it |
 |---|---|---|---:|---:|
 | Requested | each requested item | sofa, coffee table, floor lamp, TV | 6 | 10 |
-| Required | room rules not covered by a requested item (see below) | lamp, nightstand, sideboard, design-only plant | 6 | 10 |
-| Optional | room roles the model may use, and the other categories of a required role a request covers | accent seating, media unit, storage; a pendant or chandelier in a dining room or studio; side tables beside a requested coffee table | 4 | 6 |
+| Required | room rules not covered by a requested item (see below) | coffee or side table, dining chairs, design-only plant | 6 | 10 |
+| Optional | room roles the model may use, and the other categories of a required role a request covers | lamps, nightstands, accent seating, media unit, storage; a pendant or chandelier in a dining room or studio; side tables beside a requested coffee table | 4 | 6 |
 | Decor | fixed list | planter, sculpture, floor mirror, wall mirror, wall art | 4 | 6 |
 
-The required items per room (`room_requirements`):
+The required items per room (`room_requirements`) are the legacy core groups:
 
-| Room | Core | Completeness pieces |
-|---|---|---|
-| Living room | sofa; coffee or side table (a desk counts only when work is requested); rug; design-only plant; perimeter storage when spacious | a lamp; one accent chair when spacious |
-| Bedroom | one bed; rug; design-only plant | a nightstand and a lamp; a dresser or wardrobe from medium size |
-| Dining room | one table and its chairs (4, or 6 when spacious; 4 to 6 pass); design-only plant | a sideboard or cabinet and a pendant or chandelier from medium size |
-| Studio | bed; sofa or loveseat; a table with 2 chairs when the brief asks for one or the studio is 25 m² or more | a nightstand and a lamp; a dresser or wardrobe from medium size |
+| Room | Required |
+|---|---|
+| Living room | sofa; a coffee table, side table or desk; rug; design-only plant; perimeter storage when spacious |
+| Bedroom | one bed; rug; design-only plant |
+| Dining room | one table and its chairs (4 unless the brief states a count; a space-first brief may seat 2); design-only plant |
+| Studio | bed; sofa or loveseat; a dining table with 2 chairs |
 
-A completeness piece is not required when the brief excludes its kind, and the
-accent chairs, clothes storage, and dining pieces are not required for a minimal
-or space-first brief.
+Lamps, nightstands, clothes storage, sideboards, overhead lights and accent
+seats are suggestions: they get optional slots, and the prompts suggest them.
+A living room or bedroom without a lamp only gets the advisory `MISSING
+REQUIRED: No lighting found` warning.
 
 Rank (4a) deals each variant up to these sizes from each slot.
 
@@ -185,14 +184,12 @@ For each slot, the stage:
 3. Merges the categories in turn, so one category cannot crowd out the others.
 4. Applies checks that need the room: the product must fit the floor in either
    orientation, meet the requested minimum sizes, match a strict brand, and be
-   allowed in this room type. In a living room, coffee tables outside 0.35 to
-   0.50 m high and side tables outside 0.45 to 0.65 m high are dropped, the
-   same limits the selection size check applies.
+   allowed in this room type.
 5. Moves preferred brands to the front and keeps up to 30 products.
 
 If a required slot finds nothing within the user's limits, the stage searches
-again without them and marks the slot as relaxed. A requested item or a
-completeness piece with no match is reported as a gap and is not required.
+again without them and marks the slot as relaxed. A requested item with no
+match is reported as a gap and is not required.
 Gaps do not fail the variants.
 
 The result is `slots` (the plan) and `pool` (kept products per slot).
@@ -293,25 +290,15 @@ toward the reuse limit. Each variant's selection prompt lists its own pool.
 6. The legacy selection validator checks the result:
    - total cost is at most 110% of the budget, with TVs and design-only decor
      excluded
-   - counts, required items, and requested attributes, plus the Jev results.
-     A missing completeness piece fails the turn unless a fit step was
-     applied or the variant's candidates hold no product for it. A bed 1.4 m
-     or wider in a spacious bedroom needs a nightstand on each side, unless
-     the brief states a nightstand count
-   - piece sizes: a living-room coffee table 0.35 to 0.50 m high and a side
-     table 0.45 to 0.65 m high; a dining light 0.15 m inside each table edge;
-     a bedroom rug that is a runner (at most 0.90 m wide) or reaches 0.45 m
-     past each side of the bed. A piece within 5 cm of a limit passes,
-     because catalog sizes come from 3D bounding boxes. A failing piece is an
-     error only when the candidates hold one that passes, else a warning. A
-     coffee table 0.5 to 0.75 x the sofa width is only a warning
-   - footprint reaches the density floor and stays at or under the maximum.
-     Over the maximum is an `OVERCROWDED` error, for example `OVERCROWDED:
-     floor furniture covers 7.67m² of 21.19m² usable; at most 7.42m² (target
-     5.72m²) for a medium living room. Drop optional pieces or choose smaller
-     ones.` It is a warning after a fit step, or when the pieces filling the
-     required roles alone go over the maximum. The prompt asks the model to
-     stay at or under the target
+   - counts, required items, and requested attributes, plus the Jev results
+   - footprint, twice the width x depth of every selected piece but rugs,
+     reaches the density floor (living rooms and bedrooms) and stays at or
+     under the usable floor. Over it is an `OVERCROWDED` error, for example
+     `OVERCROWDED: 2 x the footprint of the selected pieces (rugs excluded) is
+     15.35m², over the 13.46m² usable floor. Drop optional pieces or choose
+     smaller ones.` It is a warning after a fit step, or when the pieces
+     filling the required roles alone go over it. The prompt states the floor
+     and the limit, with the comfortable load as an upper reference
    - tabletop items have a support (a TV no longer needs a stand)
    - at most `PRODUCT_REUSE_RATE` of the distinct selected products are marked
      shared (`REUSE LIMIT` error)
@@ -322,15 +309,14 @@ or their supports. If the solver leaves items out, the selection fails
 with one `LAYOUT FIT` error that names each item left out, with its size, and
 asks for products from the same slots that fit together. Blocking findings on
 placed items do not fail the selection; the final review (4d) handles them.
-The validator still checks dining table edge length (a table under 0.75 m
-deep seats one long side only), dining light clearance, and tiny-room counts.
+The validator still checks dining table edge length, dining light clearance
+(at least 0.76 m above the tabletop), and tiny-room counts.
 
 Code then swaps products that fail on their own, without another model turn
 (`_swap_repair`). It changes every unit of a product and swaps only within the
 same category and the same slot of this variant's pool, in ranked order:
 
-1. **Style and size.** A product Jev rejects for style, or a `SIZE` error
-   whose candidates hold a passing product, is swapped first.
+1. **Style.** A product Jev rejects for style is swapped first.
 2. **Over the allowance** (`OVER BUDGET`, above 110%): the purchasable
    products from most to least expensive, skipping the anchor (sofa, bed, or
    dining table), are swapped for cheaper ones until the total is within the
@@ -341,8 +327,8 @@ same category and the same slot of this variant's pool, in ranked order:
    It upgrades pieces; it never adds any.
 
 A replacement must pass before it is used: not selected, purchasable when the
-product is, within the reuse limit, and no `SIZE` error beside the other
-pieces. A product Jev rejects for style gets every such candidate in its slot;
+product is, and within the reuse limit. A product Jev rejects for style gets
+every such candidate in its slot;
 any other product gets up to 3. One request asks Jev the style question for
 all of them, against the anchor, and a product takes its first candidate in
 ranked order with yes at or above 0.3. With the Jev check off or failed,
@@ -364,7 +350,7 @@ The swapped selection goes through the same checks, including the Jev check
 and the solver check above. A round is kept when it passes or leaves fewer
 errors, and a second round starts from it, so a style fix stays even while
 the budget is still off. The run record notes `swap repair: <old> -> <new>
-(style|size|budget), ...`, or `swap repair rejected: <swaps>; <errors>`. Each
+(style|budget), ...`, or `swap repair rejected: <swaps>; <errors>`. Each
 turn that ends failing adds `selection turn <n> failed: <errors>` to the run
 record.
 
@@ -417,8 +403,8 @@ The solver (`app.rules.layout.solver`) splits the selection into groups:
 - each other piece alone
 
 Each group has a few arrangements taken from the existing rules. For example,
-the sofa stands 0.08 m off its wall, the coffee table 0.39 or 0.44 m in front of
-it (the check allows 0.38 to 0.50 m), and accent chairs beside the table or
+the sofa stands 0.12 m off its wall, the coffee table 0.54 or 0.47 m in front of
+it (the check allows 0.46 to 0.61 m), and accent chairs beside the table or
 across from the sofa.
 [Adding a product category](adding-a-product-category.md) explains how a
 category's role decides its group, and when a new category needs its own.
@@ -426,26 +412,25 @@ category's role decides its group, and when a new category needs its own.
 The solver tries each group against every wall, facing into the room, and the
 dining table on a grid of positions. It drops a position that overlaps placed
 furniture, blocks a door or a protected path, or takes the space a bed side, a
-chair pull-out, or a cabinet front needs: 0.60 m beside a bed and past its foot
-(0.91 m when the foot strip is the way to a door), 0.46 m behind a dining chair,
-0.60 m behind a desk chair, 0.76 m in front of storage, and 0.56 m in front of a
-sofa. A door's clear zone is as deep as the door is wide. It also keeps the
+chair pull-out, or a cabinet front needs: 0.56 m beside a bed and past its foot,
+behind a dining or desk chair, in front of storage, and in front of a sofa. A
+door's clear zone is the opening width and 0.60 m deep. It also keeps the
 whole dining group, chairs included, 0.76 m from the sofa group. When a TV faces the sofa, the sofa can
 also move forward off its wall, so that the viewing distance fits the TV size.
 
 A TV that fits no selected stand hangs on the wall that faces its viewer, with
-its screen center at 1.1 m (seated eye level), or 1.3 m when it serves a bed,
-and above any stand under it.
+its screen center at 1.1 m (seated eye level) for every viewer, and above any
+stand under it.
 Its viewing distance is still measured and costed. A TV that fits a stand
 stands on it, as before.
 
 In a studio, the TV stand can also stand free as a divider, on the sofa's axis
-and facing it, with the screen near the middle of its viewing range (1.5 to 2.8
+and facing it, with the screen near the middle of its viewing range (1.2 to 3.5
 times the TV width). For example, a 1.2 m TV that the far wall puts 5.3 m from
-the sofa stands 2.6 m from it instead. The checker notes a free-standing stand,
-so a wall-backed TV within its range still wins. A floor lamp goes beside the
-sofa or an accent chair; dining chairs count as seats only in a room without
-one.
+the sofa stands about 2.8 m from it instead. The checker notes a free-standing
+stand, so a wall-backed TV within its range still wins. A floor lamp goes beside
+the sofa or an accent chair; dining chairs count as seats only in a room without
+one. The check measures a floor lamp's reach to the nearest seat of any kind.
 
 Groups go in order, largest first. After each group, the best partial layouts,
 measured with the same checker as validation, go on to the next group. The kept
@@ -489,9 +474,9 @@ displays sit on their supports. It is then analyzed into findings by severity:
   walking paths.
 - **Critical P2:** function problems that block a layout, such as a broken
   seating group.
-- **Other P2:** quality notes that do not block, such as a piece taller than
-  the sill in front of a window, or a dining light more than 0.90 m above the
-  table.
+- **Other P2:** quality notes that do not block, such as a dining rug that
+  covers less than 95% of the table and chairs, or a dining light off the table
+  center.
 
 ### 4d. Review, check, and send
 
@@ -516,9 +501,9 @@ breaks them.
    design rules (`DESIGN_RULES` in `app/rules/layout_rules.py`: shared rules such
    as clear zones, a TV whose back does not face another zone, nothing tall in
    front of a window, a floor lamp at the seat it lights, plus rules per room
-   type, such as a bed seen from the door but not in line with it, and a
-   studio's bed in the corner farthest from the door, its sofa back or a shelf
-   between sitting and sleeping, and dining by the entry wall), writes two or three sentences on
+   type, such as a headboard against a wall with access from the bed's sides
+   and foot, and a studio's sleeping, sitting and dining each in their own part
+   of the room), writes two or three sentences on
    what is wrong with it, and returns new poses that fix those problems. It
    does not choose among layouts: place already dealt each design its own.
 2. **Adjust.** Code rejects poses for unknown items, with non-finite values, or

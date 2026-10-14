@@ -164,7 +164,7 @@ make it its own category.
    `sideboard` (`bedroom.py`), and the dining check measures `sideboard`,
    `cabinet` and `storage_unit` (`dining.py`). Add `credenza` to the sets the
    room should check, and to the same rooms in `_STORAGE_FRONTS`
-   (`solver.py`), which reserves a 0.76 m band in front of it (`STORAGE_FRONT_M`). The two lists
+   (`solver.py`), which reserves a 0.56 m band in front of it (`STORAGE_FRONT_M`). The two lists
    must match: a band with no check only steers the search, and a check with no
    band makes the solver find the problem late. A living room measures no
    storage front, so a credenza there gets no band.

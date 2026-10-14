@@ -41,8 +41,6 @@ export function placeOpenings(draft: RoomDraft): RoomDraft {
   const [doorAt, windowAt] = draft.doorWall === draft.windowWall ? SHARED_SPOTS : [0.5, 0.5];
   return { ...draft, doorAt, windowAt };
 }
-// Legacy wizard wall names for rectangles (web-pipeline lib/wizard/buildRoomGeometry.ts).
-const LEGACY_WALL = { "Back wall": "top", "Front wall": "bottom", "Left wall": "left", "Right wall": "right" } as const;
 
 export const draftVertices = (draft: RoomDraft) => shapeVertices(draft.shape, draft.corner, draft.width, draft.length);
 
@@ -55,27 +53,16 @@ function pointOn(edge: Edge, t: number): Vec2 {
 }
 
 /**
- * An opening `size` wide at `t` along the edge. As the legacy wizard sends them, a door box is always
- * `size` x 0.05, and a window box turns to 0.05 x `size` on a side wall (`turnOnSideWall`).
+ * An opening `size` wide at `t` along the edge, sent as the room builder sends them: a `size` x 0.05 box
+ * on every wall. The pipeline finds the wall from the centre.
  */
-function opening(
-  edge: Edge,
-  t: number,
-  size: number,
-  turnOnSideWall: boolean,
-  rectangle: boolean,
-  rest: Pick<Opening, "id" | "height" | "sill_height">,
-): Opening {
-  const turned = turnOnSideWall && Math.abs(edge.normal[0]) > 0.7;
-  // Rectangles carry the legacy wall name; on other shapes the pipeline finds the wall from the centre.
-  const wall = rectangle ? LEGACY_WALL[edge.label as keyof typeof LEGACY_WALL] : undefined;
-  return { ...rest, center: pointOn(edge, t), width: turned ? 0.05 : size, depth: turned ? size : 0.05, ...(wall ? { wall } : {}) };
+function opening(edge: Edge, t: number, size: number, rest: Pick<Opening, "id" | "height" | "sill_height">): Opening {
+  return { ...rest, center: pointOn(edge, t), width: size, depth: 0.05 };
 }
 
 export function buildRequest(draft: RoomDraft): PipelineRequest {
   const vertices = draftVertices(draft);
   const edges = polygonEdges(vertices);
-  const rectangle = draft.shape === "Rectangle";
   return {
     user_intent: draft.prompt.trim(),
     budget: draft.budget,
@@ -83,16 +70,8 @@ export function buildRequest(draft: RoomDraft): PipelineRequest {
     room_area: [draft.width, draft.length],
     room_vertices: vertices.map(([x, y]) => [round(x), round(y)]),
     wall_height: draft.height,
-    room_doors: [
-      opening(edges[draft.doorWall], draft.doorAt, DOOR_WIDTH, false, rectangle, { id: "door-1", height: 2.08 }),
-    ],
-    room_windows: [
-      opening(edges[draft.windowWall], draft.windowAt, WINDOW_WIDTH, true, rectangle, {
-        id: "window-1",
-        height: 1.2,
-        sill_height: 0.9,
-      }),
-    ],
+    room_doors: [opening(edges[draft.doorWall], draft.doorAt, DOOR_WIDTH, { id: "door-1", height: 2.08 })],
+    room_windows: [opening(edges[draft.windowWall], draft.windowAt, WINDOW_WIDTH, { id: "window-1", height: 1.2, sill_height: 0.9 })],
   };
 }
 
@@ -124,7 +103,7 @@ export interface Example {
   draft: RoomDraft;
 }
 
-/** A rectangular room's example; door and window are [wall index, position along the wall]. */
+/** A room's example; door and window are [wall index, position along the wall]. Cut corners are the builder's defaults. */
 function example(
   group: string,
   label: string,
@@ -134,8 +113,10 @@ function example(
   [width, length, height]: [number, number, number],
   [doorWall, doorAt]: [number, number],
   [windowWall, windowAt]: [number, number],
+  shape: ShapeId = "Rectangle",
 ): Example {
-  return { group, label, draft: { prompt, roomType, budget, shape: "Rectangle", corner: "top-right", width, length, height, doorWall, doorAt, windowWall, windowAt } };
+  const corner = shape === "Angled" ? "top-left" : "top-right";
+  return { group, label, draft: { prompt, roomType, budget, shape, corner, width, length, height, doorWall, doorAt, windowWall, windowAt } };
 }
 
 // Rectangle walls in vertex order: 0 front, 1 right, 2 back, 3 left. The door goes on the back wall
@@ -228,6 +209,25 @@ export const EXAMPLES: Example[] = [
   example("Benchmark cases", "dining_room_large", "dining_room",
     "A formal dining room for eight with a long wooden table, eight upholstered chairs, a sideboard, and a large rug.",
     15000, [5.5, 6.5, 2.8], [2, 0.1636], [0, 0.5]),
+  // Each shape's door on its outer back wall and window on its left wall, as the preview shows them.
+  example("Room shapes", "L-shaped living room", "living_room",
+    "A warm living room in the L's main space: a three-seat sofa, an armchair, a coffee table, and a rug, with a reading lamp in the short leg.",
+    9000, [5.5, 6.5, 2.7], [4, 0.5], [5, 0.5], "L-Shaped"),
+  example("Room shapes", "Alcove bedroom", "bedroom",
+    "A calm bedroom with the queen bed set into the alcove, two nightstands, and a dresser on the main wall.",
+    7000, [4.5, 5, 2.7], [7, 0.5], [4, 0.5], "Alcove"),
+  example("Room shapes", "T-shaped living room", "living_room",
+    "A family living room across the wide bar: a sofa facing a TV stand, two armchairs, and a coffee table. Keep the stem clear as the entrance.",
+    10000, [6, 6.5, 2.7], [4, 0.3], [5, 0.5], "T-Shaped"),
+  example("Room shapes", "Angled dining room", "dining_room",
+    "A modern dining room for six with a long table, six chairs, and a sideboard along the straight wall. Keep the angled corner open.",
+    9000, [4.5, 5.5, 2.7], [2, 0.4], [4, 0.5], "Angled"),
+  example("Room shapes", "Z-shaped studio", "studio",
+    "A studio with a double bed in the back half, a compact sofa facing a TV in the front half, and a small dining table for two between them.",
+    9000, [5.5, 7, 2.7], [4, 0.5], [5, 0.5], "Z-Shaped"),
+  example("Room shapes", "U-shaped living room", "living_room",
+    "A living room with a sofa and coffee table in one leg of the U, a reading chair and floor lamp in the other, and a rug tying them together.",
+    10000, [6, 6, 2.7], [7, 0.5], [6, 0.5], "U-Shaped"),
 ];
 
 export const roomLabel = (type: RoomType) => ROOM_TYPES.find((room) => room.value === type)?.label ?? type;

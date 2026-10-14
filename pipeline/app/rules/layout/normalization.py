@@ -22,7 +22,7 @@ from app.rules.pipeline_shared import (
     is_floor_lamp_asset,
     is_wall_aligned_asset,
     matches_category_keywords,
-    nearest_wall,
+    nearest_axis_wall,
     room_bounds,
     support_top_z,
 )
@@ -70,11 +70,11 @@ def _wall_gap(wall: RoomWall, pos: list[float], half_across: float) -> float:
     """Signed gap between ``wall`` and the back of a footprint centered at ``pos``."""
     x = float(pos[0])
     y = float(pos[1])
-    if wall.name == "left":
+    if wall.facing == "left":
         return x - half_across - wall.line_at(y)
-    if wall.name == "right":
+    if wall.facing == "right":
         return wall.line_at(y) - x - half_across
-    if wall.name == "bottom":
+    if wall.facing == "bottom":
         return y - half_across - wall.line_at(x)
     return wall.line_at(x) - y - half_across
 
@@ -94,11 +94,11 @@ def _flush_against_wall(
     if wall.vertical:
         y = clamp(y, lo + half_along, hi - half_along)
         line = wall.line_at(y)
-        x = line + half_across + gap if wall.name == "left" else line - half_across - gap
+        x = line + half_across + gap if wall.facing == "left" else line - half_across - gap
     else:
         x = clamp(x, lo + half_along, hi - half_along)
         line = wall.line_at(x)
-        y = line + half_across + gap if wall.name == "bottom" else line - half_across - gap
+        y = line + half_across + gap if wall.facing == "bottom" else line - half_across - gap
     return x, y
 
 def _snap_wall_aligned_placements(
@@ -117,7 +117,7 @@ def _snap_wall_aligned_placements(
         ):
             continue
         pos, current_rot_z, width, depth, _ = extract_placement(placement, asset)
-        wall = nearest_wall(pos, boundary)
+        wall = nearest_axis_wall(pos, boundary)
         is_sofa = matches_category_keywords(
             asset.get("category", ""),
             uid,
@@ -135,11 +135,11 @@ def _snap_wall_aligned_placements(
             # other axis. Only canonicalize its facing when the nearby wall is
             # already the sofa's back wall; otherwise the wall is beside it and
             # snapping would destroy the functional seating relationship.
-            if _back_wall_name(current_rot_z) != wall.name:
+            if _back_wall_name(current_rot_z) != wall.facing:
                 continue
-            placement["rotation"] = [0.0, 0.0, _inward_rotation_for_wall(wall.name)]
+            placement["rotation"] = [0.0, 0.0, _inward_rotation_for_wall(wall.facing)]
             continue
-        rot_z = _inward_rotation_for_wall(wall.name)
+        rot_z = _inward_rotation_for_wall(wall.facing)
         half_x, half_y = projected_half_extents(width, depth, rot_z)
         half_across, half_along = (half_x, half_y) if wall.vertical else (half_y, half_x)
         if 0.0 <= _wall_gap(wall, pos, half_across) <= WALL_FLUSH_MAX_GAP_M:
@@ -167,14 +167,14 @@ def _snap_wall_mounted_positions(
             continue
         pos, _, width, _, _ = extract_placement(placement, asset)
         depth = float(asset.get("depth", 0.1) or 0.1)
-        wall = nearest_wall(pos, boundary)
+        wall = nearest_axis_wall(pos, boundary)
         flush = _flush_against_wall(wall, pos, depth / 2 + 0.02, width / 2, 0.0)
         if flush is None:
             continue
         result[uid] = {
             **placement,
             "position": [flush[0], flush[1], _wall_mount_z(asset, wall_height)],
-            "rotation": [0, 0, _inward_rotation_for_wall(wall.name)],
+            "rotation": [0, 0, _inward_rotation_for_wall(wall.facing)],
         }
     return result
 

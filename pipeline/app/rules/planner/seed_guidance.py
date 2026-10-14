@@ -184,12 +184,13 @@ def build_seed_guidance(
         role_assets[role].append(asset)
         roles_by_uid[uid] = role
 
-    candidate_anchor_walls = [
-        str(item.get("wall") or "").strip().lower()
+    # Placement reasons in the four cardinal walls until phase 3 of #53: each ranked edge contributes its facing.
+    candidate_anchor_walls = _unique([
+        str(item.get("facing") or "")
         for item in (room_facts.get("candidate_anchor_walls") or [])
-        if str(item.get("wall") or "").strip().lower()
-    ]
-    digest_anchor_wall = str((feasibility_digest.get("anchor_wall") or {}).get("wall") or "").strip().lower()
+        if item.get("facing")
+    ])
+    digest_anchor_wall = str((feasibility_digest.get("anchor_wall") or {}).get("facing") or "")
     anchor_wall = digest_anchor_wall or (candidate_anchor_walls[0] if candidate_anchor_walls else None)
     focal_wall = _opposite_wall(anchor_wall) if role_assets["media"] else None
     support_walls = _adjacent_walls(anchor_wall)

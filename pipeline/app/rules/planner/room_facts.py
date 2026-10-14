@@ -1,23 +1,22 @@
 from collections.abc import Mapping
 from typing import Any
 from app.rules.geometry.primitives import room_polygon
-from app.rules.protected_paths import protected_paths_for_intent
+from app.rules.protected_paths import build_protected_paths
 from app.rules.room_policy import normalize_room_type
 
 from app.rules.pipeline_shared import (
     DEFAULT_WALL_HEIGHT_M,
     door_clearance_rect,
     door_opening_rect,
-    infer_wall_from_center,
     rect_bounds,
+    room_walls,
 )
 
 from ._util import round4 as _round
+from ._util import wall_text
 from .feasibility_digest import build_feasibility_digest
 from .fit_check import build_fit_check
 from .intent_packet import requested_counts_from_intent_packet
-
-_WALLS = ("left", "right", "bottom", "top")
 
 
 def _point(x: float, y: float) -> list[float]:
@@ -65,46 +64,18 @@ def _rect_payload(
         "depth": _round(rect["depth"]),
         "bounds": _bounds_payload(min_x, min_y, max_x, max_y, room_area),
     }
-    if "wall" in rect:
-        payload["wall"] = rect["wall"]
-    if "opening_center" in rect:
-        payload["opening_center"] = _point(*rect["opening_center"])
-    if "opening_width" in rect:
-        payload["opening_width"] = _round(rect["opening_width"])
-    if "thickness" in rect:
-        payload["thickness"] = _round(rect["thickness"])
-    if "clearance" in rect:
-        payload["clearance"] = _round(rect["clearance"])
-    if "inward_normal" in rect:
-        payload["inward_normal"] = [_round(v) for v in rect["inward_normal"]]
+    for key in ("wall", "wall_label", "facing"):
+        if key in rect:
+            payload[key] = rect[key]
+    for key in ("opening_width", "thickness", "clearance"):
+        if key in rect:
+            payload[key] = _round(rect[key])
+    for key in ("opening_center", "inward_normal"):
+        if key in rect:
+            payload[key] = [_round(v) for v in rect[key]]
+    if rect.get("polygon"):
+        payload["polygon"] = [_point(x, y) for x, y in rect["polygon"]]
     return payload
-
-
-def _opening_wall(
-    opening: dict[str, Any],
-    room_vertices: list[list[float]],
-) -> str:
-    wall = str(opening.get("wall", "") or "").strip().lower()
-    if wall in _WALLS:
-        return wall
-    return infer_wall_from_center(opening.get("center") or [0.0, 0.0], boundary=room_vertices)
-
-
-def _wall_span(
-    wall: str,
-    min_x: float,
-    min_y: float,
-    max_x: float,
-    max_y: float,
-    wall_length: float,
-) -> list[float]:
-    if wall in {"left", "right"}:
-        start, end = min_y, max_y
-    else:
-        start, end = min_x, max_x
-    start = max(0.0, min(float(wall_length), float(start)))
-    end = max(start, min(float(wall_length), float(end)))
-    return [_round(start), _round(end)]
 
 
 def _merge_spans(spans: list[list[float]]) -> list[list[float]]:
@@ -149,70 +120,57 @@ def build_room_facts(
         "normalized_vertices": [_normalize_point(x, y, room_area) for x, y in room_vertices],
     }
     bounds = _bounds_payload(0.0, 0.0, width, depth, room_area)
-
-    wall_lengths = {
-        "left": depth,
-        "right": depth,
-        "bottom": width,
-        "top": width,
-    }
+    edges = room_walls(room_vertices)
 
     opening_records: list[dict[str, Any]] = []
     door_records: list[dict[str, Any]] = []
     window_records: list[dict[str, Any]] = []
     blocked_zones: list[dict[str, Any]] = []
 
+    def wall_span(rect: dict[str, Any]) -> tuple[float, list[float]]:
+        """The opening's center and extent along its wall, from the wall's start."""
+        wall = edges[rect["wall"]]
+        at = wall.along(*rect["opening_center"])
+        half = rect["opening_width"] / 2
+        return _round(at), [_round(max(0.0, at - half)), _round(min(wall.length, at + half))]
+
     for index, door in enumerate(doors):
         opening_rect = door_opening_rect(door, boundary=room_vertices, room_area=room_area)
         clearance_rect = door_clearance_rect(door, boundary=room_vertices, room_area=room_area)
         wall = opening_rect["wall"]
-        min_x, min_y, max_x, max_y = rect_bounds(opening_rect)
-        span = _wall_span(wall, min_x, min_y, max_x, max_y, wall_lengths[wall])
-        door_record = {
+        at, span = wall_span(opening_rect)
+        door_records.append({
             "index": index,
             "wall": wall,
             "opening": _rect_payload(opening_rect, room_area),
             "blocked_zone": _rect_payload(clearance_rect, room_area),
             "span": span,
-        }
-        door_records.append(door_record)
-        opening_records.append({"kind": "door", "wall": wall, "span": span})
+        })
+        opening_records.append({"kind": "door", "index": index, "wall": wall, "at": at, "span": span})
         blocked_zones.append(
             {
                 "id": f"door_{index}",
                 "kind": "door",
-                "wall": wall,
                 "reason": "door_clearance",
                 **_rect_payload(clearance_rect, room_area),
             }
         )
 
     for index, window in enumerate(windows):
-        wall = _opening_wall(window, room_vertices)
-        rect = {
-            "wall": wall,
-            "center": [
-                float((window.get("center") or [0.0, 0.0])[0]),
-                float((window.get("center") or [0.0, 0.0])[1]),
-            ],
-            "width": max(float(window.get("width", 0.0) or 0.0), 0.05),
-            "depth": max(float(window.get("depth", 0.0) or 0.0), 0.05),
-        }
-        min_x, min_y, max_x, max_y = rect_bounds(rect)
-        span = _wall_span(wall, min_x, min_y, max_x, max_y, wall_lengths[wall])
-        window_record = {
+        rect = door_opening_rect(window, boundary=room_vertices, room_area=room_area)
+        wall = rect["wall"]
+        at, span = wall_span(rect)
+        window_records.append({
             "index": index,
             "wall": wall,
             "blocked_zone": _rect_payload(rect, room_area),
             "span": span,
-        }
-        window_records.append(window_record)
-        opening_records.append({"kind": "window", "wall": wall, "span": span})
+        })
+        opening_records.append({"kind": "window", "index": index, "wall": wall, "at": at, "span": span})
         blocked_zones.append(
             {
                 "id": f"window_{index}",
                 "kind": "window",
-                "wall": wall,
                 "reason": "window_opening",
                 **_rect_payload(rect, room_area),
             }
@@ -232,27 +190,30 @@ def build_room_facts(
         blocked_zones.append(payload)
 
     walls: list[dict[str, Any]] = []
-    by_wall = {wall: {"doors": 0, "windows": 0, "total": 0} for wall in _WALLS}
-    for wall in _WALLS:
-        wall_openings = [record for record in opening_records if record["wall"] == wall]
-        for record in wall_openings:
-            by_wall[wall][f"{record['kind']}s"] += 1
-            by_wall[wall]["total"] += 1
+    for edge in edges:
+        wall_openings = [record for record in opening_records if record["wall"] == edge.index]
         blocked_spans = _merge_spans([record["span"] for record in wall_openings])
-        clear_spans = _clear_spans(wall_lengths[wall], blocked_spans)
+        clear_spans = _clear_spans(edge.length, blocked_spans)
         blocked_length = sum(end - start for start, end in blocked_spans)
-        longest_clear_span = max((end - start for start, end in clear_spans), default=wall_lengths[wall])
+        longest_clear_span = max((end - start for start, end in clear_spans), default=edge.length)
         walls.append(
             {
-                "wall": wall,
-                "length": _round(wall_lengths[wall]),
-                "opening_count": by_wall[wall]["total"],
-                "door_count": by_wall[wall]["doors"],
-                "window_count": by_wall[wall]["windows"],
+                "wall": edge.index,
+                "label": edge.label,
+                "facing": edge.facing,
+                "start": _point(*edge.start),
+                "end": _point(*edge.end),
+                "on_box": edge.on_box,
+                "length": _round(edge.length),
+                "opening_count": len(wall_openings),
+                "door_count": sum(record["kind"] == "door" for record in wall_openings),
+                "window_count": sum(record["kind"] == "window" for record in wall_openings),
+                "openings": [{"kind": record["kind"], "index": record["index"], "at": record["at"], "span": record["span"]}
+                             for record in wall_openings],
                 "blocked_spans": blocked_spans,
                 "clear_spans": clear_spans,
                 "blocked_length": _round(blocked_length),
-                "blocked_ratio": _round(blocked_length / wall_lengths[wall]) if wall_lengths[wall] > 0 else 0.0,
+                "blocked_ratio": _round(blocked_length / edge.length),
                 "longest_clear_span": _round(longest_clear_span),
             }
         )
@@ -261,6 +222,8 @@ def build_room_facts(
         [
             {
                 "wall": wall["wall"],
+                "label": wall["label"],
+                "facing": wall["facing"],
                 "usable_length": wall["longest_clear_span"],
                 "blocked_ratio": wall["blocked_ratio"],
                 "opening_count": wall["opening_count"],
@@ -268,14 +231,17 @@ def build_room_facts(
             for wall in walls
             if wall["longest_clear_span"] > 0
         ],
-        key=lambda wall: (-wall["usable_length"], wall["blocked_ratio"], wall["opening_count"], wall["wall"]),
+        # The facing name breaks ties as it always has, so a rectangle ranks exactly as before; the index then
+        # separates walls facing the same way.
+        key=lambda wall: (-wall["usable_length"], wall["blocked_ratio"], wall["opening_count"], wall["facing"] or "~", wall["wall"]),
     )
     if candidate_anchor_walls:
         candidate_anchor_walls[0]["preferred"] = True
 
     return {
         "version": 1,
-        "shape": "rectangle",
+        "shape": "rectangle" if len(edges) == 4 and all(edge.on_box for edge in edges) else "polygon",
+        "vertex_count": len(edges),
         "boundary": boundary,
         "bounds": bounds,
         "width": _round(width),
@@ -287,7 +253,6 @@ def build_room_facts(
                 "windows": len(window_records),
                 "total": len(door_records) + len(window_records),
             },
-            "by_wall": by_wall,
             "doors": door_records,
             "windows": window_records,
         },
@@ -309,35 +274,43 @@ def build_room_facts(
     }
 
 
+def format_room_shape(room_facts: Mapping[str, Any]) -> str:
+    """"rectangle 4.00m x 5.00m" or "polygon with 8 walls in a 4.00m x 5.00m box"."""
+    width = float(room_facts.get("width") or 0.0)
+    depth = float(room_facts.get("depth") or 0.0)
+    if room_facts.get("shape") == "rectangle":
+        return f"rectangle {width:.2f}m x {depth:.2f}m"
+    return f"polygon with {room_facts.get('vertex_count')} walls in a {width:.2f}m x {depth:.2f}m box"
+
+
 def format_room_facts_for_prompt(room_facts: Mapping[str, Any] | None) -> str:
     if not isinstance(room_facts, Mapping):
         return ""
 
-    summary = room_facts.get("summary") or {}
     openings = room_facts.get("openings") or {}
     counts = openings.get("counts") or {}
     anchor_walls = room_facts.get("candidate_anchor_walls") or []
     top_anchors = ", ".join(
-        f"{wall.get('wall')} ({wall.get('usable_length', 0):.2f}m)"
-        for wall in anchor_walls[:3]
-        if wall.get("wall")
+        f"{wall_text(wall)} ({wall.get('usable_length', 0):.2f}m)" for wall in anchor_walls[:3]
     ) or "none"
-
-    dimensions = summary.get("dimensions") or [room_facts.get("width"), room_facts.get("depth")]
-    width = float(dimensions[0] or 0.0)
-    depth = float(dimensions[1] or 0.0)
-    area = float(summary.get("area") or room_facts.get("area") or 0.0)
-    best_anchor = summary.get("best_anchor_wall") or "none"
+    wall_lines = [
+        f"  - {wall_text(wall)}, {float(wall.get('length') or 0.0):.2f} m"
+        + "".join(f", {opening['kind']} at {float(opening['at']):.2f} m" for opening in wall.get("openings") or [])
+        for wall in room_facts.get("walls") or []
+    ]
+    area = float(room_facts.get("area") or 0.0)
     blocked_zone_count = len(room_facts.get("blocked_zones") or [])
     protected_path_count = len(room_facts.get("protected_paths") or [])
 
     return (
         "ROOM FACTS:\n"
-        f"- dimensions: {width:.2f}m x {depth:.2f}m ({area:.2f} sqm)\n"
+        f"- shape: {format_room_shape(room_facts)}, {area:.2f} sqm\n"
+        f"- walls (index (name), length, openings at their distance from the wall's start):\n"
+        + "\n".join(wall_lines) + "\n"
         f"- openings: {int(counts.get('doors', 0))} doors, {int(counts.get('windows', 0))} windows\n"
         f"- blocked_zones: {blocked_zone_count}\n"
         f"- protected_paths: {protected_path_count}\n"
-        f"- best_anchor_wall: {best_anchor}\n"
+        f"- best_anchor_wall: {wall_text(anchor_walls[0] if anchor_walls else None)}\n"
         f"- candidate_anchor_walls: {top_anchors}"
     )
 
@@ -377,7 +350,7 @@ def build_room_context(
     doors = list(room_doors or [])
     windows = list(room_windows or [])
     intent = {**intent, "room_type": room_type}
-    protected_paths = protected_paths_for_intent(room_area, doors, intent)
+    protected_paths = build_protected_paths(vertices, doors)
     facts = build_room_facts(
         room_area=room_area,
         room_vertices=vertices,

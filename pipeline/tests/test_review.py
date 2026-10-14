@@ -123,7 +123,8 @@ def test_review_runs_reviews_ready_variants_and_reports_failures(tmp_path):
                   if name == "variant_review" and "cool palette" not in content[0]["text"])
     for expected in ("$3,000", "up to 110% of it ($3,300)", "a total between 100% and the allowance is within budget",
                      "layout_quality", "5 = looks professionally arranged", "$1,500 (50% of budget)", "Oak sofa", "| (1.00, 2.50) | right (+x) |", "side_table_1",
-                     "media_group_violations", "Door on the bottom wall", "5 = clear paths", "default proposal"):
+                     "media_group_violations", "4.00 x 5.00 m rectangle (20.0 m2)", "Walls: 0 Front (4.00 m), 1 Right (5.00 m)",
+                     "Door on wall 0 (Front) at (2.00, 0.00)", "Window on wall 2 (Back)", "5 = clear paths", "default proposal"):
         assert expected in prompt
 
     [run] = result["runs"]

@@ -15,7 +15,7 @@ Tier model
 Use ``build_rules_block`` to assemble the slice each node needs.
 """
 
-from app.rules.pipeline_shared import WALL_MOUNT_Z
+from app.rules.pipeline_shared import WALL_MOUNT_Z, room_bounds, room_walls
 from app.rules.planner.fit_policy import SECTIONAL_MIN_ROOM  # noqa: F401 (re-exported)
 from app.rules.layout.bedroom import (
     BED_ACCESS_MIN_M,
@@ -105,14 +105,18 @@ def design_rules_block(room_type: str) -> str:
     return "\n".join(f"- {rule}" for rule in (*DESIGN_RULES["all"], *DESIGN_RULES.get(room_type, ())))
 
 
-def coordinate_system_block(room_width: float, room_depth: float) -> str:
-    """Compact coordinate, wall index, and rotation primer."""
+def coordinate_system_block(room_vertices: list[list[float]]) -> str:
+    """Compact coordinate, wall list, and rotation primer."""
+    min_x, min_y, max_x, max_y = room_bounds(boundary=room_vertices)
+    walls = "; ".join(
+        f"{wall.index} ({wall.label}) ({wall.start[0]:.2f}, {wall.start[1]:.2f}) -> ({wall.end[0]:.2f}, {wall.end[1]:.2f})"
+        for wall in room_walls(room_vertices)
+    )
     return (
         f"COORDINATES: origin (0,0) bottom-left, +X right, +Y up. "
-        f"Bounds x=[0, {room_width:.2f}], y=[0, {room_depth:.2f}]. "
+        f"Bounds x=[{min_x:.2f}, {max_x:.2f}], y=[{min_y:.2f}, {max_y:.2f}]. "
         f"Position is the asset center. Keep the asset's projected half-extents inside every wall.\n"
-        f"WALLS: 0=right (x={room_width:.2f}), 1=top (y={room_depth:.2f}), "
-        f"2=left (x=0), 3=bottom (y=0).\n"
+        f"WALLS (index (name) start -> end, counter-clockwise, the room on the left of each): {walls}.\n"
         f"ROTATION rot_z (radians) uses standard yaw / atan2 semantics: "
         f"0 → +X, π/2 → +Y, π → -X, 3π/2 → -Y.\n"
         f"rot_z is the direction the asset FRONT faces. BACK = opposite side, LEFT/RIGHT = ±90° from FRONT.\n"

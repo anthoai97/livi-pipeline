@@ -7,6 +7,13 @@ def round4(value: float) -> float:
     return round(float(value), 4)
 
 
+def wall_text(record: Any) -> str:
+    """A wall record for a prompt: "wall 3 (Back (inner))", or "none"."""
+    if not record or record.get("wall") is None:
+        return "none"
+    return f"wall {record['wall']} ({record.get('label') or record.get('wall_label') or '?'})"
+
+
 def clean_list(values: Any) -> list[str]:
     if not isinstance(values, list):
         return []

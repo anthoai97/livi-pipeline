@@ -190,7 +190,7 @@ export const EXAMPLES: Example[] = [
     10000, [5, 6.5, 2.7], [2, 0.28], [2, 0.72]),
   example("Benchmark cases", "dining_room_tight", "dining_room",
     "A cosy Scandinavian dining room for four with a round light wood table, four soft upholstered chairs, and a rug underneath. Keep the door clear.",
-    10000, [3.4, 3.8, 2.7], [2, 0.28], [2, 0.72]),
+    10000, [4, 4.5, 2.7], [2, 0.28], [2, 0.72]),
   example("Benchmark cases", "bedroom_small", "bedroom",
     "A calm small bedroom with a queen bed, two nightstands, and a dresser.",
     6000, [3, 3, 2.7], [2, 0.2], [0, 0.5]),

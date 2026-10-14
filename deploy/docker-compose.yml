@@ -1,0 +1,28 @@
+# Deploy with the published images: put this file and a .env (from .env.example)
+# in one folder on the server, then run `docker compose pull && docker compose up -d`.
+# The pipeline reads every setting from .env; point LOCAL_CONNECTION_STRING at the
+# database with the prepared catalog. Only the web app is published, on
+# 127.0.0.1:4173; reach it through an SSH or Cloudflare tunnel, and set
+# AUTH_PASSWORD to turn on its login.
+services:
+  pipeline:
+    image: anquachdev/livi-pipeline:latest
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - runs:/app/pipeline/.data/runs
+
+  web:
+    image: anquachdev/livi-web:latest
+    restart: unless-stopped
+    environment:
+      API_TARGET: http://pipeline:8000
+      AUTH_USERNAME: ${AUTH_USERNAME:-}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
+    ports:
+      - "127.0.0.1:4173:4173"
+    depends_on:
+      - pipeline
+
+volumes:
+  runs:

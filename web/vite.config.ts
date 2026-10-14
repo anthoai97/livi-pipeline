@@ -62,7 +62,7 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       proxy: {
         "/api": {
-          target: "http://localhost:8000",
+          target: process.env.API_TARGET || "http://localhost:8000", // http://pipeline:8000 in docker-compose.yml
           rewrite: (path) => path.replace(/^\/api/, ""),
         },
         // The asset bucket sends no CORS headers, so the browser loads GLBs through this proxy.
@@ -73,5 +73,7 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    // Tunnels (SSH, Cloudflare) arrive with their own host name; the login guards access.
+    preview: { allowedHosts: true },
   };
 });

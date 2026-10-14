@@ -239,8 +239,10 @@ def _call(client: ProxyClient, content: list, schema: dict, name: str) -> Record
     started = time.monotonic()
     try:
         result = client.complete(content, schema, name=name)
+        if missing := [key for key in schema["required"] if key not in result]:
+            raise ValueError(f"answer has no {', '.join(missing)}")
         return {"result": result, "latency_s": round(time.monotonic() - started, 2), "error": None}
-    except Exception as exc:  # one failed call is reported, the rest go on
+    except Exception as exc:  # one failed call or incomplete answer is reported, the rest go on
         return {"result": None, "latency_s": round(time.monotonic() - started, 2), "error": str(exc)[:500]}
 
 

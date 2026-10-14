@@ -336,8 +336,9 @@ def build_room_context(
     - furniture_area_sqm: usable floor area, the selection footprint limit.
     - fit: build_fit_check estimate for the requested counts; fit.counts.recommended
       holds the counts that fit.
-    - fit_warning: True when the estimate is tight or overcrowded and some
-      requested count does not fit, so selection starts with compact products.
+    - fit_warning: True when the estimate is overcrowded and some requested
+      count does not fit, so selection starts with compact products. A tight
+      estimate stays advisory, as in the legacy pipeline.
     """
     room_type = normalize_room_type(room_type)
     room_area = (float(room_area[0]), float(room_area[1]))
@@ -380,6 +381,6 @@ def build_room_context(
         "digest": digest,
         "furniture_area_sqm": float(digest["available_furnishing_area_sqm"]),
         "fit": fit,
-        "fit_warning": fit["severity"] in {"tight", "overcrowded"}
+        "fit_warning": fit["severity"] == "overcrowded"
         and any(int(recommended.get(category, 0)) < int(count) for category, count in requested.items()),
     }

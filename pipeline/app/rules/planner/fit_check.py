@@ -67,11 +67,14 @@ def _available_area(
 def _asset_load(asset: Mapping[str, Any], fallback_index: int) -> dict[str, Any]:
     category = _normalize_category(asset.get("category") or asset.get("type")) or "unknown"
     role = _role_for_category(category)
-    default_width, default_depth, floor = ROLE_PROFILES[role]
+    default_width, default_depth, clearance, weight = ROLE_PROFILES[role]
     width = _positive_float(asset.get("width"), default_width)
     depth = _positive_float(asset.get("depth"), default_depth)
+    footprint = width * depth
+    adjusted = (width + clearance * 2.0) * (depth + clearance * 2.0) * weight
     mode = str(asset.get("placement_mode") or "").strip().lower()
-    footprint = 0.0 if not floor or asset.get("support_uid") or mode in {"tabletop", "wall", "ceiling"} else width * depth
+    if asset.get("support_uid") or mode in {"tabletop", "wall", "ceiling"}:
+        footprint = adjusted = 0.0
     uid = str(asset.get("uid") or asset.get("id") or asset.get("asset_uid") or "").strip()
 
     return {
@@ -81,6 +84,7 @@ def _asset_load(asset: Mapping[str, Any], fallback_index: int) -> dict[str, Any]
         "width": _round(width),
         "depth": _round(depth),
         "footprint_sqm": _round(footprint),
+        "clearance_adjusted_sqm": _round(adjusted),
     }
 
 
@@ -108,13 +112,13 @@ def _role_counts(counts: Mapping[str, int]) -> dict[str, int]:
 def _average_loads(loads: list[Mapping[str, Any]]) -> dict[str, float]:
     grouped: dict[str, list[float]] = {}
     for load in loads:
-        grouped.setdefault(str(load["category"]), []).append(float(load["footprint_sqm"]))
+        grouped.setdefault(str(load["category"]), []).append(float(load["clearance_adjusted_sqm"]))
     return {category: sum(values) / len(values) for category, values in grouped.items()}
 
 
 def _default_load(category: str) -> float:
-    width, depth, floor = ROLE_PROFILES[_role_for_category(category)]
-    return width * depth if floor else 0.0
+    width, depth, clearance, weight = ROLE_PROFILES[_role_for_category(category)]
+    return (width + clearance * 2.0) * (depth + clearance * 2.0) * weight
 
 
 def _estimated_load(counts: Mapping[str, int], average_loads: Mapping[str, float]) -> float:
@@ -143,7 +147,6 @@ def _recommend_counts(
     room_scale: str,
     available_area_sqm: float,
     average_loads: Mapping[str, float],
-    thresholds: Mapping[str, float],
     room_type: str = "living_room",
 ) -> dict[str, int]:
     recommended = {
@@ -152,7 +155,7 @@ def _recommend_counts(
         for category, count in source_counts.items()
         if min(count, _category_cap(category, room_scale)) > 0
     }
-    target_load = available_area_sqm * thresholds["comfortable"]
+    target_load = available_area_sqm * ROOM_THRESHOLDS[room_scale]["comfortable"]
 
     if room_type == "bedroom":
         for group in reversed(BEDROOM_FIT_GROUPS):
@@ -201,10 +204,11 @@ def _recommend_counts(
 
 def _completion_report(
     *,
-    thresholds: Mapping[str, float],
+    room_scale: str,
     density_score: float,
     selected_counts: Mapping[str, int],
 ) -> dict[str, Any]:
+    thresholds = ROOM_THRESHOLDS[room_scale]
     if density_score < thresholds["sparse"]:
         level = "sparse"
     elif density_score > thresholds["comfortable"]:
@@ -228,9 +232,9 @@ def build_fit_check(
 ) -> dict[str, Any]:
     """Estimate whether selected/requested furniture can fit before placement.
 
-    Measures the pieces' real floor footprint (default sizes by role for requested counts; rugs, tabletop and
-    mounted pieces excluded) as a share of the usable floor, against the room type's ROOM_THRESHOLDS: above the
-    comfortable target is tight, above the maximum overcrowded. The layout checks measure clearances later.
+    Measures each piece's load, (width + 2 x ring) x (depth + 2 x ring) x weight by its role (ROLE_PROFILES; default
+    sizes for requested counts; tabletop and mounted pieces load nothing), as a share of the usable floor, against
+    the size class's ROOM_THRESHOLDS: above the comfortable load is tight, above the overcrowded load overcrowded.
     """
     loads = [_asset_load(asset, index) for index, asset in enumerate(selected_assets or [])]
     selected_counts = _normalize_counts(Counter(load["category"] for load in loads))
@@ -244,15 +248,15 @@ def build_fit_check(
         feasibility_digest=feasibility_digest,
     )
     room_type = normalize_room_type(room_type or (feasibility_digest or {}).get("room_type"))
-    room_scale = str((feasibility_digest or {}).get("room_scale") or "").strip() or _room_scale(area_sqm, room_type)
-    if room_scale not in ROOM_THRESHOLDS[room_type]:
-        room_scale = _room_scale(area_sqm, room_type)
+    room_scale = str((feasibility_digest or {}).get("room_scale") or "").strip() or _room_scale(area_sqm)
+    if room_scale not in ROOM_THRESHOLDS:
+        room_scale = _room_scale(area_sqm)
 
     average_loads = _average_loads(loads)
-    selected_sqm = sum(float(load["footprint_sqm"]) for load in loads)
-    source_sqm = _estimated_load(source_counts, average_loads) if requested else selected_sqm
-    density_score = source_sqm / available_area_sqm if available_area_sqm > 0 else 0.0
-    thresholds = ROOM_THRESHOLDS[room_type][room_scale]
+    selected_adjusted_sqm = sum(float(load["clearance_adjusted_sqm"]) for load in loads)
+    source_adjusted_sqm = _estimated_load(source_counts, average_loads) if requested else selected_adjusted_sqm
+    density_score = source_adjusted_sqm / available_area_sqm if available_area_sqm > 0 else 0.0
+    thresholds = ROOM_THRESHOLDS[room_scale]
 
     if density_score > thresholds["overcrowded"]:
         severity = "overcrowded"
@@ -269,7 +273,6 @@ def build_fit_check(
         room_scale=room_scale,
         available_area_sqm=available_area_sqm,
         average_loads=average_loads,
-        thresholds=thresholds,
         room_type=room_type,
     )
     excess = {
@@ -278,7 +281,7 @@ def build_fit_check(
         if count > int(recommended.get(category, 0))
     }
     completion = _completion_report(
-        thresholds=thresholds,
+        room_scale=room_scale,
         density_score=density_score,
         selected_counts=selected_counts,
     )
@@ -292,14 +295,15 @@ def build_fit_check(
         warnings.append("This room may feel underfurnished for its size.")
 
     return {
-        "load_basis": "floor_footprint_estimate",
+        "load_basis": "category_clearance_estimate",
         "severity": severity,
         "message": message,
         "room_scale": room_scale,
         "room_area_sqm": _round(area_sqm),
         "available_furnishing_area_sqm": _round(available_area_sqm),
-        "furniture_footprint_sqm": _round(source_sqm),
-        "selected_footprint_sqm": _round(selected_sqm),
+        "furniture_footprint_sqm": _round(sum(float(load["footprint_sqm"]) for load in loads)),
+        "clearance_adjusted_footprint_sqm": _round(source_adjusted_sqm),
+        "selected_clearance_adjusted_footprint_sqm": _round(selected_adjusted_sqm),
         "density_score": _round(density_score),
         "thresholds": {
             "comfortable_max": thresholds["comfortable"],

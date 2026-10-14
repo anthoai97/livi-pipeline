@@ -38,7 +38,6 @@ from app.rules.layout.validation_geometry import (
     compute_protected_path_violations,
     compute_wall_aligned_violations,
     compute_wall_mount_violations,
-    compute_window_front_violations,
 )
 
 def analyze_layout(
@@ -55,8 +54,8 @@ def analyze_layout(
 ) -> dict[str, Any]:
     """Measure a layout. Returns every issue key, each holding its findings (empty when clean).
 
-    wall_height is the room's ceiling, for wall and ceiling mounts. The desk chair
-    pull-out (bed_workstation_violations) is measured in every room; a studio's
+    wall_height is the room's ceiling, for wall and ceiling mounts. Bedroom checks
+    (the desk chair pull-out among them) run in bedrooms and studios; a studio's
     dining checks run only when it has a dining table.
     """
     issues = {
@@ -82,7 +81,6 @@ def analyze_layout(
         "floor_lamp_reach_violations": [],
         "table_lamp_support_violations": [],
         "service_corridor_violations": [],
-        "window_front_violations": [],
     }
     if "P0" in tiers:
         issues["overlaps"] = compute_overlaps(layout, assets)
@@ -129,14 +127,11 @@ def analyze_layout(
         )
     if "P2" in tiers:
         studio = room_type == "studio"
-        bedroom = bedroom_layout_measurements(layout, assets, boundary, room_area, room_doors=room_doors,
-                                              mixed_groups=studio)["violations"]
-        issues.update(bedroom if room_type in {"bedroom", "studio"}
-                      else {"bed_workstation_violations": bedroom["bed_workstation_violations"]})
+        if room_type in {"bedroom", "studio"}:
+            issues.update(bedroom_layout_measurements(layout, assets, boundary, room_area, mixed_groups=studio)["violations"])
         if room_type == "dining_room" or (studio and any(
                 normalize_category(asset.get("category")) == "dining_table" for asset in assets)):
-            issues.update(dining_layout_measurements(layout, assets, boundary, room_area, room_doors=room_doors,
-                                                     protected_paths=protected_paths, mixed_groups=studio)["violations"])
+            issues.update(dining_layout_measurements(layout, assets, boundary, room_area, mixed_groups=studio)["violations"])
         if room_type == "studio":
             issues.update(studio_layout_measurements(layout, assets)["violations"])
         issues["sofa_coffee_table_violations"] = compute_sofa_coffee_table_violations(
@@ -187,12 +182,6 @@ def analyze_layout(
         )
         issues["service_corridor_violations"] = (
             compute_service_corridor_violations(layout, assets)
-        )
-        issues["window_front_violations"] = compute_window_front_violations(
-            layout,
-            assets,
-            room_windows,
-            boundary,
         )
         for key, findings in comfort_layout_measurements(layout, assets, room_type, boundary=boundary)["violations"].items():
             issues[key].extend(findings)

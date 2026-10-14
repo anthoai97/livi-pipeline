@@ -25,19 +25,10 @@ def clean_list(values: Any) -> list[str]:
     return result
 
 
-# (compact below, medium below) floor area in m2 per room type; spacious above.
-ROOM_SCALE_CUTOFFS_SQM = {
-    "living_room": (18.0, 30.0),
-    "bedroom": (11.0, 16.0),
-    "dining_room": (10.0, 16.0),
-    "studio": (25.0, 40.0),
-}
-
-
-def room_scale(area_sqm: float, room_type: str) -> str:
-    compact, medium = ROOM_SCALE_CUTOFFS_SQM[room_type]
-    if area_sqm < compact:
+def room_scale(area_sqm: float) -> str:
+    """Size class for every room type: compact below 18 m2, medium below 30 m2, spacious above."""
+    if area_sqm < 18.0:
         return "compact"
-    if area_sqm < medium:
+    if area_sqm < 30.0:
         return "medium"
     return "spacious"

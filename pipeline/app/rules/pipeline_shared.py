@@ -36,6 +36,7 @@ from app.rules.categories import (  # noqa: F401
 from app.rules.door_geometry import (  # noqa: F401
     DEFAULT_DOOR_THICKNESS,
     DEFAULT_DOOR_WIDTH,
+    DOOR_CLEARANCE,
     RoomWall,
     clamp,
     door_clearance_area,

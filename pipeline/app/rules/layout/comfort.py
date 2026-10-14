@@ -18,10 +18,10 @@ from app.rules.layout.bedroom import is_bedside_asset
 from app.rules.layout.studio import SITTING_CATEGORIES, accessory_group
 from app.rules.planner.taxonomy import normalize_category
 
-TV_VIEW_WIDTH_RANGE = (1.5, 2.8)  # x screen width: 1.3 to 2.4 x the diagonal
+TV_VIEW_WIDTH_RANGE = (1.2, 3.5)  # x screen width
 SOFA_MEDIA_ACCESS_MIN_M = 0.56
 SITTING_RUG_MIN_DEPTH_M = 0.90
-SITTING_RUG_MIN_WIDTH_RATIO = 1.0  # the full sofa width, so the front legs stand on the rug
+SITTING_RUG_MIN_WIDTH_RATIO = 0.90
 
 
 def sitting_rug_selection_errors(assets: list[dict[str, Any]]) -> list[str]:

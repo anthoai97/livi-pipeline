@@ -4,46 +4,51 @@ from collections.abc import Mapping
 import re
 from typing import Any, Literal
 
-from app.rules.layout.bedroom import BED_TWO_SIDED_MIN_WIDTH_M
-
 RoomType = Literal["living_room", "bedroom", "dining_room", "studio"]
 SUPPORTED_ROOM_TYPES = ("living_room", "bedroom", "dining_room", "studio")
-STUDIO_DINING_MIN_AREA_SQM = 25.0
 STUDIO_FURNISHING_GUIDANCE = (
-    "A studio has a sleeping group, one complete standalone bed, and a sitting group, a compact sofa or loveseat; "
-    "a sofa never stands in for the bed. "
-    f"It adds a dining table with two matching dining chairs when the brief asks for one or the studio is "
-    f"{STUDIO_DINING_MIN_AREA_SQM:.0f} m2 or more; stated seat counts take precedence, and dining chairs never stand in "
-    "for the sofa. "
-    "The bed needs a nightstand and a bedside lamp, and a medium or spacious studio a dresser or wardrobe, "
-    "unless the brief excludes them or asks for minimal or space-first furniture. "
-    "A coffee or side table, floor lamp, rug per group, bookcase, storage, overhead light and plant are optional; "
-    "a wardrobe, a TV with its support and a desk with a task chair are added only when requested. "
-    "A TV serves the sofa unless the brief asks to watch from the bed or from both. "
-    "When space is short, drop optional pieces first, then the requested desk and chair, then the TV and its support, "
-    "then the wardrobe, and keep the bed, sofa, dining group and their access."
+    "A studio holds three separate groups in one room: one complete standalone adult bed, a compact sofa or "
+    "loveseat for sitting, and one dining table with two matching dining chairs; stated seat counts take precedence. "
+    "A sofa never stands in for the bed, and dining chairs never stand in for the sofa. "
+    "Choose smaller matching pieces before dropping a group. "
+    "Bedside service, lighting and a sitting surface are suggested when space permits, without the accessories of "
+    "three full rooms; a wardrobe, a TV with its support and a desk with a task chair are added only when requested. "
+    "When space is short, keep the three groups and their access, drop optional accessories first, then the requested "
+    "desk and chair, then the TV and its support, then the wardrobe, keeping each group whole. "
+    "A TV serves the sofa unless the brief asks to watch from the bed or from both; the sofa and TV face each other, "
+    "and for shared viewing the bed and sofa face the same TV from separate wall spans. "
+    "Each rug, light, bedside piece and surface serves its own group. Reserve bed side and foot access, dining chair "
+    "pull-out and clear entry walkways together. "
+    "Plants and other finishing decor are optional; do not add clothing storage, dining storage, extra rugs or "
+    "separate reading chairs as filler."
 )
 DINING_FURNISHING_GUIDANCE = (
-    "A dining room centers on one standalone dining table with matching dining chairs: four by default, "
-    "up to six in a spacious room when the table seats them; stated seat counts take precedence. "
-    "A medium or spacious dining room also needs a sideboard or cabinet and a pendant or chandelier over the table, "
-    "unless the brief excludes them or asks for minimal or space-first furniture. "
-    "A plant is required; wall art, a mirror and a rug are optional, and a bar cart or bench is added only when requested. "
-    "Do not add a sofa, coffee table, bed, TV or desk unless the brief asks for one. "
-    "Leave room to sit, pull chairs out and pass behind them, without blocking doors or walkways. "
-    "When space is short, drop optional pieces first, then choose a smaller table and chairs; never cut the seat count."
+    "A dining room centers on one standalone dining table with matching dining chairs as one usable group: four by "
+    "default; stated seat counts take precedence. A space-first or fit-only brief may use a smaller usable group, "
+    "never below a stated count. "
+    "Use actual table and chair sizes, leaving room to sit, pull chairs out and pass behind them without blocking "
+    "doors or walkways; choose a smaller table and chairs before dropping a requested function. "
+    "Suggested, not required: one sideboard or dining cabinet when a usable wall and front access allow it, one "
+    "pendant or chandelier over the table when its full model height and the ceiling allow it (prefer a shorter "
+    "model; never assume a shorter hanger), and one piece or a matching pair of wall art. "
+    "Minimal and space-first briefs, exclusions, the budget and stated seat counts come first; drop suggestions before "
+    "the dining group or its access. The decor plant is still required. A rug, a mirror and a centerpiece are added "
+    "only when requested, and a requested rug covers the table and the chairs as they move. "
+    "Do not add a sofa, coffee table, bed, TV or desk to a generic dining room, or add furniture just to fill the "
+    "floor or spend the budget."
 )
 BEDROOM_FURNISHING_GUIDANCE = (
-    "A bedroom centers on one complete adult bed with a nightstand and a bedside lamp; "
-    f"a bed {BED_TWO_SIDED_MIN_WIDTH_M:.1f} m wide or more gets a nightstand on each side in a spacious room. "
-    "A medium or spacious bedroom also needs a dresser or wardrobe, unless the brief excludes them or asks for "
-    "minimal or space-first furniture. "
-    "A rug and a plant are required; a bench, accent chair, floor lamp, mirror and wall art are optional. "
-    "A wardrobe for hanging clothes, a TV with its support and a desk with a task chair are added only when requested, "
-    "and a dresser does not replace a requested wardrobe. "
-    "When space is short, drop optional pieces first, then the desk and chair, then the TV and its support, "
-    "then the wardrobe, keeping each group whole. "
-    "Stated must-have items, exclusions and priorities in the brief take precedence."
+    "A bedroom centers on one complete adult bed. A wardrobe, a TV with its support and a desk with a task chair are "
+    "added only when requested; a generic bedroom brief requests none of them, and only a wardrobe, armoire or "
+    "hanging-clothes request asks for a wardrobe. "
+    "After the bed, plan useful bedside service (nightstands and lamps), clothing storage and clear walkways; these are "
+    "suggested, not required. Then the requested wardrobe, the requested TV with its support, and the requested desk "
+    "and chair, in that order. "
+    "Use actual catalog sizes and the usable wall and access space, not the room area alone. When space is short, "
+    "drop the whole desk and chair first, then the TV and its support, and the wardrobe last; never leave half a "
+    "group, and a dresser or cabinet does not replace a requested wardrobe. Extra folded-clothes storage ranks below "
+    "requested groups. "
+    "Stated must-have items, priorities, exclusions and desk-only requests in the brief take precedence."
 )
 # Highest to lowest retention priority; used only for fit recommendations.
 BEDROOM_FIT_GROUPS = (
@@ -81,9 +86,8 @@ def excluded_room_categories(room_type: str) -> set[str]:
     return excluded
 
 
-def dining_chair_count(intent_packet: Mapping[str, Any], room_scale: str) -> int:
-    """The fresh-room default (2 in a studio, 6 in a spacious dining room, else 4) yields to
-    structured, user-stated seating counts."""
+def dining_chair_count(intent_packet: Mapping[str, Any]) -> int:
+    """The fresh-room default (2 in a studio, else 4) yields to structured, user-stated seating counts."""
     counts = [
         int(item.get("count") or 0)
         for item in intent_packet.get("requested_items") or []
@@ -91,18 +95,7 @@ def dining_chair_count(intent_packet: Mapping[str, Any], room_scale: str) -> int
         and item.get("canonical_category") in {"dining_chair", "chair"}
         and (item.get("exact") or int(item.get("count") or 0) > 1)
     ]
-    if counts:
-        return sum(counts)
-    if intent_packet.get("room_type") == "studio":
-        return 2
-    return 6 if room_scale == "spacious" else 4
-
-
-def studio_dining_required(intent_packet: Mapping[str, Any], area_sqm: float) -> bool:
-    """A studio needs its dining group when the brief asks for a dining table or chairs, or
-    the studio is STUDIO_DINING_MIN_AREA_SQM or more; a smaller one may eat at a counter."""
-    requested = set(intent_packet.get("requested_categories") or [])
-    return bool(requested & {"dining_table", "dining_chair"}) or area_sqm >= STUDIO_DINING_MIN_AREA_SQM
+    return sum(counts) if counts else (2 if intent_packet.get("room_type") == "studio" else 4)
 
 
 def studio_viewing_assets(assets: list[dict[str, Any]], intent_packet: Mapping[str, Any]) -> list[dict[str, Any]]:

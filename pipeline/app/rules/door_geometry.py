@@ -8,6 +8,7 @@ from shapely.geometry.polygon import orient
 
 DEFAULT_DOOR_WIDTH = 0.9   # meters – used when door geometry is missing
 DEFAULT_DOOR_THICKNESS = 0.08  # meters – thin opening marker along the wall
+DOOR_CLEARANCE = 0.6       # meters – depth of the furniture-free zone in front of a door
 DIAGONAL = math.sin(math.pi / 8)  # a wall more than 22.5 deg off an axis is a corner wall (wallNames.ts)
 _TIER_M = 0.01  # walls within this of the outermost one share its name
 _CARDINAL_NORMALS = {"left": (1.0, 0.0), "right": (-1.0, 0.0), "bottom": (0.0, 1.0), "top": (0.0, -1.0)}
@@ -286,14 +287,13 @@ def door_clearance_rect(
     boundary: list[list[float]] | None = None,
     room_area: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
-    """Return the inward-only doorway clearance rectangle, as deep as the opening is wide (the leaf's swing)."""
+    """Return the inward-only doorway clearance rectangle: the opening width, DOOR_CLEARANCE deep."""
     opening = door_opening_rect(door, boundary=boundary, room_area=room_area)
     wall = _opening_wall(door, boundary=boundary, room_area=room_area)
-    clearance = opening["opening_width"]
     return {
         **opening,
-        **_on_wall_rect(wall, tuple(opening["opening_center"]), clearance / 2, clearance),
-        "clearance": clearance,
+        **_on_wall_rect(wall, tuple(opening["opening_center"]), opening["opening_width"] / 2, DOOR_CLEARANCE),
+        "clearance": DOOR_CLEARANCE,
     }
 
 

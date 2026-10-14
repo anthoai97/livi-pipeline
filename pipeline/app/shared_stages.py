@@ -42,13 +42,7 @@ from app.rules.selection.catalog import (
     catalog_asset,
     filter_oversized_seating,
 )
-from app.rules.selection.constants import (
-    BUDGET_EXCLUDED_CATEGORIES,
-    BUDGET_FLEX_PCT,
-    COFFEE_TABLE_HEIGHT_M,
-    SIDE_TABLE_HEIGHT_M,
-    SIZE_TOLERANCE_M,
-)
+from app.rules.selection.constants import BUDGET_EXCLUDED_CATEGORIES, BUDGET_FLEX_PCT
 from app.rules.selection.validation import _ORIENTATION_FREE_CATEGORIES, _size_limits_met, room_requirements
 
 if TYPE_CHECKING:
@@ -317,9 +311,8 @@ def plan_slots(intent: Record, room: Record, budget: float) -> list[Record]:
     canonical category, or None), `count`, `text`
     (search text), `categories` (prepared category values), `max_price`,
     `limits` (requested size limits and strict attributes), `strict_brands`,
-    `preferred_brands`, `design_only`, `required`, `gap_ok` (a completeness
-    piece, a gap when nothing is found), `relaxed` (searched without the
-    request's limits), and `gap`.
+    `preferred_brands`, `design_only`, `required`, `relaxed` (searched without
+    the request's limits), and `gap`.
     """
     room_type = room["room_type"]
     width, depth = room["room_area"]
@@ -332,7 +325,7 @@ def plan_slots(intent: Record, room: Record, budget: float) -> list[Record]:
     slots: list[Record] = []
 
     def add(kind: str, slot_id: str, canonical: set[str], *, label: str = "", item: Record | None = None,
-            count: int = 0, required: bool = False, design_only: bool = False, gap_ok: bool = False) -> None:
+            count: int = 0, required: bool = False, design_only: bool = False) -> None:
         kept = [asset["category"] for asset in filter_oversized_seating([{"category": c} for c in sorted(canonical)], width, depth)]
         if not kept:
             return
@@ -358,7 +351,6 @@ def plan_slots(intent: Record, room: Record, budget: float) -> list[Record]:
             "preferred_brands": _brands(intent, kept, required=False),
             "design_only": design_only,
             "required": required,
-            "gap_ok": gap_ok,
             "relaxed": False,
             "gap": False,
         })
@@ -375,7 +367,7 @@ def plan_slots(intent: Record, room: Record, budget: float) -> list[Record]:
     for need in requirements["required"]:
         if need["decor_only"] or not set(need["categories"]) & requested_categories:
             add("required", need["role"], set(need["categories"]), count=need["count"], required=True,
-                design_only=need["decor_only"], gap_ok=need["gap_ok"])
+                design_only=need["decor_only"])
         else:
             # The rest of a covered role stays a choice, such as side tables beside a requested coffee table.
             add("optional", need["role"], set(need["categories"]) - requested_categories - excluded)
@@ -426,25 +418,17 @@ def merge_categories(rows: list[Record]) -> list[Record]:
     return [row for turn in zip_longest(*groups.values()) for row in turn if row is not None]
 
 
-_LIVING_TABLE_HEIGHTS_M = {"coffee_table": COFFEE_TABLE_HEIGHT_M, "side_table": SIDE_TABLE_HEIGHT_M}
-
-
 def keep_slot(slot: Record, rows: list[Record], room: Record) -> list[Record]:
     """Merge categories, apply the checks after the search, and keep up to FETCH.
 
     Drops products that fit the floor in neither orientation, products outside the
     requested sizes (rugs in either orientation), other brands when a brand is strict,
-    products the room type excludes, and in a living room coffee and side tables
-    more than SIZE_TOLERANCE_M outside the selection size check's heights. Preferred brands move to the front.
+    and products the room type excludes. Preferred brands move to the front.
     """
     width, depth = room["room_area"]
-    heights = _LIVING_TABLE_HEIGHTS_M if room["room_type"] == "living_room" else {}
     kept = []
     for row in merge_categories(rows):
         asset = catalog_asset(row)
-        low, high = heights.get(normalize_category(row["category"]), (0.0, float("inf")))
-        if not low - SIZE_TOLERANCE_M <= asset["height"] <= high + SIZE_TOLERANCE_M:
-            continue
         w, d = asset["width"], asset["depth"]
         if not ((w <= width and d <= depth) or (d <= width and w <= depth)):
             continue
@@ -486,10 +470,10 @@ async def retrieve(state: PipelineState, ctx: StageContext) -> PipelineState:
 
     slots, pool = [], {}
     for slot, kept, note in await asyncio.gather(*(search(slot) for slot in plan_slots(intent, room_context, request.budget))):
-        # A requested item or a completeness piece can be a gap; another empty required slot fails selection validation.
-        gap = not kept and (slot["kind"] == "requested" or slot["gap_ok"])
+        # Only a requested item can be a gap; an empty required slot fails selection validation.
+        gap = not kept and slot["kind"] == "requested"
         if gap:
-            note = "; ".join(filter(None, [note, f"{slot['kind']} {slot['label']} has no eligible catalog product; reported as a gap"]))
+            note = "; ".join(filter(None, [note, f"requested {slot['label']} has no eligible catalog product; reported as a gap"]))
         elif not kept and slot["required"]:
             note = "; ".join(filter(None, [note, f"required {slot['label']} has no eligible catalog product"]))
         if note:

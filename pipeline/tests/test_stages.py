@@ -27,7 +27,6 @@ from app.llm import GeminiModel
 from app.main import create_app
 from app.rules.planner.intent_packet import coerce_intent_packet
 from app.rules.planner.room_facts import build_room_context
-from app.rules.selection.constants import COFFEE_TABLE_HEIGHT_M, SIZE_TOLERANCE_M
 from app.run import RunContext, StageContext
 
 RUN = json.loads((Path(__file__).parent / "fixtures" / "legacy_runs.json").read_text())[1]
@@ -52,8 +51,6 @@ INSTANCE_KEYS = {
     "decor_047ff49d-65d8-4f1e-bd46-256e38ee5da4": "planter_1",
 }
 PLACEMENTS = {INSTANCE_KEYS[uid]: pose for uid, pose in LAYOUT.items()}
-# The recorded sideboard faced the table across 0.60 m; the 0.76 m storage front slides it along its wall past the table.
-PLACEMENTS["sideboard_1"] = {**PLACEMENTS["sideboard_1"], "position": [PLACEMENTS["sideboard_1"]["position"][0], 3.6, 0.0]}
 TABLE_CENTER = PLACEMENTS["dining_table_1"]["position"]
 
 
@@ -324,8 +321,8 @@ def test_lamp_too_large_for_its_side_table_keeps_the_fit_step(tmp_path, monkeypa
     events, record = run_pipeline(tmp_path, genai)
 
     assert len(of_type(events, "variant_ready")) == 3
-    # The room fits its pieces, so no fit step; the solver cannot place the lamp, but a left-out tabletop item never
-    # steps down to compact or capped counts.
+    # The fit estimate is only tight, so no fit step; the solver cannot place the lamp, but a left-out tabletop item
+    # never steps down to compact or capped counts.
     for index in range(3):
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
         assert [note for note in notes if "fit step" in note] == []
@@ -443,34 +440,6 @@ def test_style_rejection_is_repaired_from_the_whole_slot_or_kept_as_a_warning(tm
         assert checks[1] == 4 and len(checks) == (3 if matching else 2)
 
 
-@pytest.mark.parametrize("lights", [("pendant_big", "pendant_small"), ("pendant_big",)])
-def test_light_too_large_for_the_table_is_swapped_when_a_fitting_one_exists(tmp_path, monkeypatch, lights):
-    sideboard = next(record for record in POOL if record["asset_id"] == "sideboard_1")
-    sides = {"pendant_big": 1.0, "pendant_small": 0.5}  # the dining table leaves about 0.74 m inside its edges
-    search_pool(monkeypatch, [*POOL, *({**sideboard, "asset_id": uid, "title": uid, "category": "pendant_light",
-                                        "placement_type": "ceiling", "width_m": sides[uid], "depth_m": sides[uid],
-                                        "height_m": 0.6, "price": 200} for uid in lights)])
-    solve_as(monkeypatch, PLACEMENTS)
-    # Without the minimal brief this dining room needs a pendant or chandelier.
-    packet = {**intent_packet(), "functional_hints": [], "fit_flexibility": "balanced"}
-    genai = FakeGenai({"IntentPacket": packet, "Selection": selection([*TURN["items"], ("pendant_big", 1)])})
-
-    events, record = run_pipeline(tmp_path, genai)
-
-    # Swapped when a fitting light exists; otherwise the size finding is a warning. Neither retries the model.
-    assert [stage_runs(record, "select", index) for index in range(3)] == [1, 1, 1]
-    repairs = [note["text"] for note in record["notes"] if note["text"].startswith("swap repair")]
-    ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
-    assert len(ready) == 3
-    if len(lights) == 2:
-        assert repairs == ["swap repair: pendant_big -> pendant_small (size)"] * 3
-        assert all("pendant_small" in variant["selection_validation"]["validated_uids"] for variant in ready)
-    else:
-        assert repairs == []
-        assert all(any(warning.startswith("SIZE: pendant_big ") for warning in variant["selection_validation"]["warnings"])
-                   for variant in ready)
-
-
 def test_missing_required_item_retries_the_model_with_the_previous_uids_and_errors(tmp_path, searches, monkeypatch):
     solve_as(monkeypatch, PLACEMENTS)
     plantless = TURN["items"][:3]
@@ -510,22 +479,6 @@ def test_required_item_searched_without_its_limits_can_pass_selection(tmp_path, 
     [slot] = [slot for slot in record["slots"] if slot["slot"] == "dining_table"]
     assert slot["candidates"] == 2 and "without them" in slot["note"]
     assert all("candidates ignore them" in prompt for prompt in genai.of("Selection"))
-
-
-def test_completeness_piece_with_no_catalog_product_is_a_gap_and_selection_passes(tmp_path, searches, monkeypatch):
-    solve_as(monkeypatch, PLACEMENTS)
-    # Without the minimal brief this spacious dining room also needs a sideboard (the pool has one) and a
-    # pendant or chandelier (it has none).
-    packet = {**intent_packet(), "functional_hints": [], "fit_flexibility": "balanced"}
-    genai = FakeGenai({"IntentPacket": packet, "Selection": selection()})
-
-    events, record = run_pipeline(tmp_path, genai)
-
-    [slot] = [slot for slot in record["slots"] if slot["slot"] == "overhead_lighting"]
-    assert slot["gap"] and slot["candidates"] == 0 and "reported as a gap" in slot["note"]
-    assert all("(overhead_lighting)" in prompt.split("CATALOG GAPS")[1] for prompt in genai.of("Selection"))
-    assert [stage_runs(record, "select", index) for index in range(3)] == [1, 1, 1]
-    assert len(of_type(events, "variant_ready")) == 3
 
 
 def test_layout_that_still_fails_the_final_check_loses_the_failing_item_and_is_delivered(tmp_path, searches, monkeypatch):
@@ -1051,8 +1004,8 @@ def test_retrieve_applies_the_checks_after_each_slot_search(monkeypatch):
     assert tv_filters["price_exempt"] == ["television", "tv"]
     assert all(f["max_price"] <= 4400 and f["known_price"] for f in calls)
     assert all(f["price_exempt"] == [] for f in calls if f is not tv_filters)
-    # No requested slot is a gap; the living room's required lamp has no product in these rows, so it is a catalog gap.
-    assert [slot_id for slot_id, slot in slots.items() if slot["gap"]] == ["lighting"]
+    # Only a requested slot can be a gap, and every requested slot has products; the lamp slot is optional.
+    assert not [slot_id for slot_id, slot in slots.items() if slot["gap"]] and slots["lighting"]["kind"] == "optional"
     assert {entry["slot"]: entry["candidates"] for entry in run.slots}["sofa"] == 2
 
 
@@ -1066,9 +1019,9 @@ def test_retrieve_merges_categories_round_robin_and_keeps_up_to_fetch(monkeypatc
         monkeypatch, "living_room", packet, lambda filters: [row for row in lamps if row["category"] in filters["categories"]]
     )
 
-    assert slots["lighting"]["kind"] == "required"  # a living room requires a lamp (issue #54)
+    assert slots["lighting"]["kind"] == "optional"  # lighting is suggested, not required
     assert pool["lighting"][:5] == ["floor_0", "table_0", "floor_1", "table_1", "floor_2"]
-    assert len(pool["lighting"]) == shared_stages.FETCH > shared_stages.KEEP["required"]
+    assert len(pool["lighting"]) == shared_stages.FETCH > shared_stages.KEEP["optional"]
     assert {entry["slot"]: entry["candidates"] for entry in run.slots}["lighting"] == shared_stages.FETCH
 
 
@@ -1135,21 +1088,6 @@ def test_requested_coffee_table_still_searches_side_tables(monkeypatch):
     assert pool["coffee_table"] == ["coffee_1"]
     assert slots["surface"]["kind"] == "optional" and pool["surface"] == ["side_1"]
 
-
-
-def test_living_room_drops_coffee_tables_outside_the_height_limits(monkeypatch):
-    # Catalog heights are bounding boxes: 1 cm under the limit passes, past the tolerance does not.
-    low = COFFEE_TABLE_HEIGHT_M[0]
-    packet = {"normalized_prompt": "a sofa and a coffee table",
-              "requested_items": [item("sofa", "sofa"), item("coffee table", "coffee_table")]}
-    rows = [product("coffee_low", "coffee_table", 1.1, 0.6, height_m=low - SIZE_TOLERANCE_M - 0.01),
-            product("coffee_near", "coffee_table", 1.1, 0.6, height_m=low - 0.01),
-            product("coffee_ok", "coffee_table", 1.1, 0.6, height_m=0.42)]
-
-    _, pool, _, _, _ = retrieve(monkeypatch, "living_room", packet,
-                                lambda filters: [row for row in rows if row["category"] in filters["categories"]])
-
-    assert sorted(pool["coffee_table"]) == ["coffee_near", "coffee_ok"]
 
 # --- select: TVs ------------------------------------------------------------
 

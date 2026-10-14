@@ -3,7 +3,7 @@
 from typing import Any
 from app.rules.geometry.primitives import room_polygon
 from app.rules.layout.dining import dining_fit_envelopes
-from app.rules.layout.constants import DINING_LIGHT_TABLE_MAX_GAP_M, DINING_LIGHT_TABLE_MIN_GAP_M, DINING_TWO_SIDED_MIN_DEPTH_M
+from app.rules.layout.constants import DINING_LIGHT_TABLE_MIN_GAP_M
 from app.rules.categories import is_ceiling_mounted_asset
 from app.rules.pipeline_shared import ceiling_mount_z
 
@@ -687,8 +687,7 @@ def _layout_preflight_for_assets(
         if not options:
             errors.append(
                 f"{LAYOUT_PREFLIGHT_PREFIX}: dining table {_asset_uid(table)} has insufficient "
-                f"edge length for {chair_count} selected chairs at usable seat spacing (a table under "
-                f"{DINING_TWO_SIDED_MIN_DEPTH_M:.2f}m deep seats one long side only); choose a larger "
+                f"edge length for {chair_count} selected chairs at usable seat spacing; choose a larger "
                 "table or narrower chairs while preserving mandatory seating counts."
             )
         elif room_area_sqm and cluster_area > room_area_sqm * 0.55:
@@ -712,12 +711,6 @@ def _layout_preflight_for_assets(
                     f"{LAYOUT_PREFLIGHT_PREFIX}: dining light {_asset_uid(asset)} leaves only {gap:.2f}m "
                     f"above the tabletop; at least {DINING_LIGHT_TABLE_MIN_GAP_M:.2f}m is required. "
                     "Choose a shorter model or omit this optional fixture. Its hanger cannot be shortened by layout."
-                )
-            elif gap > DINING_LIGHT_TABLE_MAX_GAP_M + 1e-6:
-                warnings.append(
-                    f"{LAYOUT_PREFLIGHT_PREFIX}: dining light {_asset_uid(asset)} hangs {gap:.2f}m above the tabletop "
-                    f"under this {float(room['wall_height']):.2f}m ceiling; {DINING_LIGHT_TABLE_MIN_GAP_M:.2f}-"
-                    f"{DINING_LIGHT_TABLE_MAX_GAP_M:.2f}m is best. A taller model hangs lower."
                 )
 
     floor_lamps = [

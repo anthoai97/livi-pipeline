@@ -183,7 +183,7 @@ CEILING_MOUNTED_CATEGORIES = (
     "pendant_light",
 )
 
-WALL_MOUNT_Z = 1.5  # meters (~59", gallery eye level) — center height for wall-mounted fixtures
+WALL_MOUNT_Z = 1.6  # meters (~63") — center height for wall-mounted fixtures
 DEFAULT_WALL_HEIGHT_M = 2.8  # meters — ceiling height when the request gives no wall_height; matches scene3d.js wallH
 
 WALL_ALIGNED_CATEGORY_KEYWORDS = (

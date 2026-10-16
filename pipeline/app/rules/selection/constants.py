@@ -21,6 +21,14 @@ REQUIRED_CATEGORIES = {
 
 BLOCKING_REQUIRED_ROLES = {"anchor_seating", "surface"}  # lighting stays advisory
 
+# Size rules, returned as selection warnings. Catalog sizes come from 3D bounding boxes, so a product passes a rule
+# within SIZE_TOLERANCE_M of its limit.
+SIZE_TOLERANCE_M = 0.05
+COFFEE_TABLE_HEIGHT_M = (0.35, 0.50)  # seat height or a little under
+SIDE_TABLE_HEIGHT_M = (0.45, 0.65)  # within reach of the arm
+BED_RUG_EXTRA_WIDTH_M = 0.90  # a centered bed rug: 0.45 m to step onto on each side
+RUNNER_MAX_WIDTH_M = 0.90  # a narrower rug is a runner beside the bed
+
 RECOMMENDED_CATEGORIES = {
     "media": {"tv_stand", "tv", "media_unit"},
     "accent_seating": {"accent_chair", "office_chair", "ottoman"},

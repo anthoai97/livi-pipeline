@@ -240,6 +240,7 @@ def build_graph(stages: Stages = Stages()) -> PipelineGraph:
         index = state["variant_index"]
         run = runtime.context
         findings: list[str] = []
+        blocking: list[str] = []
         summary = None
         try:
             start: VariantState = {"variant_index": index, "direction": state["direction"], "pool": state["pool"],
@@ -247,6 +248,7 @@ def build_graph(stages: Stages = Stages()) -> PipelineGraph:
             final = cast(VariantState, await variant_graph.ainvoke(start))
             result = _variant_result(final, run.run_id)
             findings = [finding["issue"] for finding in final.get("non_blocking_findings", [])]
+            blocking = [finding["issue"] for finding in final.get("blocking_findings", [])]
             summary = _variant_summary(final)
             plan = {**summary, "variant_index": index}
             preview = {"variant_index": index, "elapsed": None, "error": None}
@@ -273,7 +275,7 @@ def build_graph(stages: Stages = Stages()) -> PipelineGraph:
         except Exception as exc:  # CancelledError is not an Exception, so cancellation still propagates.
             reason = "model_call_failed" if isinstance(exc, ModelCallError) else "variant_error"
             result = _failed(index, reason, describe(exc), [describe(exc)])
-        run.record_variant(index, result["outcome"], result["reason"], findings, summary)
+        run.record_variant(index, result["outcome"], result["reason"], findings, summary, blocking)
         runtime.stream_writer(result["event"])
         return {"variants": {index: result}}
 

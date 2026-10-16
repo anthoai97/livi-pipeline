@@ -21,7 +21,7 @@ from app.rules.protected_paths import build_protected_paths, protected_path_poly
 from app.rules.selection.catalog import catalog_asset
 from app.rules.selection.fit import fit_step_guidance
 from app.rules.selection.preflight import _layout_preflight_for_assets
-from app.rules.selection.validation import build_instances, validate_selection
+from app.rules.selection.validation import build_instances, room_requirements, validate_selection
 
 # Three recorded legacy runs: each run's request, intent and selected instances per variant; run 1 (a dining room for
 # four) also keeps its candidate assets, a passing selection, and a valid final layout.
@@ -288,14 +288,53 @@ def _overcrowded(result):
     return [any(text.startswith("OVERCROWDED") for text in result[key]) for key in ("errors", "warnings")]
 
 
-def test_density_counts_every_piece_but_rugs_at_twice_its_footprint():
+def test_density_counts_floor_pieces_but_rugs_at_twice_their_footprint():
     extras = [_record("art", "wall_art", 1.0, 0.05, 0.8, placement_type="wall"),
               _record("lamp2", "table_lamp", 0.3, 0.3, 0.5, placement_type="surface")]
     bare = _validate("living_room", (5.0, 4.4), LIVING)
     decorated = _validate("living_room", (5.0, 4.4), [*LIVING, *extras])
-    # The rug adds nothing; wall art and a table lamp count like any other piece.
+    # The rug, wall art and a table lamp use no floor, so they add nothing.
     assert bare["metrics"]["total_footprint"] == pytest.approx(2 * (2.2 + 0.72 + 0.16 + 0.25))
-    assert decorated["metrics"]["total_footprint"] == pytest.approx(bare["metrics"]["total_footprint"] + 2 * (0.05 + 0.09))
+    assert decorated["metrics"]["total_footprint"] == pytest.approx(bare["metrics"]["total_footprint"])
+
+
+ART = _record("art", "wall_art", 1.0, 0.03, 0.7, placement_type="wall")
+
+
+@pytest.mark.parametrize(("paintings", "error"), [(1, True), (2, False)])
+def test_a_stated_count_of_wall_pieces_holds_after_a_fit_decision(paintings, error):
+    two = {"label": "two paintings", "canonical_category": "wall_art", "count": 2, "exact": False, "optional": False}
+    result = _validate("living_room", (5.0, 4.4), [*LIVING, *[ART] * paintings], fit_step="compact", requested_items=[two])
+    assert ("REQUESTED COUNT: Requested 2 wall_art; selected 1." in result["errors"]) is error
+
+
+@pytest.mark.parametrize(("chairs", "error"), [(0, True), (2, False), (4, False), (5, True)])
+def test_a_dining_table_needs_two_to_four_chairs_in_a_living_room(chairs, error):
+    table = _record("dining", "dining_table", 1.2, 0.8, 0.75)
+    result = _validate("living_room", (5.0, 6.0), [*LIVING, table, *[CHAIR] * chairs])
+    assert any(text.startswith("DINING GROUP") for text in result["errors"]) is error
+
+
+@pytest.mark.parametrize(("height", "warned"), [(0.45, False), (0.70, True)])
+def test_a_coffee_table_height_outside_0_35_to_0_50_m_is_a_warning(height, warned):
+    living = [LIVING[0], _record("table", "coffee_table", 1.2, 0.6, height), *LIVING[2:]]
+    result = _validate("living_room", (5.0, 4.4), living)
+    assert not any(text.startswith("SIZE") for text in result["errors"])
+    assert any(text.startswith("SIZE: table") for text in result["warnings"]) is warned
+
+
+@pytest.mark.parametrize(("intent", "media", "support"), [
+    ({}, False, False),
+    ({"functional_hints": ["tv_focused"]}, True, False),
+    ({"requested_items": [{"canonical_category": "tv", "count": 1, "optional": False}]}, True, True),
+    ({"requested_items": [{"canonical_category": "tv", "count": 1, "optional": False}],
+      "functional_hints": ["wall_mounted_tv"]}, True, False),
+])
+def test_a_studio_offers_media_only_when_asked_and_a_tv_needs_its_stand(intent, media, support):
+    intent = coerce_intent_packet({"normalized_prompt": "a studio", **intent}, room_type="studio")
+    requirements = room_requirements(room_type="studio", intent=intent, digest={})
+    assert ("media" in requirements["optional_roles"]) is media
+    assert any(need["role"] == "media_support" for need in requirements["required"]) is support
 
 
 @pytest.mark.parametrize(("ottoman", "overcrowded"), [(False, False), (True, True)])
@@ -336,7 +375,7 @@ def test_the_final_check_never_removes_the_anchor():
     current, removed = variant_stages._drop_items(state)
     assert removed == ["nightstand_1"]
     assert [asset["uid"] for asset in current["instances"]] == ["bed_1"]
-    assert {finding["finding"]["uid"] for finding in current["blocking_findings"]} == {"bed_1"}
+    assert variant_stages._named_items(current["blocking_findings"], {"bed_1", "nightstand_1"}) == ["bed_1"]
 
 
 # --- issue #53 phase 1: real walls, openings, area and paths for any room shape

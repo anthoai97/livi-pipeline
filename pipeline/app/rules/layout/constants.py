@@ -10,8 +10,6 @@ CARDINAL_TOLERANCE = 0.2
 
 WALL_MOUNT_WALL_THRESHOLD = 0.4
 
-WALL_TV_CENTER_Z = 1.1  # seated eye level: a wall-mounted TV's screen center
-
 WALL_TV_SUPPORT_GAP_M = 0.05  # a wall-mounted TV's bottom clears the furniture under it by this much
 
 COFFEE_TABLE_ROLE_KEYWORDS = ("coffee_table",)
@@ -127,6 +125,7 @@ ISSUE_KEYS_BY_TIER = {
     "P1": (
         "wall_aligned_violations",
         "protected_path_violations",
+        "circulation_violations",
     ),
     "P2": (
         *STUDIO_ISSUE_KEYS,

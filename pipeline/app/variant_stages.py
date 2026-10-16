@@ -156,9 +156,12 @@ def _brief(shared: Shared | PipelineState, variant_direction: str) -> Record:
 
 
 def _product_text(record: Record) -> str:
-    """A product's prepared fields as one line for a Jev question."""
+    """A product's prepared fields as one line for a Jev question, with its `units` when more than one is selected,
+    so a set requirement such as "matching chairs" reads as met by identical units."""
     asset = catalog_asset(record)
     parts = [f"{record.get('title')} ({normalize_category(record.get('category'))})"]
+    if int(record.get("units") or 1) > 1:
+        parts.append(f"selected units: {record['units']} of this product")
     parts += [
         f"{field}: {', '.join(value) if isinstance(value, list) else value}"
         for field in ("colors", "materials", "styles")
@@ -581,11 +584,11 @@ CONSTRAINTS:
 {plant_guidance}- Budget target: aim for {BUDGET_TARGET_PCT - 0.05:.0%}-{BUDGET_TARGET_PCT + 0.05:.0%} of ${budget:.2f}. The total must be at least ${budget * BUDGET_FLOOR_PCT:.2f} ({BUDGET_FLOOR_PCT:.0%}) and at most ${budget * (1 + BUDGET_FLEX_PCT):.2f} (${budget:.2f} + 10% flex). Spend first on better versions of the {anchor_name} and the main pieces (better made, better materials, the right size), then on useful pieces the room is missing; never on filler. A design may stay under {BUDGET_FLOOR_PCT:.0%} only when the room is complete and no fitting product would improve it; say why in gaps.
 - Non-shoppable decor: once the room is functionally complete, add non-shoppable decor that suits the room (plants, sculptures, floor and wall mirrors) whether or not budget remains; it adds nothing to the total. Decide how many pieces from the room size and the brief: a spacious room takes more than a compact one, within the room caps and without blocking circulation. Non-shoppable decor UIDs: {', '.join(free_decor_uids) or 'none available'}. Skip it for minimal briefs and follow any decor limit in the request. Non-shoppable decor is a finishing layer, not filler: this rule takes priority over the guidance below to omit optional pieces or avoid filler.
 - Retail decor: once the room is functionally complete, if the total is under ${budget:.2f}, add up to 2 retail decor pieces that suit the room (a sculpture, a plant, a floor mirror), keeping the total at or under ${budget:.2f}. Retail decor UIDs: {', '.join(decor_uids) or 'none available'}. A required decor plant does not count toward these. Skip decor for minimal briefs.
-- Furnish the room: total footprint (width x depth x 2 per asset, rugs excluded) must be at least {footprint_floor:.2f} sqm and at most {furniture_area:.2f} sqm. The comfortable load of {comfortable_load:.2f} sqm is an upper reference, not a target. Once the requested functions and density floor are satisfied, do not add pieces merely to approach it.
+- Furnish the room: total footprint (width x depth x 2 per floor piece; rugs, tabletop, wall and ceiling pieces excluded) must be at least {footprint_floor:.2f} sqm and at most {furniture_area:.2f} sqm. The comfortable load of {comfortable_load:.2f} sqm is an upper reference, not a target. Once the requested functions and density floor are satisfied, do not add pieces merely to approach it.
 {perimeter_storage_guidance}- Physical layout preflight must pass: rugs must fit the room; every tabletop asset must fit an eligible selected support surface; desk/dining clusters must fit with their chairs; and tiny rooms must not receive extra seating or floor lamps.
 - {count_guidance_constraint}
 - Assets with is_decor_item=true are non-shoppable: their zero budget contribution is bookkeeping, not a retail price. is_placeholder=true identifies temporary furniture for layout evaluation; a verified wardrobe placeholder can satisfy clothing storage, but cannot be purchased or count as spending more budget. Never describe these items as free products.
-- TVs are normal catalog assets and do not need a media support. A TV stands on a selected tv_stand/media_unit/media_console or console_table it fits (width <= support width - 0.07m and depth <= max(0.08m, support depth - 0.07m)); the server swaps a TV that fits no selected support for one that does when it can, and any other TV hangs on the wall. When the brief asks for a TV, or a media support is selected, and the selection has no TV, the server adds one from the catalog.
+- {"The brief asks for a wall-mounted TV: the TV hangs on the wall and needs no support." if "wall_mounted_tv" in (intent.get("functional_hints") or []) else "A TV stands on a selected tv_stand/media_unit/media_console or console_table it fits (width <= support width - 0.07m and depth <= max(0.08m, support depth - 0.07m)); select one with every TV. A TV is wall-mounted only when the brief asks for it."} The server swaps a TV that fits no selected support for one that does when it can. When the brief asks for a TV, or a media support is selected, and the selection has no TV, the server adds one from the catalog.
 - TVs are non-sellable: exclude TV prices from every budget total while still including the TV UID in selected_assets and the layout.
 - You MUST return the exact UID list as selected_assets (one entry per unit); the accepted response is the final result
 
@@ -685,6 +688,25 @@ _ANCHOR_CATEGORIES = {
     "dining_room": ({"dining_table"},),
     "studio": ({"bed"}, FIT_ANCHOR_SEATING, {"dining_table"}),
 }
+_DINING_GROUP = {"dining_table", "dining_chair"}
+
+
+def _removal_groups(categories: dict[str, str], room_type: str) -> dict[str, set[str]]:
+    """What removing each removable item takes with it, by item (instance key or product uid).
+
+    `categories` holds each item's normalized category. The room's anchors
+    (_ANCHOR_CATEGORIES) are never removed, and dining chairs share the dining
+    table's anchor status. Where the table is not an anchor, removing a dining
+    table or chair removes every dining table and chair, so a table never stays
+    without its chairs. Any other item goes alone.
+    """
+    anchors = set().union(*_ANCHOR_CATEGORIES.get(room_type, (FIT_ANCHOR_SEATING,)))
+    if "dining_table" in anchors:
+        anchors.add("dining_chair")
+    dining = {key for key, category in categories.items() if category in _DINING_GROUP}
+    return {key: dining if key in dining else {key} for key, category in categories.items() if category not in anchors}
+
+
 # Constraint attribute types a prepared vocabulary filters, and the requested-item field holding the filter.
 _VOCABULARY_FIELDS = {"color": "colors", "style": "styles", "material": "materials", "fabric": "materials"}
 # Starting thresholds, to tune on the benchmark.
@@ -759,7 +781,9 @@ async def _constraint_audit(state: VariantState, ctx: StageContext, intent: Reco
     product except TVs and decor plants and is met by the room when at least
     one of them meets it. The products that miss it go to `missed_uids`, for
     information; when none meets it, the check fails for the room
-    (`brief_wide` with no `satisfied_uids`). Notes a rejection.
+    (`brief_wide` with no `satisfied_uids`). A product's text gives its selected
+    units (`_product_text`), so "matching chairs" holds for identical units.
+    Notes a rejection.
     `style_mismatches` holds each rejected product by uid, except the `kept`
     ones, whose mismatch this design accepts: they go to `style_kept`, a
     warning. `anchor` is the uid the style was compared with. With check off or
@@ -936,7 +960,10 @@ async def _checked(state: VariantState, ctx: StageContext, selected: list[Record
     """The `_validated` report for `selected` and its constraint audit: `audit` when given, else `_constraint_audit`
     with the `kept` style mismatches. A passing selection fails when the code solver leaves items out
     (`_solver_fit`); `fit_failed` is set when one of them is a floor item."""
-    audit = audit or await _constraint_audit(state, ctx, intent, _products(state["pool"], selected), kept)
+    if audit is None:
+        units = Counter(asset["uid"].strip() for asset in selected)
+        products = {uid: {**product, "units": units[uid]} for uid, product in _products(state["pool"], selected).items()}
+        audit = await _constraint_audit(state, ctx, intent, products, kept)
     validation = _validated(state, selected, intent, fit_step, audit, reuse_rate)
     if validation["valid"] and (unfit := await asyncio.to_thread(_solver_fit, state, validation)):
         error, validation["fit_failed"] = unfit
@@ -949,8 +976,9 @@ def _drop_failing(state: VariantState, selected: list[Record], validation: Recor
     """Remove products from the failing `selected` while that lowers its errors, until it passes.
 
     Unknown uids go first. Then each round removes every unit of the one
-    non-anchor product whose removal leaves the fewest errors, then the least
-    cost over the budget allowance, as long as that beats the current
+    removable product (`_removal_groups`, with the whole dining group where the
+    table is not an anchor) whose removal leaves the fewest errors, then the
+    least cost over the budget allowance, as long as that beats the current
     selection. `audit` loses the removed products' findings (`_audit_without`),
     so no Jev call is made. Returns the smaller selection, its `_validated`
     report, and the removed uids, or None when nothing was removed. The
@@ -958,8 +986,10 @@ def _drop_failing(state: VariantState, selected: list[Record], validation: Recor
     """
     shared = state["shared"]
     allowance = shared["request"].budget * (1 + BUDGET_FLEX_PCT)
-    anchors = set().union(*_ANCHOR_CATEGORIES.get(shared["room"]["room_type"], (FIT_ANCHOR_SEATING,)))
     products = _products(state["pool"], selected)
+    # Instance categories, where a chair selected with a dining table is a dining_chair.
+    categories = {str(asset["asset_id"]): normalize_category(asset.get("category")) for asset in validation["instances"]}
+    groups = _removal_groups({uid: categories[uid] for uid in products}, shared["room"]["room_type"])
 
     def without(dropped: list[str]) -> list[Record]:
         return [asset for asset in selected if asset["uid"].strip() not in dropped]
@@ -973,12 +1003,12 @@ def _drop_failing(state: VariantState, selected: list[Record], validation: Recor
     dropped = list(dict.fromkeys(validation["assets_not_found"]))
     current = check(dropped) if dropped else validation
     while not current["valid"]:
-        options = [uid for uid in products if uid not in dropped and normalize_category(products[uid].get("category")) not in anchors]
-        reports = {uid: check([*dropped, uid]) for uid in options}
-        best = min(reports, key=lambda uid: score(reports[uid]), default=None)
+        options = dict.fromkeys(tuple(sorted(groups[uid])) for uid in groups if uid not in dropped)
+        reports = {option: check([*dropped, *option]) for option in options}
+        best = min(reports, key=lambda option: score(reports[option]), default=None)
         if best is None or score(reports[best]) >= score(current):
             break
-        dropped.append(best)
+        dropped += best
         current = reports[best]
     return (without(dropped), current, dropped) if dropped else None
 
@@ -988,7 +1018,7 @@ def _missing_tv(state: VariantState, selected: list[Record], intent: Record, reu
 
     A selection with no TV gets one when the brief asks for one or a media support is selected: the first TV
     in the variant's ranked order that fits a selected support, else the first TV. A selected TV that fits no
-    selected support is replaced by the first one that does; without one, it stays and hangs on the wall.
+    selected support is replaced by the first one that does; without one, it stays.
     TVs that keep the reuse limit come first. None when nothing changes or the intent excludes TVs.
     """
     products = _products(state["pool"], selected)
@@ -1583,6 +1613,7 @@ def _delivery(shared: Shared, layout: Record, assets: list[Record]) -> VariantSt
             "rotation": layout[_key(asset)]["rotation"],
             "placement_mode": placement_mode_for_asset(asset),
             "asset": asset,
+            "on_top_of": layout[_key(asset)].get("on_top_of"),
         }
         for asset in assets
     ]
@@ -1600,15 +1631,16 @@ def _drop_items(state: VariantState) -> tuple[VariantState, list[str]]:
 
     Reads `shared`, `instances`, `layout`, and its findings. First removes the
     instances the layout is missing. Then, while blocking findings remain and
-    name an item other than the room's anchor (_ANCHOR_CATEGORIES: the bed,
-    the anchor seating, the dining table), removes one named item a round: the
-    removal that leaves the best layout_issue_score, then the smallest
-    footprint. Items resting on a removed item go with it. An anchor is never
-    removed: findings that name only anchors stay, and the design is delivered
-    with them. Returns the update (`instances`, `layout`, and its findings) and
+    name a removable item (`_removal_groups`: not the room's anchor, the bed,
+    the anchor seating, or the dining table with its chairs), removes one named
+    item a round: the removal that leaves the best layout_issue_score, then the
+    smallest footprint. Removing a dining table or chair that is not an anchor
+    removes the whole dining group. Items resting on a removed item go with it.
+    An anchor is never removed: findings that name only anchors stay, and the
+    design is delivered with them. Returns the update (`instances`, `layout`, and its findings) and
     the removed instance keys.
     """
-    anchors = set().union(*_ANCHOR_CATEGORIES.get(state["shared"]["room"]["room_type"], (FIT_ANCHOR_SEATING,)))
+    room_type = state["shared"]["room"]["room_type"]
     current: VariantState = {key: state[key] for key in ("instances", "layout", "issues", "findings", "blocking_findings",
                                                           "non_blocking_findings")}
 
@@ -1629,8 +1661,8 @@ def _drop_items(state: VariantState) -> tuple[VariantState, list[str]]:
         current = without(set(removed))
     while current["blocking_findings"]:
         by_key = {_key(asset): asset for asset in current["instances"]}
-        removable = {key for key, asset in by_key.items() if normalize_category(asset.get("category")) not in anchors}
-        trials = {key: without({key}) for key in _named_items(current["blocking_findings"], removable)}
+        groups = _removal_groups({key: normalize_category(asset.get("category")) for key, asset in by_key.items()}, room_type)
+        trials = {key: without(set(groups[key])) for key in _named_items(current["blocking_findings"], set(groups))}
         if not trials:
             break
         key = min(trials, key=lambda key: rank(key, trials[key]))

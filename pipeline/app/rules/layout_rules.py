@@ -67,9 +67,10 @@ Follow the requested JSON schema or tool-call contract exactly, without prose ou
 DESIGN_RULES = {
     "all": (
         "Clear zones: each group (bed, sitting, dining, work) reads as one area, and zones do not crowd each other.",
-        "A TV faces its viewers, and its back does not face another zone.",
+        "A TV stands on its stand (wall-mounted only when the brief asks), faces its viewers, and its back does not face another zone.",
         "Large pieces stand against a wall or anchor a zone; nothing floats in the middle of the room without a purpose.",
-        "Walkways stay open from the door to each zone and between zones.",
+        (f"A walkway at least {PATH_SECONDARY_M:.2f} m wide runs from each door to every zone: bed sides and foot, seat "
+         "fronts, chair pull-outs and storage fronts."),
         "Nothing taller than a window sill (about 0.9 m), such as a bookcase, cabinet or wardrobe, stands in front of a window.",
         "A floor lamp stands right at the end of the seat or bed it lights, within arm's reach, not across the room.",
     ),
@@ -148,12 +149,13 @@ P0_RULES = f"""P0 — ARCHITECTURE & LOCAL HARD CONSTRAINTS (must never be viola
 - No asset overlaps a fixed obstacle or door.
 - No asset sits inside a doorway clear zone ({DOOR_CLEARANCE:.2f}m in front of any door).
 - Window rule: floor assets with z≤0.1 may sit under / in front of a window, including sofas; assets with z>0.1 and TV / tv_stand / media_unit pieces must keep windows clear.
-- Z-axis: floor items z=0; wall-mounted items snap to a wall at z={WALL_MOUNT_Z:.2f}m (a wall-mounted TV centers its screen at seated eye level, above any furniture under it) and must keep their full height within the room's wall height; ceiling-mounted items hang so the asset top sits at the room's wall height; items resting on another asset (bowl on table, vase on shelf, lamp on side_table, pillow on sofa, etc.) declare `on_top_of` with the parent uid and leave z=0 — the runtime computes z from the parent's top surface (seat height for sofas/chairs/beds)."""
+- Z-axis: floor items z=0; wall-mounted items snap to a wall at z={WALL_MOUNT_Z:.2f}m (a TV stands on its stand and is wall-mounted only when the brief asks, at that height, above any furniture under it) and must keep their full height within the room's wall height; ceiling-mounted items hang so the asset top sits at the room's wall height; items resting on another asset (bowl on table, vase on shelf, lamp on side_table, pillow on sofa, etc.) declare `on_top_of` with the parent uid and leave z=0 — the runtime computes z from the parent's top surface (seat height for sofas/chairs/beds)."""
 
 
 P1_RULES = f"""P1 — ROOM ZONING, CIRCULATION & DESIGNABILITY (the room must be designable):
 - Major walking paths stay ≥{PATH_MAJOR_M:.2f}m wide.
 - Secondary access paths stay ≥{PATH_SECONDARY_M:.2f}m wide.
+- A continuous walkway ≥{PATH_SECONDARY_M:.2f}m wide joins the entry door to every other door and to each service area: bed foot and sides, sofa and lounge seat fronts, dining and desk chair pull-out, storage fronts (wardrobe, dresser, cabinet, sideboard, bookcase, storage unit). Tables are reached through their chairs.
 - No required route crosses the seating center field.
 - Straight protected paths between opposing doors stay fully clear except rugs/runners.
 - The primary living zone uses at least one usable anchor wall long enough for the largest anchor seating piece (sofa, sectional, bed).

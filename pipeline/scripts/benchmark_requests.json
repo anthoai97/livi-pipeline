@@ -1024,5 +1024,239 @@
         }
       ]
     }
+  },
+  {
+    "label": "dining_room_compact_two",
+    "set": [
+      "quick",
+      "full"
+    ],
+    "geometry": "2.8 x 3.2 m, legacy case dining-compact-two; door on the top wall near the left corner, window on the right wall.",
+    "request": {
+      "user_intent": "Design a compact dining room for exactly two people with one small standalone dining table and two matching dining chairs. Keep the entrance and chair pull-out space clear. No rug, sideboard, sofa or TV. Budget $6,000 is a cap.",
+      "budget": 6000.0,
+      "room_type": "dining_room",
+      "room_area": [
+        2.8,
+        3.2
+      ],
+      "wall_height": 2.8,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          2.8,
+          0.0
+        ],
+        [
+          2.8,
+          3.2
+        ],
+        [
+          0.0,
+          3.2
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            0.5,
+            3.2
+          ],
+          "width": 0.8,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            2.8,
+            1.8
+          ],
+          "width": 1.0,
+          "depth": 0.05,
+          "height": 1.2,
+          "sill_height": 0.9
+        }
+      ]
+    }
+  },
+  {
+    "label": "studio_tight",
+    "set": [
+      "quick",
+      "full"
+    ],
+    "geometry": "3.66 x 4.27 m (12 x 14 ft), legacy case studio-tight-fit; door and window on the top wall.",
+    "request": {
+      "user_intent": "Design a space-first studio with one compact complete adult bed, a separate compact loveseat and a small dining table with two matching chairs. Keep only useful essentials. No wardrobe, TV or workstation. Use the smallest compatible catalog furniture before dropping accessories. Preserve all three core functions and usable access; if they cannot fit, explain the measured constraint rather than silently dropping a function.",
+      "budget": 15000.0,
+      "room_type": "studio",
+      "room_area": [
+        3.6576,
+        4.2672
+      ],
+      "wall_height": 2.8,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          3.6576,
+          0.0
+        ],
+        [
+          3.6576,
+          4.2672
+        ],
+        [
+          0.0,
+          4.2672
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            1.0241,
+            4.2672
+          ],
+          "width": 0.9,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            2.6335,
+            4.2672
+          ],
+          "width": 1.1,
+          "depth": 0.05,
+          "height": 1.2,
+          "sill_height": 0.9
+        }
+      ]
+    }
+  },
+  {
+    "label": "living_room_tv_console",
+    "set": [
+      "full"
+    ],
+    "geometry": "4.6 x 4.9 m, legacy case typical-tv-console-rect-coffee; door on the bottom wall near the right corner, window on the left wall.",
+    "request": {
+      "user_intent": "Design a realistic everyday living room with one sofa, one rectangular coffee table, one rug, a TV, and a TV stand or media console. The TV should sit on the media piece, not float by itself, and the longer side of the coffee table should face the sofa. Keep the entry clear, keep the side window usable, and choose warm modern pieces in oak, walnut, cream, and muted green. Budget is $7,500, and I prefer a clean layout over extra decorative furniture.",
+      "budget": 7500.0,
+      "room_type": "living_room",
+      "room_area": [
+        4.6,
+        4.9
+      ],
+      "wall_height": 2.8,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          4.6,
+          0.0
+        ],
+        [
+          4.6,
+          4.9
+        ],
+        [
+          0.0,
+          4.9
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            3.8,
+            0.0
+          ],
+          "width": 0.86,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            0.0,
+            2.75
+          ],
+          "width": 1.25,
+          "depth": 0.05,
+          "height": 1.2,
+          "sill_height": 0.9
+        }
+      ]
+    }
+  },
+  {
+    "label": "dining_room_paintings",
+    "set": [
+      "full"
+    ],
+    "geometry": "5.49 x 5.79 m (18 x 19 ft), legacy case dining-six-sideboard-paintings; door and window on the top wall.",
+    "request": {
+      "user_intent": "Design a warm contemporary dining room with one standalone rectangular dining table and exactly six matching dining chairs. Include one sideboard and exactly two framed paintings mounted flat on different usable walls, with their painted faces into the room. Preserve chair pull-out, sideboard access and the entrance. No rug, sofa, bed or TV. Budget $15,000 is a cap.",
+      "budget": 15000.0,
+      "room_type": "dining_room",
+      "room_area": [
+        5.4864,
+        5.7912
+      ],
+      "wall_height": 2.8,
+      "room_vertices": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          5.4864,
+          0.0
+        ],
+        [
+          5.4864,
+          5.7912
+        ],
+        [
+          0.0,
+          5.7912
+        ]
+      ],
+      "room_doors": [
+        {
+          "center": [
+            1.5362,
+            5.7912
+          ],
+          "width": 0.9,
+          "depth": 0.05,
+          "height": 2.08
+        }
+      ],
+      "room_windows": [
+        {
+          "center": [
+            3.9502,
+            5.7912
+          ],
+          "width": 1.1,
+          "depth": 0.05,
+          "height": 1.2,
+          "sill_height": 0.9
+        }
+      ]
+    }
   }
 ]

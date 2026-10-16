@@ -9,7 +9,7 @@ the web app reads. Frames are flat `{"type": ..., ...}` except `variant_ready` a
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -53,6 +53,7 @@ class Instance(TypedDict):
     rotation: list[float]  # [0, 0, yaw] in radians
     placement_mode: str  # floor, tabletop, wall_mounted, or ceiling_mounted
     asset: dict[str, Any]  # prepared record from pipeline.pipeline_assets_v2
+    on_top_of: NotRequired[str | None]  # instance key of the support it rests on, such as "tv_stand_1"
 
 
 class ClientTiming(BaseModel):
@@ -148,6 +149,7 @@ def render_manifest(request: PipelineRequest, instances: list[Instance]) -> dict
             "category": instance["category"],
             "position": instance["position"],
             "rotation": instance["rotation"],
+            "on_top_of": instance.get("on_top_of"),
         }
         assets[key] = {
             "instance_key": key,

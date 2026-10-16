@@ -788,29 +788,28 @@ def _tv_support_in_selection(tv: dict, selected_assets: list[dict]) -> dict | No
         ),
     )
 
-def _annotate_tv_placement(selected_assets: list[dict]) -> list[dict]:
+def _annotate_tv_placement(selected_assets: list[dict], wall_mounted: bool) -> list[dict]:
     """Hydrate placement metadata without changing the model-selected UID set.
 
-    A TV that fits a selected support stands on it (tabletop with
-    paired_support_uid); any other TV is wall-mounted."""
+    A floor or ceiling TV keeps its mode. With `wall_mounted` (the brief asks
+    for a wall-mounted TV) any other TV is wall-mounted; without it, a TV stands
+    on a selected support it fits (tabletop with paired_support_uid), and a TV
+    that fits none hangs on the wall (validate_selection warns: TV SUPPORT)."""
     annotated: list[dict] = []
     for asset in selected_assets:
         if normalize_category(asset.get("category")) != "tv":
             annotated.append(asset)
             continue
         placed = {**asset}
+        placed.pop("paired_support_uid", None)
+        placed.pop("support_uid", None)
         placement_mode = str(placed.get("placement_mode") or "").strip().lower()
-        if placement_mode in {"floor", "wall_mounted", "ceiling_mounted"}:
-            placed.pop("paired_support_uid", None)
-            placed.pop("support_uid", None)
+        if placement_mode in {"floor", "ceiling_mounted"}:
             annotated.append(placed)
             continue
-        support = _tv_support_in_selection(asset, selected_assets)
+        support = None if wall_mounted else _tv_support_in_selection(asset, selected_assets)
+        placed["placement_mode"] = "tabletop" if support else "wall_mounted"
         if support:
-            placed["placement_mode"] = "tabletop"
             placed["paired_support_uid"] = _asset_uid(support)
-        else:
-            placed["placement_mode"] = "wall_mounted"
-            placed.pop("paired_support_uid", None)
         annotated.append(placed)
     return annotated

@@ -27,6 +27,7 @@ from app.llm import GeminiModel
 from app.main import create_app
 from app.rules.planner.intent_packet import coerce_intent_packet
 from app.rules.planner.room_facts import build_room_context
+from app.rules.selection.validation import build_instances
 from app.run import RunContext, StageContext
 
 RUN = json.loads((Path(__file__).parent / "fixtures" / "legacy_runs.json").read_text())[1]
@@ -291,10 +292,11 @@ def test_selection_the_solver_cannot_place_steps_to_compact_then_capped_counts_t
     assert compact in prompts[1] and capped not in prompts[1]
     assert all(capped in prompt for prompt in prompts[2:])
     assert "Selection target for this run: 4 dining chairs and 1 dining table" in prompts[2]
-    # The error names what the solver left out, with sizes.
-    assert all("LAYOUT FIT: the layout solver could not place 4 x dining_chair_39 (dining_chair_39, 0.53m x 0.55m), "
-               "dining_table_9 (Lane Dining Table, 4.00m x 2.60m). Choose products from the same slots that fit together, "
-               "keeping the requested items and counts." in prompt for prompt in prompts[1:])
+    # The error names what the solver left out, with sizes: the oversized table among them.
+    assert all("LAYOUT FIT: the layout solver could not place " in prompt
+               and "dining_table_9 (Lane Dining Table, 4.00m x 2.60m)" in prompt
+               and "Choose products from the same slots that fit together, keeping the requested items and counts." in prompt
+               for prompt in prompts[1:])
     for index in range(3):
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
         assert [note for note in notes if "fit step" in note] == ["selection turn 2: fit step compact", "selection turn 3: fit step capped"]
@@ -481,25 +483,43 @@ def test_required_item_searched_without_its_limits_can_pass_selection(tmp_path, 
     assert all("candidates ignore them" in prompt for prompt in genai.of("Selection"))
 
 
-def test_layout_that_still_fails_the_final_check_loses_the_failing_item_and_is_delivered(tmp_path, searches, monkeypatch):
+def test_layout_that_still_fails_the_final_check_keeps_the_dining_group_and_is_delivered(tmp_path, searches, monkeypatch):
     solve_as(monkeypatch, OVERLAPPING)
     genai = FakeGenai({"IntentPacket": intent_packet(), "Selection": selection(), "Arrangement": arrangement()})
 
     events, record = run_pipeline(tmp_path, genai)
 
-    # The review moves nothing, so the chair stays inside the table; it is removed, not the anchor table.
+    # The review moves nothing, so the chair stays inside the table. In a dining room the chairs share the table's
+    # anchor status, so none is removed: the design is delivered whole, with the finding.
     ready = [event["data"]["variant"] for event in of_type(events, "variant_ready")]
     assert len(ready) == 3
     for variant in ready:
-        assert sorted(variant["render_manifest"]["layout"]) == sorted(set(PLACEMENTS) - {"dining_chair_1"})
-        assert variant["total_cost"] == 899 + 3 * 510 + 899
+        assert sorted(variant["render_manifest"]["layout"]) == sorted(PLACEMENTS)
+        assert variant["total_cost"] == 899 + 4 * 510 + 899
     checks = [event["data"] for event in of_type(events, "node_complete") if event["node"] == "render_scene"]
-    assert [(check["valid"], check["dropped"]) for check in checks] == [(True, 1)] * 3
+    assert all(not check["valid"] and check["dropped"] == 0 for check in checks) and len(checks) == 3
     for index in range(3):
         assert [stage_runs(record, stage, index) for stage in ("select", "place", "finish")] == [1, 1, 1]
         notes = [note["text"] for note in record["notes"] if note["variant_index"] == index]
-        assert notes[-1] == "dropped dining_chair_1 for the final check"
+        assert notes[-1].startswith("dropped nothing for the final check; delivered with ")
     assert events[-1]["type"] == "complete" and len(events[-1]["data"]["variants"]) == 3
+
+
+@pytest.mark.parametrize(("room_type", "removed"), [
+    ("dining_room", set()),  # the table is the anchor, and its chairs with it
+    ("living_room", {"dining_table_1", *(f"dining_chair_{n}" for n in range(1, 5))}),  # the whole group goes together
+])
+def test_the_final_check_removes_a_dining_table_and_its_chairs_together_or_not_at_all(room_type, removed):
+    intent, room = _room(RUN)
+    room = {**room, "room_type": room_type}
+    instances = build_instances([{"asset": RUN["assets"][uid], "quantity": count} for uid, count in TURN["items"]], intent)
+    state = {"shared": {"room": room}, "instances": instances}
+    state |= variant_stages._measure(state, OVERLAPPING)
+
+    current, dropped = variant_stages._drop_items(state)
+
+    assert set(dropped) == removed
+    assert {variant_stages._key(asset) for asset in current["instances"]} == set(PLACEMENTS) - removed
 
 
 def test_jev_style_and_attribute_failures_reject_the_selection(tmp_path, searches, monkeypatch):
@@ -1089,6 +1109,20 @@ def test_requested_coffee_table_still_searches_side_tables(monkeypatch):
     assert slots["surface"]["kind"] == "optional" and pool["surface"] == ["side_1"]
 
 
+def test_keep_slot_drops_records_with_swapped_sizes():
+    # "RÖDALM wall art frame" is stored 0.518 x 0.718 x 0.032 m: it would render as a slab standing out of the wall.
+    # "Coronado Walnut Wood Credenza" is stored 0.48 x 1.96 m: a TV stand standing end-on into the room.
+    rows = [product("rodalm", "wall_art", 0.518, 0.718, height_m=0.032),
+            product("framed", "wall_art", 0.518, 0.032, height_m=0.718),
+            product("coronado", "tv_stand", 0.4826, 1.9566, height_m=0.6858),
+            product("stand", "tv_stand", 1.9566, 0.4826, height_m=0.6858)]
+    slot = {"limits": {}, "strict_brands": [], "preferred_brands": []}
+
+    kept = shared_stages.keep_slot(slot, rows, {"room_area": (4.0, 4.0), "room_type": "living_room"})
+
+    assert sorted(row["asset_id"] for row in kept) == ["framed", "stand"]
+
+
 # --- select: TVs ------------------------------------------------------------
 
 STAND = product("stand", "tv_stand", 1.5, 0.4, height_m=0.55)
@@ -1096,12 +1130,13 @@ WIDE_TV = product("tv_wide", "tv", 1.6, 0.25, placement_type="surface", is_purch
 FITTING_TV = product("tv_fits", "tv", 1.2, 0.25, placement_type="surface", is_purchasable=False, price=None)
 
 
-def select_with_requested_tv(model_uids: list[str], tvs: list[dict]) -> tuple[dict, list[str]]:
-    """One select turn in the recorded dining room whose brief also asks for a TV; the model answers `model_uids`.
-    The TVs fill the requested TV slot and STAND an optional media slot."""
+def select_with_requested_tv(model_uids: list[str], tvs: list[dict], hints: list[str]) -> tuple[dict, list[str]]:
+    """One select turn in the recorded dining room whose brief also asks for a TV, with these functional `hints`; the
+    model answers `model_uids`. The TVs fill the requested TV slot and STAND an optional media slot."""
     tv = {"label": "TV", "canonical_category": "tv", "count": 1, "exact": False, "optional": False,
           "acceptable_substitutes": [], "descriptors": []}
-    intent = coerce_intent_packet({**RUN["intent"], "requested_items": [*RUN["intent"]["requested_items"], tv]}, room_type="dining_room")
+    intent = coerce_intent_packet({**RUN["intent"], "requested_items": [*RUN["intent"]["requested_items"], tv],
+                                   "functional_hints": hints}, room_type="dining_room")
     _, room = _room(RUN)
     request = PipelineRequest(**REQUEST)
     pool = {"tv": tvs}
@@ -1119,18 +1154,20 @@ def select_with_requested_tv(model_uids: list[str], tvs: list[dict]) -> tuple[di
     return update, [note["text"] for note in run.notes]
 
 
-@pytest.mark.parametrize(("extra", "tvs", "note", "added", "placement"), [
-    (["stand"], [WIDE_TV, FITTING_TV], "added TV tv_fits", "tv_fits", "tabletop"),  # the first TV that fits the selected stand
-    (["stand"], [WIDE_TV], "added TV tv_wide", "tv_wide", "wall_mounted"),  # no TV fits the stand: it hangs on the wall instead
-    ([], [WIDE_TV, FITTING_TV], "added TV tv_wide", "tv_wide", "wall_mounted"),  # no stand selected: the first ranked TV
-    (["stand", "tv_wide"], [WIDE_TV, FITTING_TV], "replaced TV tv_wide with tv_fits", "tv_fits", "tabletop"),  # too wide: swapped
+@pytest.mark.parametrize(("extra", "tvs", "hints", "note", "added", "placement", "warned"), [
+    (["stand"], [WIDE_TV, FITTING_TV], [], "added TV tv_fits", "tv_fits", "tabletop", False),  # the first TV that fits the stand
+    (["stand"], [WIDE_TV], [], "added TV tv_wide", "tv_wide", "wall_mounted", True),  # no TV fits the stand: on the wall, warned
+    ([], [WIDE_TV, FITTING_TV], [], "added TV tv_wide", "tv_wide", "wall_mounted", True),  # no stand selected: the first ranked TV
+    ([], [WIDE_TV, FITTING_TV], ["wall_mounted_tv"], "added TV tv_wide", "tv_wide", "wall_mounted", False),  # asked for on the wall
+    (["stand", "tv_wide"], [WIDE_TV, FITTING_TV], [], "replaced TV tv_wide with tv_fits", "tv_fits", "tabletop", False),  # swapped
 ])
-def test_select_gives_a_requested_tv_a_fitting_stand_or_hangs_it_on_the_wall(extra, tvs, note, added, placement):
+def test_select_stands_a_requested_tv_on_a_fitting_stand_unless_asked_to_mount_it(extra, tvs, hints, note, added, placement, warned):
     model_uids = [uid for uid, count in TURN["items"] for _ in range(count)] + extra
 
-    update, notes = select_with_requested_tv(model_uids, tvs)
+    update, notes = select_with_requested_tv(model_uids, tvs, hints)
 
-    assert update["selection_validation"]["valid"], update["selection_validation"]["errors"]
+    assert update["selection_validation"]["errors"] == []
+    assert any(warning.startswith("TV SUPPORT") for warning in update["selection_validation"]["warnings"]) == warned
     assert f"selection turn 1: {note}" in notes
     assert update["selection"]["selected_assets"][-1]["uid"] == added
     [tv] = [instance for instance in update["instances"] if instance["category"] == "tv"]

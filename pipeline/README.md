@@ -86,15 +86,18 @@ summarize their run records from `pipeline/`:
 python scripts/benchmark.py --runs 3 --url http://127.0.0.1:8001 --url http://127.0.0.1:8002
 ```
 
-`scripts/benchmark_requests.json` holds 10 cases, one per room type and size
-class. `--runs 3` sends 30 requests; `--set quick` sends the four medium cases
-(living_room_scandi, bedroom, dining_room_tight, studio) once each, for everyday
-PR checks; `--only <label>` sends one case. Repeat `--url` to spread runs over several services, one request at a time on each;
+`scripts/benchmark_requests.json` holds 20 cases: room types, size classes,
+room shapes and the legacy review's hardest rooms. `--runs 3` sends 60 requests;
+`--set quick` sends six cases (living_room_scandi, bedroom, dining_room_tight,
+studio, dining_room_compact_two, studio_tight) once each, for everyday PR
+checks; `--only <label>` sends one case. Repeat `--url` to spread runs over several services, one request at a time on each;
 start one service per port. `--parallel` sends more requests at once to each service,
 but runs on one service share its process and take longer, so compare run times only
 between benchmarks run the same way.
 
-The table's `plans` column counts the distinct solver plans among a run's ready
+The table's `pass_of_3` column counts the ready designs with no blocking
+finding, and `no_retrieve_s` is the time to all ready designs without the
+product search. The `plans` column counts the distinct solver plans among a run's ready
 variants, and the summary line's `distinct_plans` counts the runs with three.
 `select_calls` counts a run's selection model calls and `failed_turns` its failed
 selection turns; the summary line gives the median of each per design.

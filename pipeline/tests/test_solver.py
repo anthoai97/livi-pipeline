@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 
 import pytest
+from shapely.geometry import Polygon
 from shapely.ops import unary_union
 from test_rules import GOLDEN, _golden_inputs, shape
 
@@ -15,7 +16,9 @@ from app.rules.layout.dining import dining_layout_measurements
 from app.rules.layout.solver import ZONE_KINDS, solve_layout
 from app.rules.layout.validation_functional import compute_sofa_wall_gap_violations
 from app.rules.layout.validation_geometry import (
+    compute_circulation_violations,
     compute_door_violations,
+    compute_overlaps,
     compute_protected_path_violations,
 )
 from app.rules.planner.intent_packet import coerce_intent_packet
@@ -143,7 +146,7 @@ def test_studio_wall_tv_hangs_facing_the_sofa_above_any_stand(stand):
     [viewing] = media_viewing_measurements(layout, assets, "studio")
     assert viewing["viewer"] == "sofa_1" and viewing["viewer_faces_media"] and viewing["media_faces_viewer"]
     tv = layout["tv_1"]
-    assert "on_top_of" not in tv and math.isclose(tv["position"][2] + 0.7 / 2, 1.1)  # screen center at seated eye level
+    assert "on_top_of" not in tv and math.isclose(tv["position"][2], 1.6)  # WALL_MOUNT_Z, like other mounted pieces
     if stand:
         assert asset_polygon(tv["position"], tv["rotation"][2], 1.6, 0.08).intersects(
             asset_polygon(layout["tv_stand_1"]["position"], layout["tv_stand_1"]["rotation"][2], 1.5, 0.4))
@@ -160,6 +163,8 @@ def test_studio_floor_lamp_stands_by_the_sofa_not_a_dining_chair():
     lamp = layout["floor_lamp_1"]["position"][:2]
     seats = ("sofa_1", "dining_chair_1", "dining_chair_2")
     assert min(seats, key=lambda uid: math.dist(lamp, layout[uid]["position"][:2])) == "sofa_1"
+    footprint = asset_polygon(layout["floor_lamp_1"]["position"], layout["floor_lamp_1"]["rotation"][2], 0.46, 0.3)
+    assert Polygon(room["room_vertices"]).exterior.distance(footprint) <= 0.30  # against a wall
 
 
 def test_bedside_table_lamps_stand_on_the_nightstands():
@@ -305,3 +310,49 @@ def test_chairs_space_evenly_around_a_round_table():
     assert [(b - a) % 360 for a, b in zip(angles, angles[1:] + angles[:1])] == pytest.approx([90.0] * 4, abs=1.0)
     assert len({round(math.dist((x, y), (cx, cy)), 3) for cx, cy, _ in chairs}) == 1
     assert blocking(layout, assets, room) == {}
+
+
+def pose(x, y, yaw, z=0.0):
+    return {"position": [x, y, z], "rotation": [0.0, 0.0, yaw]}
+
+
+@pytest.mark.parametrize("aside", [False, True])
+def test_a_chair_across_the_only_route_from_the_door_blocks_the_walkway(aside):
+    # 2 x 5 m with the door at the bottom and a dresser at the top: a 0.9 m chair in the middle leaves 0.55 m on each side.
+    vertices = [[0, 0], [2.0, 0], [2.0, 5.0], [0, 5.0]]
+    doors = [{"center": [1.0, 0.0], "width": 0.9, "depth": 0.05, "height": 2.08}]
+    assets = [item("dresser_1", "dresser", 1.0, 0.5, 0.8), item("accent_chair_1", "accent_chair", 0.9, 0.9, 0.8)]
+    layout = {"dresser_1": pose(1.0, 4.74, 3 * math.pi / 2),
+              "accent_chair_1": pose(0.5, 2.5, 0.0) if aside else pose(1.0, 2.5, 3 * math.pi / 2)}
+
+    violations = compute_circulation_violations(layout, assets, vertices, doors, (2.0, 5.0))
+
+    if aside:
+        assert violations == []
+    else:
+        assert [(row["kind"], row["uid"], row["blockers"]) for row in violations] == [
+            ("disconnected_service_area", "dresser_1", ["accent_chair_1"])]
+
+
+@pytest.mark.parametrize(("x", "overlapping"), [(1.3, True), (2.2, False)])
+def test_wall_pieces_overlapping_on_one_wall_are_an_overlap(x, overlapping):
+    assets = [item(f"wall_art_{n}", "wall_art", 0.8, 0.03, 0.6, "wall_mounted") for n in (1, 2)]
+    layout = {"wall_art_1": pose(1.0, 4.98, 3 * math.pi / 2, 1.6), "wall_art_2": pose(x, 4.98, 3 * math.pi / 2, 1.6)}
+
+    assert compute_overlaps(layout, assets) == ([("wall_art_1", "wall_art_2")] if overlapping else [])
+
+
+def test_two_chairs_fit_a_compact_dining_room_at_a_corner_of_the_table():
+    # 2.8 x 3.2 m: chairs on opposite sides of the 0.9 m table leave no pull-out; on two adjacent sides they fit.
+    intent = coerce_intent_packet({"normalized_prompt": "a compact dining room for two",
+                                   "requested_categories": ["dining_table", "dining_chair"]}, room_type="dining_room")
+    room = build_room_context(room_type="dining_room", room_area=[2.8, 3.2], room_vertices=[[0, 0], [2.8, 0], [2.8, 3.2], [0, 3.2]],
+                              wall_height=2.7, room_doors=[{"center": [0.5, 3.2], "width": 0.8, "depth": 0.05, "height": 2.08}],
+                              room_windows=[{"center": [2.8, 1.8], "width": 1.0, "depth": 0.05, "height": 1.2, "sill_height": 0.9}],
+                              intent=intent)
+    assets = [item("dining_table_1", "dining_table", 0.9, 0.9, 0.75),
+              *(item(f"dining_chair_{n}", "dining_chair", 0.45, 0.52, 0.8) for n in (1, 2))]
+
+    layout, report = solve_layout(assets, room, intent)
+
+    assert report["unplaceable"] == [] and blocking(layout, assets, room) == {}  # pull-out, door zone and walkway clear

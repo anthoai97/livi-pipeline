@@ -24,8 +24,8 @@ floating support, so a wall-backed group in range still wins. Furniture taller
 than the screen's bottom (not the viewer or a coffee table) costs more when it stands
 in the strip between the viewer and the screen, before or after the TV. Floor lamps take
 the legacy service-slot targets beside each lounge seat (dining chairs only in a
-room without one), ranked by the floor lamp reach rule (when none passes the
-checks, the accessory pass places them). Single pieces, and accent seats the
+room without one), moved against the nearest wall, ranked by the floor lamp
+reach rule (when none passes the checks, the lamp is left out of the layout). Single pieces, and accent seats the
 chosen sitting template left out, take the seed's own candidates for their
 placement mode.
 
@@ -51,14 +51,14 @@ measures layouts and scored with layout_issue_score, then
 layout_issue_magnitudes. The best wins; the others are reported as alternatives,
 each with its plan, from which the place stage deals the ties. A group with no candidate that passes the checks takes
 its least-violating pose, and an accessory the seed skips takes a free spot, so
-the layout is always complete; their instance keys are reported as unplaceable.
+the layout is complete but for left-out floor lamps; their instance keys are reported as unplaceable.
 """
 
 from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from shapely.geometry import LineString, Polygon
@@ -105,7 +105,6 @@ from app.rules.layout.constants import (
     CRITICAL_LIVING_GROUP_KINDS,
     DINING_ACCESS_MIN_M,
     FLOOR_LAMP_REACH_RANGE_M,
-    FLOOR_LAMP_WALL_MAX_GAP_M,
     LIVING_DINING_CLEARANCE_M,
     MEDIA_CENTERLINE_MAX_OFFSET_M,
     PROTECTED_PATH_MIN_OVERLAP_SQM,
@@ -140,7 +139,7 @@ from app.rules.layout_rules import (
     SOFA_COFFEE_TABLE_DISTANCE_RANGE_M,
     WALL_FLUSH_MAX_GAP_M,
 )
-from app.rules.pipeline_shared import is_table_lamp_asset, matches_category_keywords
+from app.rules.pipeline_shared import is_table_lamp_asset, matches_category_keywords, room_walls
 from app.rules.placement_mode import placement_mode_for_asset
 from app.rules.planner.seed_guidance import build_seed_guidance, build_seed_layout_plan
 from app.rules.planner.taxonomy import SEATING_ROLE_KEYWORDS, normalize_category
@@ -152,7 +151,7 @@ Pose = tuple[float, float, float]  # x, y, yaw
 BEAM_WIDTH = 4  # partial layouts kept after each group
 SHORTLIST = 6  # checked candidates per partial layout measured with analyze_layout
 LAMP_SHORTLIST = 2  # the same for a floor lamp, whose preference already ranks its reach rule
-DINING_OPTIONS = 3  # dining_fit_envelopes chair arrangements tried: the two most balanced and the smallest
+DINING_OPTIONS = 5  # dining_fit_envelopes chair arrangements tried: the two most balanced, the smallest, the smallest corner and single-side ones
 DINING_SQUARE_RATIO = 0.8  # a table this near square (or round) seats its chairs on all four edges
 DINING_UNBALANCED_COST = 0.5  # template cost of a chair arrangement other than the most balanced
 # The middle and low end of the sofa-to-table range, as legacy repack_living_group tries.
@@ -255,7 +254,7 @@ def solve_layout(instances: list[Record], room: Record, intent: Record) -> tuple
     build_room_context output. intent: the cleaned intent packet.
     Returns (layout, report): layout is keyed by instance key and normalized like
     the place stage's measure; report holds `unplaceable` (instance keys placed
-    without a pose that passes the checks), `score` (layout_issue_score of the
+    without a pose that passes the checks, or floor lamps left out of the layout), `score` (layout_issue_score of the
     layout), `candidates` (group candidates checked), `scored` (layouts measured
     with analyze_layout), `elapsed` (seconds), `plan`, and `alternatives`: the
     other complete beam layouts, best first, each as {layout, score,
@@ -507,8 +506,9 @@ def _dining_templates(ctx: _Room, table: str, chairs: list[str], lights: list[st
     A rectangular table splits its chairs evenly across its two long edges, using
     the ends for an odd chair or when the long edges are full; a near-square or
     round one spreads them evenly over all four edges. The next most balanced
-    arrangement and the smallest envelope follow at a cost, for rooms the balanced
-    one does not fit. Chairs on one edge sit at even spacing, centered on it (one
+    arrangement, the smallest envelope, and the smallest with chairs on two
+    adjacent edges or on one edge follow at a cost, for rooms the balanced one
+    does not fit. Chairs on one edge sit at even spacing, centered on it (one
     chair at the center, two at the quarter points, as legacy
     _arrange_dining_chairs_around_tables), and face the table; each keeps its
     pull-out band clear. Ceiling lights hang over the table center.
@@ -526,9 +526,16 @@ def _dining_templates(ctx: _Room, table: str, chairs: list[str], lights: list[st
         sides, ends = ((front, back), (left, right)) if width >= depth else ((left, right), (front, back))
         return abs(sides[0] - sides[1]), abs(ends[0] - ends[1]), sum(ends)
 
+    def corner(option: Record) -> bool:  # chairs on two adjacent edges, the table's other two against walls
+        front, back, left, right = option["chairs_per_edge"]
+        return bool(front or back) and bool(left or right) and not (front and back) and not (left and right)
+
     options = dining_fit_envelopes(ctx.assets[table], [ctx.assets[uid] for uid in chairs])  # smallest envelope first
-    chosen = sorted(options, key=imbalance)[:DINING_OPTIONS - 1]  # stable: ties keep the smaller envelope
-    chosen += [option for option in options[:1] if option not in chosen]
+    chosen = sorted(options, key=imbalance)[:DINING_OPTIONS - 3]  # stable: ties keep the smaller envelope
+    for keep in (lambda option: True, corner, lambda option: sum(map(bool, option["chairs_per_edge"])) == 1):
+        option = next((option for option in options if keep(option)), None)
+        if option and option not in chosen:
+            chosen.append(option)
     templates = []
     for rank, option in enumerate(chosen or [{"chairs_per_edge": [0, 0, 0, 0]}]):
         poses = {table: (0.0, 0.0, math.pi / 2), **{uid: (0.0, 0.0, math.pi / 2) for uid in lights}}
@@ -589,7 +596,7 @@ def _placements(ctx: _Room, parent: _Partial, group: _Group, template: _Template
         mode = ctx.plan["placement_mode_by_uid"].get(uid)
         guided = _guided_candidates(uid, ctx.assets[uid], ctx.area, parent.layout, ctx.assets, ctx.plan)
         candidates = _dedupe_candidates(
-            _lamp_slots(ctx, parent, uid) + guided if group.kind == "lamp"
+            _lamp_slots(ctx, parent, uid, guided) if group.kind == "lamp"
             else guided + _placement_candidates(ctx.assets[uid], ctx.area, 0, preferred_walls=_dynamic_preferred_walls(
                 uid, mode, parent.layout, ctx.assets, ctx.plan), placement_mode=mode)
         )
@@ -624,12 +631,27 @@ def _placements(ctx: _Room, parent: _Partial, group: _Group, template: _Template
     return result
 
 
-def _lamp_slots(ctx: _Room, parent: _Partial, uid: str) -> list[tuple[list[float], float]]:
-    """Legacy _rehome_service_items floor-lamp targets: beside and behind each placed seat, mid reach range."""
+def _lamp_slots(ctx: _Room, parent: _Partial, uid: str, guided: list[tuple[list[float], float]]) -> list[tuple[list[float], float]]:
+    """Legacy _rehome_service_items floor-lamp targets (beside and behind each placed seat, mid reach range), then the
+    seed's `guided` ones, each moved to touch its nearest wall: a floor lamp stands against a wall. A slot the move
+    takes past the floor lamp reach range of every placed seat is dropped."""
     width, depth = ctx.dims(uid)
     item = FloorAsset(uid, ctx.assets[uid], [0.0, 0.0, 0.0], 0.0, width, depth, Polygon())
-    return [candidate for seat in floor_assets(parent.layout, ctx.instances, keywords=SEATING_ROLE_KEYWORDS) if seat.uid in ctx.seats
-            for candidate in _service_slot_candidates(item, seat, gap=sum(FLOOR_LAMP_REACH_RANGE_M) / 2, include_rear=True)]
+    slots = [candidate for seat in floor_assets(parent.layout, ctx.instances, keywords=SEATING_ROLE_KEYWORDS) if seat.uid in ctx.seats
+             for candidate in _service_slot_candidates(item, seat, gap=sum(FLOOR_LAMP_REACH_RANGE_M) / 2, include_rear=True)]
+    walls = [(wall, LineString([wall.start, wall.end])) for wall in room_walls(list(ctx.polygon.exterior.coords)[:-1])]
+    moved = []
+    for center, rotation in slots + guided:
+        polygon = asset_polygon([center[0], center[1], 0.0], rotation, width, depth)
+        wall = min(walls, key=lambda row: row[1].distance(polygon))[0]
+        (nx, ny), (x0, y0) = wall.normal, wall.start
+        # The footprint's nearest point to the wall line, along its inward normal, comes to 0.01 m off it.
+        shift = min((x - x0) * nx + (y - y0) * ny for x, y in polygon.exterior.coords) - 0.01
+        x, y = center[0] - nx * shift, center[1] - ny * shift
+        polygon = asset_polygon([x, y, 0.0], rotation, width, depth)
+        if not parent.seats or min(polygon.distance(seat) for seat in parent.seats) <= FLOOR_LAMP_REACH_RANGE_M[1]:
+            moved.append(([x, y, *center[2:]], rotation))
+    return moved
 
 
 def _facing_wall_candidate(ctx: _Room, parent: _Partial, width: float, depth: float) -> tuple[list[float], float]:
@@ -746,7 +768,8 @@ def _is_dining_table(ctx: _Room, uid: str) -> bool:
 def _preference(ctx: _Room, parent: _Partial, group: _Group, template: _Template, key: tuple,
                 poses: dict[str, Pose], floors: list[tuple[str, Polygon]]) -> float:
     """Soft costs that order checked candidates: template cost, the seed's preferred walls, door
-    distance, a clear view from the viewer to the TV, the sofa's wall gap, TV viewing distance,
+    distance, a clear view from the viewer to the TV, the sofa's wall gap, window fronts clear of the
+    TV and pieces taller than the sill, TV viewing distance,
     facing and centerline, floor lamp reach, a central dining table (in a studio or living
     room, one by a wall), and corners for floor pieces. A candidate that a soft rule would flag costs 1 more."""
     cost = template.penalty
@@ -765,6 +788,10 @@ def _preference(ctx: _Room, parent: _Partial, group: _Group, template: _Template
     cost += (blocked > 1e-6) + blocked
     if group.kind == "sitting":  # sofa_wall_gap flags a sofa (the first footprint) inside a window's seating zone
         cost += any(floors[0][1].intersects(zone) for zone in ctx.seating_windows)
+    # A media group (its TV stands above the sill) or a piece taller than the sill in the same zone covers the glass.
+    sills = [float(window.get("sill_height", 0.9) or 0.0) for window in ctx.room["room_windows"]]
+    cost += any(polygon.intersects(zone) for zone, sill in zip(ctx.seating_windows, sills) for uid, polygon in floors
+                if group.kind == "media" or float(ctx.assets[uid].get("height") or 0.0) > sill)
     view = ctx.view
     if view and view["viewer"] in poses:
         eye, yaw = _eye(ctx, poses[view["viewer"]])
@@ -803,8 +830,7 @@ def _preference(ctx: _Room, parent: _Partial, group: _Group, template: _Template
         low, high = FLOOR_LAMP_REACH_RANGE_M
         gap = min(polygon.distance(seat) for seat in parent.seats)
         miss = max(0.0, low - gap, gap - high)
-        far = max(0.0, ctx.polygon.exterior.distance(polygon) - FLOOR_LAMP_WALL_MAX_GAP_M)
-        cost += (miss > 0) + miss + (far > 0) + far
+        cost += (miss > 0) + miss
     min_x, min_y, max_x, max_y = ctx.polygon.bounds
     if group.kind == "dining" and ctx.room["room_type"] in {"studio", "living_room"}:  # its own part of the room, by a wall
         cost += DINING_WALL_COST * min(ctx.polygon.exterior.distance(polygon) for _, polygon in floors)
@@ -884,8 +910,8 @@ def _expand(ctx: _Room, parent: _Partial, group: _Group) -> list[_Partial]:
         if not violation:
             checked.append((_preference(ctx, parent, group, template, key, poses, floors), template, key, poses, floors, bands))
     relaxed = not checked
-    if relaxed and group.kind == "lamp":
-        return [parent]  # the accessory pass places it, as the seed would
+    if relaxed and group.kind == "lamp":  # left out, never placed anywhere
+        return [replace(parent, unplaceable=(*parent.unplaceable, *group.templates[0].poses))]
     if relaxed:
         for template, key, poses in candidates:
             violation, floors, bands = _violation(ctx, parent, prepared, template, poses, strict=False)
@@ -939,27 +965,46 @@ def _pick(items: list, count: int, *, key, diversity=lambda item: (item.key, (it
 def _accessorize(ctx: _Room, partial: _Partial) -> tuple[Record, list[str]]:
     """Place the accessories with the seed generator on top of the group layout.
 
-    An item the seed skips takes the seed's best free floor spot ignoring
-    openings (else the room's representative point) and is returned as skipped.
+    An item the seed skips takes the seed's best free spot ignoring openings
+    (for a wall piece, a wall spot clear of the placed wall pieces first; else
+    the room's representative point) and is returned as skipped.
+    A floor accessory the seed set in a group's service band (a chair's
+    pull-out, a bed side, a storage front) moves to a free spot clear of the
+    bands when there is one; it is not skipped.
+    A floor lamp the search left out stays out.
     """
     room = ctx.room
     pairs = _lamp_supports(ctx, partial.layout)
-    instances = [{**asset, "paired_support_uid": pairs[uid]} if uid in pairs else asset for uid, asset in ctx.assets.items()]
+    instances = [{**asset, "paired_support_uid": pairs[uid]} if uid in pairs else asset for uid, asset in ctx.assets.items()
+                 if uid in partial.layout or uid not in partial.unplaceable]
     layout, report = generate_deterministic_layout_with_report(
         instances, ctx.area, room_vertices=room["room_vertices"], room_doors=room["room_doors"],
         room_windows=room["room_windows"], planner_guidance=ctx.guidance, protected_paths=room["protected_paths"],
         placed=partial.layout, wall_height=room["wall_height"],
     )
     skipped = [outcome["uid"] for outcome in report["skipped"]]
-    for uid in skipped:
+
+    def footprint(uid: str) -> Polygon:
+        return asset_polygon(layout[uid]["position"], layout[uid]["rotation"][2], *ctx.dims(uid))
+
+    banded = [uid for uid in layout if uid not in partial.layout and uid not in skipped and ctx.floor(uid)
+              and not is_rug(uid, ctx.assets[uid]) and any(footprint(uid).intersects(band) for band in partial.bands)]
+    for uid in skipped + banded:
         width, depth = ctx.dims(uid)
-        occupied = [asset_polygon(placement["position"], placement["rotation"][2], *ctx.dims(other))
-                    for other, placement in layout.items() if ctx.floor(other)]
+        # A wall piece tries the walls first and keeps clear of the placed wall pieces; a floor piece, of the
+        # furniture; a banded one also of the service bands and door zones.
+        mounted = placement_mode_for_asset(ctx.assets[uid]) == "wall_mounted"
+        occupied = [footprint(other) for other in layout if other != uid
+                    and (placement_mode_for_asset(ctx.assets[other]) == "wall_mounted" if mounted else ctx.floor(other))]
+        candidates = _wall_candidates(ctx.area[0], ctx.area[1], width, depth, 0) if mounted else []
+        moving = uid in banded
         placed, _ = _search_placement(
-            search_candidates=_grid_candidates(ctx.area[0], ctx.area[1], width, depth), width=width, depth=depth,
+            search_candidates=candidates + _grid_candidates(ctx.area[0], ctx.area[1], width, depth), width=width, depth=depth,
             z=0.0, rug_like=is_rug(uid, ctx.assets[uid]), room_cover=ctx.cover, room_area=ctx.area,
-            occupied=occupied, blockers=[],
+            occupied=[*occupied, *partial.bands] if moving else occupied, blockers=ctx.doors if moving else [],
         )
+        if moving and not placed:
+            continue  # no spot clear of the bands: the seed's spot stays
         point = ctx.polygon.representative_point()
         center, yaw = (placed[0], placed[1]) if placed else ([point.x, point.y], 0.0)
         layout[uid] = _placement(ctx, uid, center[0], center[1], yaw)

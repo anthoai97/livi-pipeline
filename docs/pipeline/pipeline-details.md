@@ -58,8 +58,8 @@ The service then:
    `timeout`.
 6. Writes a run record to `pipeline/.data/runs/<run_id>.json`. The record has
    stage timings, model and Jev calls, tokens, cost, the `JEV_USES`
-   and `PRODUCT_REUSE_RATE` switches, slot results, notes, and variant outcomes with their
-   non-blocking findings, preview render results, and browser timing entries.
+   and `PRODUCT_REUSE_RATE` switches, slot results, notes, and variant outcomes with the
+   issue keys of their blocking and non-blocking findings, preview render results, and browser timing entries.
 
 Every stage sends `node_start` and `node_complete` events with its elapsed time.
 Each `node_complete` also carries `data` for browser progress: interpreted
@@ -79,7 +79,7 @@ see [Models](#models)) that turns the prompt into an intent packet.
 | Per-item limits | sizes the user states, and exact colors, styles, and materials from the catalog vocabulary, such as `colors=[cream]` |
 | Excluded and avoided categories | "no rug" -> `excluded_categories=[rug]` |
 | Price and brand constraints | "sofa under USD 1,500"; brand is always a preference |
-| Style and function hints | `style_hints=[cozy, modern]`, `functional_hints=[tv_focused]` |
+| Style and function hints | `style_hints=[cozy, modern]`, `functional_hints=[tv_focused]`; `wall_mounted_tv` when the brief asks for a TV on the wall |
 | Fit flexibility | `strict_counts`, `space_first`, `flexible`, or `balanced` |
 
 The legacy cleanup code (`coerce_intent_packet`) then normalizes categories and
@@ -154,6 +154,10 @@ The required items per room (`room_requirements`) are the legacy core groups:
 | Dining room | one table and its chairs (4 unless the brief states a count; a space-first brief may seat 2); design-only plant |
 | Studio | bed; sofa or loveseat; a dining table with 2 chairs |
 
+Outside living rooms a TV is offered only when the brief asks for a TV or
+media; living rooms keep the media role as a suggestion. A requested TV makes
+a TV stand or media unit required, unless the brief asks for a wall-mounted TV.
+
 Lamps, nightstands, clothes storage, sideboards, overhead lights and accent
 seats are suggestions: they get optional slots, and the prompts suggest them.
 A living room or bedroom without a lamp only gets the advisory `MISSING
@@ -184,12 +188,15 @@ For each slot, the stage:
 3. Merges the categories in turn, so one category cannot crowd out the others.
 4. Applies checks that need the room: the product must fit the floor in either
    orientation, meet the requested minimum sizes, match a strict brand, and be
-   allowed in this room type.
+   allowed in this room type. Wall art and mirrors deeper than their width or
+   height are dropped: that is a record with swapped sizes, which the 3D view
+   would show as a slab sticking out of the wall. So is a TV stand or media
+   unit deeper than wide, which would stand end-on into the room.
 5. Moves preferred brands to the front and keeps up to 30 products.
 
-If a required slot finds nothing within the user's limits, the stage searches
-again without them and marks the slot as relaxed. A requested item with no
-match is reported as a gap and is not required.
+If a required or requested slot finds nothing within the user's limits, the
+stage searches again without them and marks the slot as relaxed. A requested
+item with no match even then is reported as a gap and is not required.
 Gaps do not fail the variants.
 
 The result is `slots` (the plan) and `pool` (kept products per slot).
@@ -269,9 +276,10 @@ toward the reuse limit. Each variant's selection prompt lists its own pool.
 3. Code fixes the TV before any check. When the brief asks for a TV, or a stand
    is selected, and there is no TV, it adds one from the variant's candidates,
    preferring one that fits a selected stand. A selected TV that fits no
-   selected stand is swapped for the first candidate that does. A TV that
-   still fits no stand hangs on the wall (4c). The run record notes
-   `added TV` or `replaced TV`.
+   selected stand is swapped for the first candidate that does. The TV stands
+   on its stand; it hangs on the wall (4c) with `wall_mounted_tv`, or, with a
+   `TV SUPPORT` warning, when it fits no selected stand. The run
+   record notes `added TV` or `replaced TV`.
 4. Code counts each product under the requested slot it was listed in, so a
    loveseat from the sofa slot satisfies the sofa request.
 5. One Jev request checks the selection:
@@ -287,19 +295,26 @@ toward the reuse limit. Each variant's selection prompt lists its own pool.
      least one of them reaches 0.5. Products that miss it are not rejected.
      When none reaches it, the selection fails with `the room needs at least
      one piece that meets "<phrase>"; none of the selected pieces does`.
+   - **Selected units.** Each product's question gives its selected units, so
+     a set requirement such as "matching dining chairs" reads as met by six
+     identical chairs.
 6. The legacy selection validator checks the result:
    - total cost is at most 110% of the budget, with TVs and design-only decor
      excluded
    - counts, required items, and requested attributes, plus the Jev results
-   - footprint, twice the width x depth of every selected piece but rugs,
-     reaches the density floor (living rooms and bedrooms) and stays at or
-     under the usable floor. Over it is an `OVERCROWDED` error, for example
-     `OVERCROWDED: 2 x the footprint of the selected pieces (rugs excluded) is
-     15.35m², over the 13.46m² usable floor. Drop optional pieces or choose
-     smaller ones.` It is a warning after a fit step, or when the pieces
+   - footprint, twice the width x depth of every floor piece (rugs, wall,
+     ceiling and tabletop pieces excluded), reaches the density floor (living
+     rooms and bedrooms) and stays at or under the usable floor. Over it is an
+     `OVERCROWDED` error that gives both areas and asks to drop optional
+     pieces or choose smaller ones. It is a warning after a fit step, or when the pieces
      filling the required roles alone go over it. The prompt states the floor
      and the limit, with the comfortable load as an upper reference
-   - tabletop items have a support (a TV no longer needs a stand)
+   - tabletop items have a support
+   - a selected dining table has its chairs, in any room: the stated count,
+     else 4 in a dining room and 2 to 4 elsewhere (`DINING GROUP`)
+   - warnings only: a bedroom rug reaches 0.45 m past each side of the bed (or
+     is a runner), a coffee table is 0.35 to 0.50 m high, a side table 0.45 to
+     0.65 m
    - at most `PRODUCT_REUSE_RATE` of the distinct selected products are marked
      shared (`REUSE LIMIT` error)
 
@@ -373,7 +388,9 @@ down:
 1. First fit failure: switch to smaller products (`compact`).
 2. Next fit failure: reduce counts to what fits, keeping required items
    (`capped`). An item the user asked for that is not optional keeps its
-   requested count; only optional items are reduced.
+   requested count; only optional items are reduced. Stated counts of dining
+   chairs and wall pieces (paintings, mirrors) stay enforced after either step:
+   wall pieces use no floor.
 
 A fit failure is a turn where the solver leaves out a floor item. A left-out
 tabletop item, such as a lamp too large for a small nightstand, fails the turn
@@ -383,7 +400,7 @@ After 4 failed turns in all, the last selection loses the products that fail
 it, and the variant goes on to placement. Code removes one product a round,
 every unit of it, while that leaves fewer errors (then less cost over the
 budget allowance). It never removes the anchor piece (sofa, bed, or dining
-table). For example, a coffee table that does not match the sofa's style, or a
+table), and keeps a table with its chairs (see 4d, step 3). For example, a coffee table that does not match the sofa's style, or a
 lamp with nothing to stand on, is removed instead of failing the design. Errors
 that removal cannot fix, such as a missing required item, stay in the run
 record, and the design is still delivered. The removal rounds cannot see a
@@ -418,19 +435,21 @@ door's clear zone is the opening width and 0.60 m deep. It also keeps the
 whole dining group, chairs included, 0.76 m from the sofa group. When a TV faces the sofa, the sofa can
 also move forward off its wall, so that the viewing distance fits the TV size.
 
-A TV that fits no selected stand hangs on the wall that faces its viewer, with
-its screen center at 1.1 m (seated eye level) for every viewer, and above any
-stand under it.
-Its viewing distance is still measured and costed. A TV that fits a stand
-stands on it, as before.
+A TV stands on its stand. With `wall_mounted_tv`, or when it fits no selected
+stand, it hangs on the wall
+that faces its viewer, at the 1.60 m center of every wall-mounted piece and
+above any furniture under it. Its viewing distance is measured and costed
+either way.
 
 In a studio, the TV stand can also stand free as a divider, on the sofa's axis
 and facing it, with the screen near the middle of its viewing range (1.2 to 3.5
 times the TV width). For example, a 1.2 m TV that the far wall puts 5.3 m from
 the sofa stands about 2.8 m from it instead. The checker notes a free-standing
 stand, so a wall-backed TV within its range still wins. A floor lamp goes beside
-the sofa or an accent chair; dining chairs count as seats only in a room without
-one. The check measures a floor lamp's reach to the nearest seat of any kind.
+the sofa or an accent chair, against a wall (within 0.30 m); dining chairs count
+as seats only in a room without one. A lamp that fits no such spot is left out
+with a note, not placed anywhere. The check measures a floor lamp's reach to the
+nearest seat of any kind.
 
 Groups go in order, largest first. After each group, the best partial layouts,
 measured with the same checker as validation, go on to the next group. The kept
@@ -444,8 +463,8 @@ one slid along it.
 A dining table in a dining room prefers the room center. In a studio or living room it prefers a wall (0.1 per metre away),
 so it takes its own part of the room instead of the middle.
 
-Lamps, tabletop items, and wall art are added last with the seed rules, and the
-complete layout with the fewest findings wins. A solve takes 0.1 to 1.5 s on the
+Lamps, tabletop items, and wall art are added last with the seed rules (a wall
+piece never lands on another one), and the complete layout with the fewest findings wins. A solve takes 0.1 to 1.5 s on the
 test rooms (up to 15 items).
 
 Place makes no model call. An item the solver cannot place keeps its
@@ -465,15 +484,19 @@ score. When a design repeats another's zone plan, the run record notes
 The record keeps each ready design's `plan`, and `scripts/benchmark.py` prints
 how many distinct plans each run produced.
 
-The layout is then normalized: wall items snap to walls, rugs fit the room, and
-displays sit on their supports. It is then analyzed into findings by severity:
+The layout is then normalized: wall items snap to the nearest wall long enough
+for them, rugs fit the room, and displays sit on their supports. It is then analyzed into findings by severity:
 
-- **P0:** physical problems such as overlaps, items outside the room, and
-  blocked doors.
-- **P1:** placement problems such as wall items off the wall and blocked
-  walking paths.
+- **P0:** physical problems such as overlaps (including wall pieces that
+  overlap on the same wall), items outside the room, and blocked doors.
+- **P1:** placement problems such as wall items off the wall, blocked protected
+  paths, and blocked walkways (`circulation_violations`, ported from the legacy
+  pipeline): with the room shrunk by 0.28 m and the furniture grown by 0.28 m,
+  every door and service area (bed sides and foot, seat fronts, chair
+  pull-out, storage fronts) must lie in one connected piece of floor, so a
+  0.56 m walkway reaches each of them. The finding names the pieces that block.
 - **Critical P2:** function problems that block a layout, such as a broken
-  seating group.
+  seating group or a dining table without its chairs (in any room).
 - **Other P2:** quality notes that do not block, such as a dining rug that
   covers less than 95% of the table and chairs, or a dining light off the table
   center.
@@ -520,10 +543,13 @@ breaks them.
    items it fails on, one named item a round, choosing the removal that leaves
    the fewest findings. Items resting on a removed item go with it. It never
    removes the anchor (bed, sofa, or dining table): findings that name only the
-   anchor stay, and the design is delivered with them. For example, a chair
-   stuck inside the dining table is removed and the room keeps three chairs.
+   anchor stay, and the design is delivered with them. A table and its chairs
+   stay together: in a dining room or studio the chairs are anchors too; in
+   other rooms, removing the table or a chair removes the whole dining group.
+   For example, a living room never ships a dining table without chairs.
 4. **Send.** Finish builds the render manifest (model references and
-   placements), the selected-asset list, and the total cost. The graph then
+   placements, with `on_top_of` for a piece on a support, such as a TV on its
+   stand), the selected-asset list, and the total cost. The graph then
    renders a top-down preview in a worker thread and sends `variant_ready` with
    its `preview_url`.
 

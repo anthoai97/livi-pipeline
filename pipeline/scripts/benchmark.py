@@ -9,9 +9,13 @@ The service must run on this machine so its run records are readable here.
 Run from pipeline/: python scripts/benchmark.py --runs 3 --url http://127.0.0.1:8001 --url http://127.0.0.1:8002
 
 `--set full` (the default) sends every case; `--set quick` sends the medium case of
-each room type once, for everyday PR checks.
+each room type and the two tight rooms (dining_room_compact_two, studio_tight) once,
+for everyday PR checks.
 
-Per run, `select_calls` counts the selection model calls (stage `select`, hedged
+Per run, `pass_of_3` counts the ready designs with zero blocking findings (P0, P1,
+critical P2) at the final layout; the summary's `pass` is that count over all designs.
+`no_retrieve_s` is `all_ready_s` minus the `retrieve` stage, `full_run_s` the whole run.
+`select_calls` counts the selection model calls (stage `select`, hedged
 duplicates included) and `failed_turns` the `selection turn <n> failed` notes, over
 all designs. The summary's `select_calls_per_design` and `failed_turns_per_design`
 are the medians over runs of each count divided by the run's designs (3).
@@ -71,10 +75,13 @@ def summarize(label: str, record: dict) -> dict:
     switches = record.get("switches") or {}
     findings = [variant["non_blocking_findings"] for variant in variants if "non_blocking_findings" in variant]
     plans = {json.dumps(variant["plan"]) for variant in variants if variant["outcome"] == "ready" and variant.get("plan")}
+    retrieve_s = sum(stage["elapsed"] or 0 for stage in record["stages"] if stage["stage"] == "retrieve")
     return {
         "room": label,
         "status": record["status"],
-        "seconds": totals["full_run_s"],
+        "pass_of_3": sum(variant["outcome"] == "ready" and variant.get("blocking_findings") == [] for variant in variants),
+        "no_retrieve_s": None if totals["all_ready_s"] is None else round(totals["all_ready_s"] - retrieve_s, 1),
+        "full_run_s": totals["full_run_s"],
         "ready_of_3": sum(variant["outcome"] == "ready" for variant in variants),
         "model_calls": totals["model_calls"],
         "select_calls": sum(call["stage"] == "select" for call in record["model_calls"]),
@@ -136,11 +143,12 @@ def main() -> None:
 
     print()
     print_table(rows)
-    seconds = [row["seconds"] for row in rows]
+    seconds = [row["full_run_s"] for row in rows]
     valid = sum(row["ready_of_3"] == 3 for row in rows)
+    passed, designs = sum(row["pass_of_3"] for row in rows), sum(row["designs"] for row in rows)
     per_design = {key: statistics.median(row[key] / row["designs"] for row in rows) for key in ("select_calls", "failed_turns")}
     print()
-    print(f"runs={len(rows)} max_s={max(seconds):.1f} median_s={statistics.median(seconds):.1f}"
+    print(f"pass={passed}/{designs} ({passed / designs:.0%}) runs={len(rows)} max_s={max(seconds):.1f} median_s={statistics.median(seconds):.1f}"
           f" valid={valid}/{len(rows)} ({valid / len(rows):.0%}) under_60s={sum(s < 60 for s in seconds)}/{len(rows)}"
           f" distinct_plans={sum(row['plans'] == 3 for row in rows)}/{len(rows)}"
           f" select_calls_per_design={per_design['select_calls']:.2f} failed_turns_per_design={per_design['failed_turns']:.2f}")

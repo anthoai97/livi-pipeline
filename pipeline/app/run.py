@@ -200,8 +200,10 @@ class RunContext:
         reason: str | None = None,
         non_blocking_findings: list[str] | None = None,
         result: dict | None = None,
+        blocking_findings: list[str] | None = None,
     ) -> None:
-        """`non_blocking_findings` are the issue keys of the noncritical P2 findings at the final layout.
+        """`non_blocking_findings` are the issue keys of the noncritical P2 findings at the final layout;
+        `blocking_findings` are the issue keys of the P0, P1, and critical P2 findings there.
 
         `result` is a ready variant's compact result for benchmark review: `direction`,
         `total_cost`, `products`, `plan`, and `layout` (app.graph `_variant_summary`).
@@ -214,6 +216,7 @@ class RunContext:
             "ready_at": now if outcome == "ready" else None,
             "finished_at": now,
             "non_blocking_findings": non_blocking_findings or [],
+            "blocking_findings": blocking_findings or [],
             **(result or {}),
         }
 

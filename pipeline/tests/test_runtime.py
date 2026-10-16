@@ -208,7 +208,7 @@ SELECTED_ASSET_KEYS = {
     "is_placeholder",
 }
 MANIFEST_KEYS = {"room_area", "room_vertices", "room_doors", "room_windows", "wall_height", "layout", "assets"}
-LAYOUT_KEYS = {"uid", "instance_key", "category", "position", "rotation"}
+LAYOUT_KEYS = {"uid", "instance_key", "category", "position", "rotation", "on_top_of"}
 ASSET_KEYS = {
     "center",
     "frontView",

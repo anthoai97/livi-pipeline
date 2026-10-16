@@ -28,14 +28,19 @@ from app.rules.selection.catalog import (
     catalog_asset,
 )
 from app.rules.selection.constants import (
+    BED_RUG_EXTRA_WIDTH_M,
     BLOCKING_REQUIRED_ROLES,
     BUDGET_EXCLUDED_CATEGORIES,
     BUDGET_FLEX_PCT,
+    COFFEE_TABLE_HEIGHT_M,
     FIT_ACCENT_SEATING,
     FIT_ANCHOR_SEATING,
     PERIMETER_STORAGE_CATEGORIES,
     RECOMMENDED_CATEGORIES,
     REQUIRED_CATEGORIES,
+    RUNNER_MAX_WIDTH_M,
+    SIDE_TABLE_HEIGHT_M,
+    SIZE_TOLERANCE_M,
 )
 from app.rules.selection.fit import (
     FIT_STEP_DECISIONS,
@@ -116,8 +121,9 @@ def build_instances(items: list[dict[str, Any]], intent: dict[str, Any]) -> list
     the record plus catalog_asset fields, keyed uid = instance_key =
     "<normalized category>_<n>" (n counts per category from 1). A generic
     `chair` selected with a dining table, and not marked living seating, is a
-    dining_chair. A TV that fits a selected media support becomes tabletop with
-    paired_support_uid, any other TV wall_mounted; studio media gets its
+    dining_chair. A TV is tabletop with paired_support_uid on a selected media
+    support it fits, unless the intent has the functional hint
+    `wall_mounted_tv`; any other TV is wall_mounted. Studio media gets its
     viewing_target, and a bedroom TV serves the bed.
     """
     counts: Counter[str] = Counter()
@@ -136,7 +142,8 @@ def build_instances(items: list[dict[str, Any]], intent: dict[str, Any]) -> list
             counts[category] += 1
             key = f"{category}_{counts[category]}"
             instances.append({**asset, **extras, "uid": key, "instance_key": key})
-    return studio_viewing_assets(_annotate_tv_placement(instances), intent)
+    wall_mounted = "wall_mounted_tv" in (intent.get("functional_hints") or [])
+    return studio_viewing_assets(_annotate_tv_placement(instances, wall_mounted), intent)
 
 
 def room_requirements(
@@ -152,14 +159,18 @@ def room_requirements(
     surface (coffee table, desk or side table) and a rug in a living room; one
     bed and a rug in a bedroom; one dining table and dining_chair_count chairs
     in a dining room; bed, sofa/loveseat, dining table and chairs in a studio;
-    perimeter storage in a spacious living room; and a design-only plant
-    outside studios. A rug or plant the intent excludes is not required.
-    Lamps, nightstands, clothes storage, sideboards, overhead lights and accent
-    seats are suggestions, searched through their optional roles.
+    perimeter storage in a spacious living room; a TV stand or media unit for
+    a requested TV, unless the intent has the hint `wall_mounted_tv`; and a
+    design-only plant outside studios. A rug or plant the intent excludes is
+    not required. Lamps, nightstands, clothes storage, sideboards, overhead
+    lights and accent seats are suggestions, searched through their optional
+    roles.
     optional_roles: {role: categories} from the count-guidance roles, without
     room exclusions (no bed outside bedrooms and studios), intent exclusions,
     zero-capped categories, and categories already required; overhead lighting
-    only in dining rooms and studios.
+    only in dining rooms and studios; media outside living rooms only when the
+    brief requests a TV or media (a requested media category or the
+    `tv_focused` hint).
     """
     room_type = normalize_room_type(room_type)
     excluded = {normalize_category(category) for category in intent.get("excluded_categories") or []}
@@ -184,6 +195,11 @@ def room_requirements(
         room_type=room_type, intent_packet=intent, feasibility_digest=digest, fit_step=None,
     ):
         need("storage", PERIMETER_STORAGE_CATEGORIES)
+    hints = set(intent.get("functional_hints") or [])
+    if "wall_mounted_tv" not in hints and any(
+        item.get("canonical_category") == "tv" and not item.get("optional") for item in intent.get("requested_items") or []
+    ):
+        need("media_support", {"tv_stand", "media_unit"})
     if room_type != "studio" and "planter" not in excluded:
         need("decor_plant", {"planter"}, decor_only=True)
 
@@ -193,6 +209,12 @@ def room_requirements(
     }
     if room_type not in {"dining_room", "studio"}:
         blocked |= COUNT_GUIDANCE_ROLE_CATEGORIES["overhead_lighting"]
+    media = COUNT_GUIDANCE_ROLE_CATEGORIES["media"]
+    if room_type != "living_room" and not (
+        media & {normalize_category(category) for category in intent.get("requested_categories") or []}
+        or "tv_focused" in hints
+    ):
+        blocked |= media
     optional_roles = {
         role: sorted(categories - blocked - taken)
         for role, categories in COUNT_GUIDANCE_ROLE_CATEGORIES.items()
@@ -263,6 +285,36 @@ def _attribute_errors(selected_assets: list[dict[str, Any]], intent_packet: dict
     return errors
 
 
+def _size_warnings(selected_assets: list[dict[str, Any]], room_type: str) -> list[str]:
+    """SIZE warnings for the legacy size rules, never errors.
+
+    Living room: a coffee table is COFFEE_TABLE_HEIGHT_M high, a side table
+    SIDE_TABLE_HEIGHT_M. Bedroom: a rug is a runner (at most RUNNER_MAX_WIDTH_M
+    wide) or spans the bed width plus BED_RUG_EXTRA_WIDTH_M. Catalog sizes come
+    from 3D bounding boxes, so a piece passes within SIZE_TOLERANCE_M of a limit.
+    """
+    warnings: list[str] = []
+    selected = list({str(asset.get("uid")): asset for asset in selected_assets}.values())
+    beds = [asset for asset in selected if normalize_category(asset.get("category")) == "bed"]
+    for asset in selected:
+        category = normalize_category(asset.get("category"))
+        width, depth = _asset_width_depth(asset)
+        height = float(asset.get("height") or 0.0)
+        size = f"{width:.2f}m x {depth:.2f}m x {height:.2f}m"
+        if room_type == "living_room" and category in {"coffee_table", "side_table"}:
+            low, high = COFFEE_TABLE_HEIGHT_M if category == "coffee_table" else SIDE_TABLE_HEIGHT_M
+            if not low - SIZE_TOLERANCE_M <= height <= high + SIZE_TOLERANCE_M:
+                warnings.append(f"SIZE: {asset.get('uid')} is {size}; a {category.replace('_', ' ')} is {low:.2f}-{high:.2f}m high.")
+        if room_type == "bedroom" and beds and category == "rug":
+            span = _asset_width_depth(beds[0])[0] + BED_RUG_EXTRA_WIDTH_M
+            if not (min(width, depth) <= RUNNER_MAX_WIDTH_M + SIZE_TOLERANCE_M or max(width, depth) >= span - SIZE_TOLERANCE_M):
+                warnings.append(
+                    f"SIZE: {asset.get('uid')} is {size}; a bedroom rug is a runner at most {RUNNER_MAX_WIDTH_M:.2f}m wide, "
+                    f"or at least {span:.2f}m across the bed, {BED_RUG_EXTRA_WIDTH_M / 2:.2f}m past each side."
+                )
+    return warnings
+
+
 def validate_selection(
     *,
     items: list[dict[str, Any]],
@@ -291,11 +343,16 @@ def validate_selection(
 
     Checks budget (110% allowance), the density floor and limit, category
     caps and counts, required items (room_requirements), fit targets, layout
-    preflight, and strict attributes. Density measures every selected piece
-    but rugs as 2 x width x depth. Going over the usable floor
+    preflight, and strict attributes. Density measures every selected floor
+    piece but rugs as 2 x width x depth. Going over the usable floor
     (furniture_area_sqm) blocks, unless a fit decision was accepted or the
     pieces filling the required roles alone go over it; a living room or
-    bedroom under the digest's sparse_below_load_sqm is under-furnished.
+    bedroom under the digest's sparse_below_load_sqm is under-furnished. A
+    selected dining table needs its chairs in every room (DINING GROUP); outside
+    dining rooms and studios the seat range is the stated count, else 2 to 4. A
+    TV that fits no selected support hangs on the wall with a TV SUPPORT warning.
+    Stated counts of wall and ceiling pieces are enforced after a fit decision
+    too. Bed rug width and coffee and side table heights add SIZE warnings.
     Returns valid, status, errors, warnings, metrics,
     retry_context (when invalid), feedback (JSON text for the model, with
     asset_id as the uid), and instances (build_instances output).
@@ -353,8 +410,11 @@ def validate_selection(
         else:
             not_found.append(uid)
 
-    # Density counts every piece but rugs at twice its footprint.
-    pieces = [asset for asset in instances if normalize_category(asset.get("category")) != "rug"]
+    # Density counts floor pieces but rugs at twice their footprint.
+    pieces = [
+        asset for asset in instances
+        if placement_mode_for_asset(asset) == "floor" and normalize_category(asset.get("category")) != "rug"
+    ]
     total_footprint = sum(asset["width"] * asset["depth"] * 2 for asset in pieces)
     flex_budget = budget * (1 + BUDGET_FLEX_PCT)
     is_over_budget = total_cost > flex_budget
@@ -435,10 +495,11 @@ def validate_selection(
     if studio and not selected_cats & {"sofa", "loveseat", "sectional", "sleeper_sofa"}:
         errors.append("STUDIO SITTING GROUP: Include separate sofa/loveseat seating; a bed or dining chair does not substitute.")
         is_valid = False
-    if dining or studio:
+    # build_instances names a chair selected with a dining table a dining_chair.
+    table_count = sum(normalize_category(asset.get("category")) == "dining_table" for asset in instances)
+    chair_count = sum(normalize_category(asset.get("category")) == "dining_chair" for asset in instances)
+    if dining or studio or table_count:
         dining_assets = [assets_by_uid[uid] for uid in canonical_uids if uid in assets_by_uid]
-        table_count = sum(normalize_category(asset.get("category")) == "dining_table" for asset in dining_assets)
-        chair_count = sum(normalize_category(asset.get("category")) == "dining_chair" for asset in dining_assets)
         target_count = dining_chair_count({**intent_packet, "room_type": room_type})
         seat_constraints = count_constraints_from_intent_packet(intent_packet)
         seat_request = seat_constraints.get("dining_chair") or seat_constraints.get("chair") or {}
@@ -452,7 +513,9 @@ def validate_selection(
                 and (seat_request.get("exact") or seat_request.get("source") == "counted")
             )
         )
-        minimum_count = min(2, target_count) if flexible_seating else target_count
+        # Outside dining rooms and studios a dining table seats the stated count, else 2 to 4.
+        open_count = not (dining or studio) and not mandatory_count
+        minimum_count = min(2, target_count) if flexible_seating or open_count else target_count
         if table_count != 1 or not minimum_count <= chair_count <= target_count:
             seat_range = str(target_count) if minimum_count == target_count else f"{minimum_count}–{target_count}"
             errors.append(
@@ -461,7 +524,7 @@ def validate_selection(
             )
             is_valid = False
         for asset in dining_assets:
-            if not asset_is_eligible_for_room(asset, room_type):
+            if (dining or studio) and not asset_is_eligible_for_room(asset, room_type):
                 errors.append("UNSUPPORTED SLEEP ASSET: A dining room cannot include a bed or sleep components.")
                 is_valid = False
             if normalize_category(asset.get("category")) == "dining_chair":
@@ -472,6 +535,13 @@ def validate_selection(
                         f"({width:.2f}m x {depth:.2f}m); select a correctly scaled dining chair."
                     )
                     is_valid = False
+    wall_tv_asked = "wall_mounted_tv" in (intent_packet.get("functional_hints") or [])
+    for asset in instances:
+        if normalize_category(asset.get("category")) == "tv" and asset["placement_mode"] == "wall_mounted" and not wall_tv_asked:
+            warnings.append(
+                f"TV SUPPORT: {asset['uid']} fits no selected tv_stand or media_unit (TV width <= support width - 0.07m), "
+                "so it hangs on the wall; a TV stands on its stand unless the brief asks for the wall."
+            )
     decor_plant_count = sum(
         is_decor_plant(assets_by_uid[uid])
         for uid in canonical_uids
@@ -534,7 +604,7 @@ def validate_selection(
             required_keys.update(filling[:need["count"]])
         required_footprint = sum(asset["width"] * asset["depth"] * 2 for asset in pieces if asset["uid"] in required_keys)
         message = (
-            f"OVERCROWDED: 2 x the footprint of the selected pieces (rugs excluded) is {total_footprint:.2f}m², "
+            f"OVERCROWDED: 2 x the footprint of the selected floor pieces (rugs excluded) is {total_footprint:.2f}m², "
             f"over the {furniture_area:.2f}m² usable floor. Drop optional pieces or choose smaller ones."
         )
         if accepted_fit_decision or required_footprint > furniture_area + 1e-9:
@@ -563,11 +633,20 @@ def validate_selection(
     if fit_target_feedback["errors"]:
         errors.extend(fit_target_feedback["errors"])
         is_valid = False
-    explicit_count_constraints = {}
-    if not accepted_fit_decision:
-        explicit_count_constraints = count_constraints_from_intent_packet(
-            intent_packet
-        )
+    explicit_count_constraints = count_constraints_from_intent_packet(intent_packet)
+    if accepted_fit_decision:
+        # Wall and ceiling pieces use no floor, so a fit decision keeps their stated counts.
+        mounted_errors = count_guidance_feedback(
+            canonical_uids, assets_by_uid, {}, fit_satisfaction=fit_satisfaction,
+            explicit_count_constraints={
+                category: constraint for category, constraint in explicit_count_constraints.items()
+                if placement_mode_for_asset({"category": category}) in {"wall_mounted", "ceiling_mounted"}
+            },
+        )["errors"]
+        if mounted_errors:
+            errors.extend(mounted_errors)
+            is_valid = False
+        explicit_count_constraints = {}
     count_guidance = count_guidance_feedback(
         canonical_uids,
         assets_by_uid,
@@ -598,10 +677,11 @@ def validate_selection(
         errors.extend(layout_preflight["errors"])
         is_valid = False
     warnings.extend(layout_preflight["warnings"])
+    warnings.extend(_size_warnings(selected_for_fit, room_type))
 
     if studio:
         for asset in selected_for_fit:
-            if (asset.get("category") in {"rug", "side_table"} or placement_mode_for_asset(asset) == "ceiling") and not asset.get("functional_group"):
+            if (asset.get("category") in {"rug", "side_table"} or placement_mode_for_asset(asset) == "ceiling_mounted") and not asset.get("functional_group"):
                 errors.insert(0, f"SELECTION TOOL PROTOCOL: Studio accessory {asset['uid']} requires a functional_group: sleeping, sitting or dining.")
                 is_valid = False
                 break

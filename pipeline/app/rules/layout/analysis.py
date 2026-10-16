@@ -32,6 +32,7 @@ from app.rules.layout.validation_functional import (
 from app.rules.layout.validation_geometry import (
     compute_boundary_violations,
     compute_ceiling_mount_violations,
+    compute_circulation_violations,
     compute_door_violations,
     compute_obstacle_violations,
     compute_overlaps,
@@ -55,8 +56,8 @@ def analyze_layout(
     """Measure a layout. Returns every issue key, each holding its findings (empty when clean).
 
     wall_height is the room's ceiling, for wall and ceiling mounts. Bedroom checks
-    (the desk chair pull-out among them) run in bedrooms and studios; a studio's
-    dining checks run only when it has a dining table.
+    (the desk chair pull-out among them) run in bedrooms and studios; dining
+    checks run in any room with a dining table.
     """
     issues = {
         "overlaps": [],
@@ -67,6 +68,7 @@ def analyze_layout(
         "ceiling_mount_violations": [],
         "wall_aligned_violations": [],
         "protected_path_violations": [],
+        "circulation_violations": [],
         "sofa_coffee_table_violations": [],
         "sofa_wall_gap_violations": [],
         "media_focal_alignment_violations": [],
@@ -125,13 +127,21 @@ def analyze_layout(
             assets,
             protected_paths or [],
         )
+        issues["circulation_violations"] = compute_circulation_violations(
+            layout,
+            assets,
+            boundary,
+            room_doors,
+            room_area,
+        )
     if "P2" in tiers:
         studio = room_type == "studio"
         if room_type in {"bedroom", "studio"}:
             issues.update(bedroom_layout_measurements(layout, assets, boundary, room_area, mixed_groups=studio)["violations"])
-        if room_type == "dining_room" or (studio and any(
-                normalize_category(asset.get("category")) == "dining_table" for asset in assets)):
-            issues.update(dining_layout_measurements(layout, assets, boundary, room_area, mixed_groups=studio)["violations"])
+        if room_type == "dining_room" or any(normalize_category(asset.get("category")) == "dining_table" for asset in assets):
+            # Outside a dining room, rugs and lights may serve other groups.
+            issues.update(dining_layout_measurements(layout, assets, boundary, room_area,
+                                                     mixed_groups=room_type != "dining_room")["violations"])
         if room_type == "studio":
             issues.update(studio_layout_measurements(layout, assets)["violations"])
         issues["sofa_coffee_table_violations"] = compute_sofa_coffee_table_violations(

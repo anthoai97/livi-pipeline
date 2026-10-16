@@ -42,7 +42,7 @@ from app.rules.selection.catalog import (
     catalog_asset,
     filter_oversized_seating,
 )
-from app.rules.selection.constants import BUDGET_EXCLUDED_CATEGORIES, BUDGET_FLEX_PCT
+from app.rules.selection.constants import BUDGET_EXCLUDED_CATEGORIES, BUDGET_FLEX_PCT, TV_HOST_CATEGORIES
 from app.rules.selection.validation import _ORIENTATION_FREE_CATEGORIES, _size_limits_met, room_requirements
 
 if TYPE_CHECKING:
@@ -202,6 +202,8 @@ Rules:
   balanced otherwise.
 - functional_hints should be concise semantic goals such as small_space, storage,
   tv_focused, conversation, work_from_home, open_feel, or layered_lighting.
+  A TV stands on a TV stand or media unit. Add wall_mounted_tv only when the user
+  asks for the TV on the wall.
 """
 
 
@@ -263,6 +265,7 @@ KEEP = {"requested": 10, "required": 10, "optional": 6, "decor": 6}
 RANKED_KEEP = {"requested": 6, "required": 6, "optional": 4, "decor": 4}
 DECOR_CATEGORIES = ("planter", "sculpture", "floor_mirror", "wall_mirror", "wall_art")
 _ATTRIBUTE_KEYS = ("colors", "styles", "materials")
+THIN_CATEGORIES = {"wall_art", "painting", "wall_mirror"}
 # Requested-item limits a slot carries: sizes in metres, then strict prepared attributes.
 LIMIT_KEYS = ("min_width_m", "max_width_m", "min_depth_m", "max_depth_m", "min_height_m", "max_height_m", *_ATTRIBUTE_KEYS)
 
@@ -423,7 +426,10 @@ def keep_slot(slot: Record, rows: list[Record], room: Record) -> list[Record]:
 
     Drops products that fit the floor in neither orientation, products outside the
     requested sizes (rugs in either orientation), other brands when a brand is strict,
-    and products the room type excludes. Preferred brands move to the front.
+    products the room type excludes, and records with swapped sizes: a thin piece
+    (THIN_CATEGORIES) deeper than its width or height, which would render as a slab
+    standing out of the wall, and a TV support deeper than wide, which would stand
+    end-on into the room. Preferred brands move to the front.
     """
     width, depth = room["room_area"]
     kept = []
@@ -431,6 +437,9 @@ def keep_slot(slot: Record, rows: list[Record], room: Record) -> list[Record]:
         asset = catalog_asset(row)
         w, d = asset["width"], asset["depth"]
         if not ((w <= width and d <= depth) or (d <= width and w <= depth)):
+            continue
+        category = normalize_category(row["category"])
+        if (category in THIN_CATEGORIES and d > min(w, asset["height"])) or (category in TV_HOST_CATEGORIES and d > w):
             continue
         if slot["limits"] and not _size_limits_met(asset, slot["limits"]):
             continue
@@ -462,11 +471,12 @@ async def retrieve(state: PipelineState, ctx: StageContext) -> PipelineState:
         rows = await asyncio.to_thread(search_assets, connection, vector, **slot_filters(slot))
         kept = keep_slot(slot, rows, room_context)
         has_limits = slot["limits"] or slot["strict_brands"] or slot["max_price"] < allowance
-        if kept or not slot["required"] or not has_limits:
+        # A required or requested slot that its limits leave empty is searched again without them.
+        if kept or not (slot["required"] or slot["kind"] == "requested") or not has_limits:
             return slot, kept, None
         slot = {**slot, "limits": {}, "strict_brands": [], "max_price": allowance, "relaxed": True}
         rows = await asyncio.to_thread(search_assets, connection, vector, **slot_filters(slot))
-        return slot, keep_slot(slot, rows, room_context), f"required {slot['label']} has no product within the request's limits; searched without them"
+        return slot, keep_slot(slot, rows, room_context), f"{slot['kind']} {slot['label']} has no product within the request's limits; searched without them"
 
     slots, pool = [], {}
     for slot, kept, note in await asyncio.gather(*(search(slot) for slot in plan_slots(intent, room_context, request.budget))):

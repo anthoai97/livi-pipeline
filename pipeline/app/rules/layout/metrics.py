@@ -94,6 +94,7 @@ def serialize_layout_issues(issues: dict[str, Any]) -> dict[str, Any]:
         "protected_path_violations": list(
             issues.get("protected_path_violations", [])
         ),
+        "circulation_violations": list(issues.get("circulation_violations", [])),
         "sofa_coffee_table_violations": list(
             issues.get("sofa_coffee_table_violations", [])
         ),
@@ -163,6 +164,9 @@ def issue_counts(
         if "P1" in tiers
         else 0,
         "protected_path": len(issues.get("protected_path_violations", []))
+        if "P1" in tiers
+        else 0,
+        "circulation": len(issues.get("circulation_violations", []))
         if "P1" in tiers
         else 0,
         "sofa_table": len(issues.get("sofa_coffee_table_violations", []))

@@ -41,7 +41,7 @@ prompt sentences, the legacy fit recommendation and layout judge.
    optional digest categories stay, so the model still sees nightstands,
    sideboards, pendants and lamps as candidates, and the texts suggest them
    as the legacy texts did. The studio dining group is required again;
-   dining chairs default to 4 in every size; a space-first dining brief may
+   dining chairs default to 4, or 2 in a studio; a space-first dining brief may
    drop to a smaller usable group, never below a stated count.
 4. **Density is the legacy measure.** `ROLE_PROFILES` get back their
    clearance ring and weight, `ROOM_THRESHOLDS` the per-scale set (compact

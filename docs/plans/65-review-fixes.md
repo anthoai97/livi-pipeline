@@ -118,7 +118,7 @@ Non-goals:
 5. **Floor lamps stand against a wall.** Lamp slots at a sofa end move to
    touch the nearest wall within 0.30 m. A lamp that fits no slot is left out
    with a note instead of being placed anywhere.
-6. **TV only when asked, in bedrooms and studios** (legacy). Living rooms keep
+6. **TV only when asked, outside living rooms** (legacy). Living rooms keep
    media as a suggestion, as the legacy does.
 7. **A TV stands on its stand by default** (legacy). A requested TV makes a TV
    stand or media unit required, unless the brief asks for a wall-mounted TV.
@@ -137,10 +137,11 @@ Non-goals:
     piece when the nearest segment is too short.
 12. **Bring back the three deleted checks as selection warnings** (not errors,
     no retrieval drop): bed rug width, coffee table height, side table height.
-13. **Set constraints are judged once per room.** Intent gives a constraint
-    about how pieces relate ("matching", "coordinated") no category. The audit
-    judges each category-less constraint once, against the list of selected
-    products.
+13. **Each Jev product question gives its selected units.** "Matching dining
+    chairs" on one chair product scored 0.58-0.66 (fail below 0.5); with
+    "selected units: 6" it scored 0.87-0.90. A room-wide question over all
+    products was tried and dropped: it failed palette constraints such as
+    "oak, walnut, cream and muted green" turn after turn.
 14. **Benchmark pass = zero blocking findings.** A missing chair is already
     blocking (`incomplete_dining_group` is critical P2), so this covers
     "anchor group complete".
@@ -222,9 +223,8 @@ Non-goals:
 - `rules/selection/constants.py`, `rules/selection/validation.py`: the bed rug
   width, coffee table height and side table height checks from `c7c64bc`,
   returned as `warnings` only.
-- `shared_stages.py`: the intent prompt gives a set constraint no category.
-- `variant_stages.py` (`_constraint_audit`): a category-less constraint is one
-  question over the selected product list, not one per product.
+- `variant_stages.py` (`_checked`, `_product_text`): each product in the Jev
+  audit carries its selected units.
 
 ### 7. Benchmark and docs
 
@@ -245,13 +245,34 @@ Non-goals:
   walkway, density and restored warnings. `benchmark-process.md`: case count
   and the pass/fail column.
 
+### 8. Follow-up after the first benchmark (2026-10-16)
+
+The first benchmark and judge review found these; each change was checked
+against the same four rooms for pass rate, failed turns and time.
+
+- `shared_stages.py` (`retrieve`): a requested slot that its limits leave
+  empty is searched again without them, like a required one. One run of the
+  two-painting room lost both paintings to an empty slot.
+- `shared_stages.py` (`keep_slot`): a TV stand or media unit deeper than wide
+  is dropped as a swapped record (3 in the catalog, such as "Coronado Walnut
+  Wood Credenza", 0.48 x 1.96 m).
+- `rules/layout/solver.py` (`_accessorize`): a floor accessory the seed set in
+  a service band moves to a spot clear of the bands and door zones, and stays
+  when there is none. It is never reported unplaceable, so no turn fails.
+- `rules/layout/solver.py` (`_preference`): a media group or a piece taller
+  than the sill in a window's 0.40 m zone costs 1 more. A soft cost only.
+- `rules/selection/preflight.py`, `rules/selection/validation.py`: a TV that
+  fits no selected stand hangs on the wall with a `TV SUPPORT` warning, not
+  an error, so it does not fail a turn.
+- The room-wide set question (old decision 13) is dropped; see decision 13.
+
 ## File changes
 
 Paths are relative to the repository root.
 
 | File | Action | Planned change | Why |
 | --- | --- | --- | --- |
-| [pipeline/app/variant_stages.py](../../pipeline/app/variant_stages.py) | Edit | `_drop_items` and `_drop_failing` keep the dining group whole; `_constraint_audit` judges set constraints once | Table shipped without chairs; pair check failed one product |
+| [pipeline/app/variant_stages.py](../../pipeline/app/variant_stages.py) | Edit | `_drop_items` and `_drop_failing` keep the dining group whole; Jev product text gives selected units | Table shipped without chairs; pair check failed one product |
 | [pipeline/app/rules/layout/validation_geometry.py](../../pipeline/app/rules/layout/validation_geometry.py) | Edit | Add `compute_circulation_violations`; wall-piece overlap in `compute_overlaps` | Walkway failures; hidden overlapping paintings |
 | [pipeline/app/rules/layout/solver.py](../../pipeline/app/rules/layout/solver.py) | Edit | Corner and single-side chair splits; lamp slots against the wall; fallback avoids wall pieces | Chairs found no spot; lamps in the walkway |
 | [pipeline/app/rules/layout/analysis.py](../../pipeline/app/rules/layout/analysis.py) | Edit | P1 circulation; dining checks whenever a table is present | Solver and finish see the new findings |

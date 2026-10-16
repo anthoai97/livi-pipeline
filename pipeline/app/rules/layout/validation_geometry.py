@@ -1,14 +1,18 @@
-"""Boundary, collision, opening, and protected-path checks."""
+"""Boundary, collision, opening, protected-path, and walkway checks."""
 
+import math
 from typing import Any
-from shapely.geometry import Point, Polygon
-from app.rules.geometry.primitives import asset_polygon, extract_placement, is_rug
-from app.rules.layout_rules import WALL_FLUSH_MAX_GAP_M
+from shapely.geometry import LineString, Point, Polygon
+from shapely.ops import nearest_points, unary_union
+from app.rules.geometry.primitives import asset_polygon, extract_placement, is_rug, room_polygon
+from app.rules.layout_rules import PATH_SECONDARY_M, WALL_FLUSH_MAX_GAP_M
 from app.rules.layout.studio import is_freestanding_studio_media_support
-from app.rules.planner.taxonomy import SOFA_ROLE_KEYWORDS
+from app.rules.planner.taxonomy import SOFA_ROLE_KEYWORDS, normalize_category
 from app.rules.pipeline_shared import (
     DEFAULT_WALL_HEIGHT_M,
     ceiling_mount_z,
+    door_dimensions,
+    door_inward_normal,
     is_wall_aligned_asset,
     matches_category_keywords,
     nearest_axis_wall,
@@ -23,11 +27,13 @@ from app.rules.layout.constants import (
     WALL_MOUNT_WALL_THRESHOLD,
 )
 from app.rules.layout.metrics import (
+    FloorAsset,
     get_asset_by_uid,
 )
 from app.rules.layout.relations import (
     _back_wall_name,
     _build_blocker_specs,
+    _functional_group_assets,
     _is_ceiling_mounted_layout_asset,
     _is_media_display_asset,
     _is_near_cardinal,
@@ -53,6 +59,18 @@ def compute_overlaps(
             if abs(z_a - z_b) > 0.1:
                 continue
             if poly_a.intersects(poly_b):
+                overlaps.append((uid_a, uid_b))
+    # Wall pieces overlap when they share wall width and height, hiding one behind the other.
+    mounted = []
+    for uid, placement in layout.items():
+        asset = get_asset_by_uid(uid, assets)
+        if not _is_wall_mounted_layout_asset(asset, uid) or _supported_parent_uid(uid, placement, layout, assets):
+            continue
+        pos, rot_z, width, depth, height = extract_placement(placement, asset)
+        mounted.append((uid, asset_polygon(pos, rot_z, width, depth), pos[2], pos[2] + height))
+    for index, (uid_a, poly_a, low_a, high_a) in enumerate(mounted):
+        for uid_b, poly_b, low_b, high_b in mounted[index + 1 :]:
+            if low_a < high_b and low_b < high_a and poly_a.intersection(poly_b).area > 1e-6:
                 overlaps.append((uid_a, uid_b))
     return overlaps
 
@@ -268,4 +286,88 @@ def compute_protected_path_violations(
                     }} if path.get("axis") in ("x", "y") else {}),
                 }
             )
+    return violations
+
+_STORAGE_FRONT_CATEGORIES = {"wardrobe", "dresser", "cabinet", "sideboard", "bookcase", "storage_unit"}
+
+
+def _service_regions(item: FloorAsset, group: str | None) -> list[Polygon]:
+    """Where a person stands to use a piece: bed foot and sides, a seat front, a chair's pull-out, a storage front.
+
+    Tables are reached through their seats, so they have none.
+    """
+    category = normalize_category(item.asset.get("category"))
+    half_w, half_d = item.width / 2, item.depth / 2
+    reach = PATH_SECONDARY_M
+    cos, sin = math.cos(item.rot_z), math.sin(item.rot_z)
+
+    def band(f0: float, f1: float, s0: float, s1: float) -> Polygon:
+        return Polygon([(item.pos[0] + f * cos - s * sin, item.pos[1] + f * sin + s * cos)
+                        for f, s in ((f0, s0), (f1, s0), (f1, s1), (f0, s1))])
+
+    if category == "bed":
+        head = -half_d + min(0.65, half_d)  # bedside pieces own the head of each side
+        return [band(half_d, half_d + reach, -half_w, half_w),
+                band(head, half_d, half_w, half_w + reach),
+                band(head, half_d, -half_w - reach, -half_w)]
+    if group in {"dining_chairs", "task_chairs"}:
+        return [band(-half_d - reach, -half_d, -half_w, half_w)]
+    if group in {"sofas", "lounge_chairs"}:
+        # A seat is entered around either front corner; the sofa-table gap is checked on its own.
+        return [band(half_d, half_d + reach, -half_w - reach / 2, half_w + reach / 2)]
+    if category in _STORAGE_FRONT_CATEGORIES:
+        return [band(half_d, half_d + reach, -half_w, half_w)]
+    return []
+
+
+def compute_circulation_violations(
+    layout: dict[str, Any],
+    assets: list[dict[str, Any]],
+    boundary: list[list[float]],
+    room_doors: list[dict[str, Any]],
+    room_area: tuple[float, float],
+) -> list[dict[str, Any]]:
+    """A PATH_SECONDARY_M walkway joins the first door to every other door and every service area (legacy circulation).
+
+    The free floor is the room shrunk by half the walkway, minus the furniture
+    grown by it: where a walker's center can go. A door or service area outside
+    the free piece reached from the first door is a finding naming the furniture
+    at the narrowest gap (`blockers`) and the piece served (`uid`) or the door.
+    """
+    if not room_doors:
+        return []
+    room = room_polygon(room_area, boundary)
+    radius = PATH_SECONDARY_M / 2
+    floor = list(floor_assets(layout, assets, skip_rugs=True))
+    groups = {item.uid: name for name, items in _functional_group_assets(layout, assets).items()
+              if name in {"sofas", "lounge_chairs", "dining_chairs", "task_chairs"} for item in items}
+    blocked = unary_union([item.poly.buffer(radius, join_style=2) for item in floor])
+    free = room.buffer(-radius, join_style=2).difference(blocked)
+    components = [part for part in getattr(free, "geoms", [free]) if part.geom_type == "Polygon" and part.area > 1e-6]
+    portals = []
+    for door in room_doors:
+        nx, ny = door_inward_normal(door, boundary=boundary, room_area=room_area)
+        x, y = nearest_points(room.boundary, Point(door.get("center") or [0.0, 0.0]))[0].coords[0]
+        half = max(0.01, door_dimensions(door)[0] / 2 - radius)
+        x, y = x + nx * (radius + 0.01), y + ny * (radius + 0.01)
+        portals.append(LineString([(x - ny * half, y + nx * half), (x + ny * half, y - nx * half)]))
+    entries = [{n for n, part in enumerate(components) if part.distance(portal) < 1e-5} for portal in portals]
+    reachable_ids = entries[0]
+    reachable = unary_union([components[n] for n in reachable_ids])
+
+    def finding(kind: str, destination: Any, uid: str | None = None, door: int | None = None) -> dict[str, Any]:
+        # The furniture at the gap between the reachable floor and the destination is what to move.
+        gap = LineString(nearest_points(reachable, destination)) if not reachable.is_empty else portals[0]
+        return {"kind": kind, "uid": uid, "door": door, "required_width_m": PATH_SECONDARY_M,
+                "blockers": [item.uid for item in floor if item.poly.distance(gap) <= radius + 0.02]}
+
+    violations = [finding("disconnected_door", portals[n], door=n)
+                  for n, ids in enumerate(entries) if not ids or (n and not reachable_ids & ids)]
+    if not reachable_ids:
+        return violations
+    accessible = reachable.buffer(radius + 1e-5)
+    for item in floor:
+        regions = _service_regions(item, groups.get(item.uid))
+        if regions and not any(accessible.intersection(region).area > 0.015 for region in regions):
+            violations.append(finding("disconnected_service_area", unary_union(regions), uid=item.uid))
     return violations

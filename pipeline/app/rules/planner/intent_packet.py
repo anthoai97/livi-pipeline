@@ -69,7 +69,7 @@ def _clean_requested_items(value: Any) -> list[dict[str, Any]]:
                 _clean_category(candidate)
                 for candidate in (item.get("acceptable_substitutes") or [])
             )
-            # A media support is not a TV: a TV needs none, and select adds a missing TV.
+            # A media support is not a TV substitute: a TV stands on one, and select adds a missing TV.
             if candidate and candidate != category and not (category == "tv" and candidate in TV_HOST_CATEGORIES)
         ]
         entry = {

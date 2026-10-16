@@ -22,8 +22,8 @@ from app.rules.pipeline_shared import (
     is_floor_lamp_asset,
     is_wall_aligned_asset,
     matches_category_keywords,
-    nearest_axis_wall,
     room_bounds,
+    room_walls,
     support_top_z,
 )
 
@@ -101,6 +101,11 @@ def _flush_against_wall(
         y = line + half_across + gap if wall.facing == "bottom" else line - half_across - gap
     return x, y
 
+def _axis_walls_by_distance(pos: list[float], boundary: list[list[float]]) -> list[RoomWall]:
+    """The cardinal walls nearest first (every wall when none is cardinal), as nearest_axis_wall ranks them."""
+    walls = room_walls(boundary)
+    return sorted([wall for wall in walls if wall.facing] or walls, key=lambda wall: wall.distance(pos[0], pos[1]))
+
 def _snap_wall_aligned_placements(
     layout: dict[str, Any],
     assets: list[dict[str, Any]],
@@ -117,7 +122,8 @@ def _snap_wall_aligned_placements(
         ):
             continue
         pos, current_rot_z, width, depth, _ = extract_placement(placement, asset)
-        wall = nearest_axis_wall(pos, boundary)
+        walls = _axis_walls_by_distance(pos, boundary)
+        wall = walls[0]
         is_sofa = matches_category_keywords(
             asset.get("category", ""),
             uid,
@@ -145,11 +151,16 @@ def _snap_wall_aligned_placements(
         if 0.0 <= _wall_gap(wall, pos, half_across) <= WALL_FLUSH_MAX_GAP_M:
             placement["rotation"] = [0.0, 0.0, rot_z]
             continue
-        flush = _flush_against_wall(wall, pos, half_across, half_along, 0.05)
-        if flush is None:
-            continue
-        placement["rotation"] = [0.0, 0.0, rot_z]
-        placement["position"] = [flush[0], flush[1], pos[2]]
+        # Flush against the nearest wall long enough for the piece.
+        for wall in walls:
+            rot_z = _inward_rotation_for_wall(wall.facing)
+            half_x, half_y = projected_half_extents(width, depth, rot_z)
+            half_across, half_along = (half_x, half_y) if wall.vertical else (half_y, half_x)
+            flush = _flush_against_wall(wall, pos, half_across, half_along, 0.05)
+            if flush is not None:
+                placement["rotation"] = [0.0, 0.0, rot_z]
+                placement["position"] = [flush[0], flush[1], pos[2]]
+                break
     return result
 
 def _snap_wall_mounted_positions(
@@ -167,8 +178,9 @@ def _snap_wall_mounted_positions(
             continue
         pos, _, width, _, _ = extract_placement(placement, asset)
         depth = float(asset.get("depth", 0.1) or 0.1)
-        wall = nearest_axis_wall(pos, boundary)
-        flush = _flush_against_wall(wall, pos, depth / 2 + 0.02, width / 2, 0.0)
+        # The nearest wall long enough for the piece.
+        wall, flush = next(((wall, flush) for wall in _axis_walls_by_distance(pos, boundary)
+                            if (flush := _flush_against_wall(wall, pos, depth / 2 + 0.02, width / 2, 0.0))), (None, None))
         if flush is None:
             continue
         result[uid] = {

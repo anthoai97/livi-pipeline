@@ -15,6 +15,7 @@ STUDIO_FURNISHING_GUIDANCE = (
     "three full rooms; a wardrobe, a TV with its support and a desk with a task chair are added only when requested. "
     "When space is short, keep the three groups and their access, drop optional accessories first, then the requested "
     "desk and chair, then the TV and its support, then the wardrobe, keeping each group whole. "
+    "A TV stands on its stand; it is wall-mounted only when the brief asks. "
     "A TV serves the sofa unless the brief asks to watch from the bed or from both; the sofa and TV face each other, "
     "and for shared viewing the bed and sofa face the same TV from separate wall spans. "
     "Each rug, light, bedside piece and surface serves its own group. Reserve bed side and foot access, dining chair "
@@ -40,7 +41,8 @@ DINING_FURNISHING_GUIDANCE = (
 BEDROOM_FURNISHING_GUIDANCE = (
     "A bedroom centers on one complete adult bed. A wardrobe, a TV with its support and a desk with a task chair are "
     "added only when requested; a generic bedroom brief requests none of them, and only a wardrobe, armoire or "
-    "hanging-clothes request asks for a wardrobe. "
+    "hanging-clothes request asks for a wardrobe. A TV stands on its stand; it is wall-mounted only when the brief "
+    "asks. "
     "After the bed, plan useful bedside service (nightstands and lamps), clothing storage and clear walkways; these are "
     "suggested, not required. Then the requested wardrobe, the requested TV with its support, and the requested desk "
     "and chair, in that order. "

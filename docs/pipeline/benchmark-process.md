@@ -9,7 +9,7 @@ example.
 
 ```
 fixed request set        replay              run records
-10 cases          --->   3 runs per case --->  timings, cost, products, layout
+20 cases          --->   3 runs per case --->  timings, cost, products, layout
                             |                        |
                             v                        v
                    speed and delivery          judge
@@ -28,14 +28,17 @@ judge a change, compare its round against a `main` round made the same way.
 
 ## The request set
 
-Ten fixed cases: one medium room per room type (bedroom, studio, Scandi
-living room, tight dining room) plus small and large variants. Each case has
+Twenty fixed cases: one medium room per room type (bedroom, studio, Scandi
+living room, tight dining room), small and large variants, shaped rooms (L, T,
+U, Z, alcove, angled), and four cases taken from the legacy pipeline's tests:
+a compact dining room for two, a tight studio, a living room with a TV on its
+console, and a dining room with two paintings. Each case has
 a brief, a budget, the room geometry, doors and windows. The cases do not
 change between rounds, so differences come from the code, not the input.
 
-The quick subset is the four medium cases once each, for everyday checks.
-The full set, three runs per case, is the standard for a report. It gives 30
-runs and 90 designs per round.
+The quick subset is the four medium cases plus `dining_room_compact_two` and
+`studio_tight`, once each, for everyday checks. The full set, three runs per
+case, is the standard for a report. It gives 60 runs and 180 designs per round.
 
 ## Step 1: replay
 
@@ -48,7 +51,9 @@ Each run yields a record and these measures:
 
 | Measure | Meaning |
 | --- | --- |
-| Run time | Request to last design. Also time to the first design. |
+| Pass | Designs out of 3 that are ready with zero blocking findings (P0, P1, critical P2) at the final layout. The pass rate over all designs leads the summary. |
+| Time without retrieve | Time to the last design minus the retrieve stage (`no_retrieve_s`), so a slow catalog search does not hide pipeline time. |
+| Run time | Request to stream end (`full_run_s`). Also time to the first design. |
 | Designs delivered | Out of 3. A run is valid only when all 3 are ready. |
 | Model calls, selection calls, failed selection turns | How much the run had to retry. |
 | Cost | Model spend of the run. |
@@ -129,7 +134,8 @@ review the `main` round again, because old scores are not comparable.
 
 ### Outputs
 
-Each round produces a score table with one row per design, averages over all
+Each round's report starts with the pass rate per room type and over all
+designs, read from the run records (no judge call). It then gives a score table with one row per design, averages over all
 designs and per room type, and for each design its plan image, overall score,
 top issues, strengths, and every criterion's score and reason. The review
 lists failed designs without scoring them. A failed judge call shows up as an
@@ -143,7 +149,8 @@ error on its row and does not stop the review.
    [report-2026-10-12](report-2026-10-12.md): summary (better, worse,
    verdict), setup, what changed, results.
 3. Report the results for `main` and the change side by side.
-   - Delivery and speed. Designs delivered, median and p90/max run time, runs
+   - Pass rate, first.
+   - Delivery and speed. Designs delivered, time without retrieve, median and p90/max run time, runs
      under 60 s, cost, selection turns per design, runs with 3 distinct layouts.
    - Reviewer scores. Averages per case and over all cases, at least
      completeness, circulation, space use, layout quality, overall and
@@ -159,12 +166,12 @@ error on its row and does not stop the review.
 
 - Nine designs per case is small. Treat a per-case move under about 0.5 as
   chance; trust moves that repeat across cases or show in the average over
-  all 90 designs.
+  all 180 designs.
 - Compare times only between rounds run the same way.
 - The judge sees a plan, not a render. It cannot judge product looks beyond
   the listed colors, materials and styles, and it scores circulation from the
   drawn footprints.
-- A full round costs about $4 to $5 of generation plus the judge calls. Use
+- A full round costs about $8 to $10 of generation plus the judge calls. Use
   the quick subset while iterating and the full set for the report.
 
 ## Report example

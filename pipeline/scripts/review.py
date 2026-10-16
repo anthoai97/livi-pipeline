@@ -3,7 +3,8 @@
 Reads run records from pipeline/.data/runs, draws a top-down plan of each ready
 variant, and asks the reviewer model (through the local proxy, llm_proxy.ProxyClient)
 for 1-5 scores on selection and layout, plus one call per run that compares its
-ready variants. Writes report.md, review.json, and images/ to
+ready variants. The report starts with the pass rate from the run records (designs
+with zero blocking findings). Writes report.md, review.json, and images/ to
 pipeline/.data/reviews/<UTC timestamp>/.
 
 Run from pipeline/: python scripts/review.py --latest 30
@@ -279,7 +280,7 @@ def review_runs(records: list[Record], client: ProxyClient, out_dir: Path, paral
             for variant in record["variants"]:
                 entry = {"variant_index": variant["variant_index"], "outcome": variant["outcome"],
                          "reason": variant.get("reason"), "total_cost": variant.get("total_cost"),
-                         "image": None, "review": None}
+                         "blocking_findings": variant.get("blocking_findings"), "image": None, "review": None}
                 if variant["outcome"] == "ready" and "products" in variant:
                     png = png_bytes(render_plan(record, variant))
                     entry["image"] = f"images/{record['run_id']}-v{variant['variant_index']}.png"
@@ -313,6 +314,21 @@ def _table(header: list[str], rows: list[list]) -> str:
     return "\n".join(lines)
 
 
+def pass_rows(review: Record) -> tuple[list[str], list[list]]:
+    """The pass-rate table: a design passes when it is ready with zero blocking findings (P0, P1, critical P2).
+
+    Failed designs count as not passing; ready designs from records without blocking findings are left out.
+    """
+    designs = [(run["room_type"], entry["outcome"] == "ready" and entry["blocking_findings"] == [])
+               for run in review["runs"] for entry in run["variants"]
+               if entry["outcome"] != "ready" or entry.get("blocking_findings") is not None]
+    rows = []
+    for room in ["all", *sorted({room for room, _ in designs})]:
+        passed = [ok for r, ok in designs if room in ("all", r)]
+        rows.append([room, len(passed), sum(passed), f"{sum(passed) / len(passed):.0%}" if passed else "-"])
+    return ["room", "designs", "pass", "rate"], rows
+
+
 def score_rows(review: Record) -> tuple[list[str], list[list]]:
     """The summary table: one row per reviewed variant."""
     header = ["run", "room", "v", *(ABBREVIATIONS[name] for name in CRITERIA), "distinct", "cost"]
@@ -342,6 +358,8 @@ def report(review: Record) -> str:
     lines = [f"# Benchmark review {review['created_at'][:19]}Z", "",
              (f"Reviewer `{review['model']}` at effort `{review['effort']}`. "
               f"{len(review['runs'])} runs, {len(reviews)} variants reviewed. Scores 1-5."), "",
+             "## Pass rate", "", "A design passes when it is ready with zero blocking findings (P0, P1, critical P2).", "",
+             _table(*pass_rows(review)), "",
              "## Scores", "", _table(header, rows), "",
              "## Averages", "", _table(["room", "variants", *(ABBREVIATIONS[n] for n in CRITERIA), "distinct"], averages), ""]
     for run in review["runs"]:
@@ -404,6 +422,8 @@ def main() -> None:
     out_dir = REVIEWS_DIR / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     review = review_runs(records, client, out_dir, parallel=max(1, args.parallel))
 
+    print_table(*pass_rows(review))
+    print()
     print_table(*score_rows(review))
     for run in review["runs"]:
         for entry in run["variants"]:

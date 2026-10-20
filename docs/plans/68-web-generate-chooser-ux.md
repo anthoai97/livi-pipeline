@@ -53,6 +53,19 @@ chooser's new layout. Out of scope: the Create Layout form, the Build wizard, St
 
 ## Decisions
 
+Revised 2026-10-19 at the stakeholder's request ("use the livi-pipeline/web UI UX, just make it
+light"). These replace decisions 1, 2, 3 and 10 below:
+
+- Both screens port the prototype's screens and components (`Generate.tsx`, `Choose.tsx`,
+  `RoomScene.tsx`, `ProductRing.tsx`, `ui.tsx`) as closely as the production data allows, in the
+  prototype's light palette (Tailwind `livi` colors), with Eudoxus Sans and lucide icons.
+- The prototype's react-three-fiber `RoomScene` renders both screens
+  (`app/generate/components/RoomScene.tsx`). `GenerationRoomScene` is back to its pre-#68 form and
+  serves only the Build wizard and dashboard previews. The chooser no longer uses `Scene3DViewer`.
+- The chooser preview orbits, as in the prototype. The generate room also orbits once a design is
+  shown (a deviation: its copy says "Look around the room").
+- Step 4 before any design is ready reads "Arranging the pieces of your first design in the room".
+
 1. Light theme only: role tokens (`bg-primary`, `text-on-surface`, `bg-surface-container`,
    `border-outline-variant`, `text-success`, `bg-warning-container`), Eudoxus Sans, lucide
    icons, framer-motion, `components/ui` primitives. No hex, no `dark:` variants. The

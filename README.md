@@ -1,5 +1,13 @@
 # Livinit room designer
 
+> [!NOTE]
+> **Archived.** This research prototype is complete. It implemented a custom
+> interior decorator agent built on the open-source PI core. The repository is
+> kept as a reference.
+>
+> Development continues in the main private Livinit codebase:
+> [Open the product](https://livinit.ai).
+
 Turn a room description, floor plan, and budget into three furnished 3D designs
 using real catalog products. Supports living rooms, bedrooms, dining rooms, and
 studios.
